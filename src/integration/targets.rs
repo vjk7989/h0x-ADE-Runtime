@@ -82,7 +82,7 @@ pub(crate) fn install_pi() -> io::Result<PathBuf> {
     ensure_extension_dir(&dir, "pi")?;
 
     let path = dir.join(PI_EXTENSION_INSTALL_NAME);
-    fs::write(&path, PI_EXTENSION_ASSET)?;
+    write_config(&path, PI_EXTENSION_ASSET)?;
     Ok(path)
 }
 
@@ -99,7 +99,7 @@ pub(crate) fn install_omp() -> io::Result<OmpInstallPaths> {
 
     let removed_legacy_pi_extension = remove_legacy_pi_extension_from_omp_dir(&dir)?;
     let extension_path = dir.join(OMP_EXTENSION_INSTALL_NAME);
-    fs::write(&extension_path, OMP_EXTENSION_ASSET)?;
+    write_config(&extension_path, OMP_EXTENSION_ASSET)?;
     Ok(OmpInstallPaths {
         extension_path,
         removed_legacy_pi_extension,
@@ -135,7 +135,7 @@ pub(crate) fn install_claude() -> io::Result<ClaudeInstallPaths> {
     fs::create_dir_all(&hooks_dir)?;
 
     let hook_path = hooks_dir.join(CLAUDE_HOOK_INSTALL_NAME);
-    fs::write(&hook_path, CLAUDE_HOOK_ASSET)?;
+    write_config(&hook_path, CLAUDE_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
     let settings_path = dir.join("settings.json");
@@ -168,7 +168,7 @@ pub(crate) fn install_codex() -> io::Result<CodexInstallPaths> {
     }
 
     let hook_path = dir.join(CODEX_HOOK_INSTALL_NAME);
-    fs::write(&hook_path, CODEX_HOOK_ASSET)?;
+    write_config(&hook_path, CODEX_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
     let hooks_path = dir.join("hooks.json");
@@ -236,7 +236,7 @@ pub(crate) fn install_kimi() -> io::Result<KimiInstallPaths> {
     fs::create_dir_all(&hooks_dir)?;
 
     let hook_path = hooks_dir.join(KIMI_HOOK_INSTALL_NAME);
-    fs::write(&hook_path, KIMI_HOOK_ASSET)?;
+    write_config(&hook_path, KIMI_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
     let config_path = dir.join("config.toml");
@@ -271,7 +271,7 @@ pub(crate) fn install_copilot() -> io::Result<CopilotInstallPaths> {
     fs::create_dir_all(&hooks_dir)?;
 
     let hook_path = hooks_dir.join(COPILOT_HOOK_INSTALL_NAME);
-    fs::write(&hook_path, COPILOT_HOOK_ASSET)?;
+    write_config(&hook_path, COPILOT_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
     let settings_path = dir.join("settings.json");
@@ -323,7 +323,7 @@ pub(crate) fn install_devin() -> io::Result<DevinInstallPaths> {
     }
 
     let hook_path = dir.join(DEVIN_HOOK_INSTALL_NAME);
-    fs::write(&hook_path, DEVIN_HOOK_ASSET)?;
+    write_config(&hook_path, DEVIN_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
     let settings_path = dir.join("config.json");
@@ -383,7 +383,7 @@ pub(crate) fn install_droid() -> io::Result<DroidInstallPaths> {
     fs::create_dir_all(&hooks_dir)?;
 
     let hook_path = hooks_dir.join(DROID_HOOK_INSTALL_NAME);
-    fs::write(&hook_path, DROID_HOOK_ASSET)?;
+    write_config(&hook_path, DROID_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
     let settings_path = dir.join("settings.json");
@@ -475,13 +475,13 @@ pub(crate) fn install_opencode() -> io::Result<OpenCodeInstallPaths> {
     fs::create_dir_all(&plugins_dir)?;
 
     let plugin_path = plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME);
-    fs::write(&plugin_path, OPENCODE_PLUGIN_ASSET)?;
+    write_config(&plugin_path, OPENCODE_PLUGIN_ASSET)?;
     let tui_plugin_path = dir.join(OPENCODE_TUI_PLUGIN_INSTALL_NAME);
-    fs::write(&tui_plugin_path, OPENCODE_TUI_PLUGIN_ASSET)?;
+    write_config(&tui_plugin_path, OPENCODE_TUI_PLUGIN_ASSET)?;
     let tui_config_path = add_tui_plugin(&dir, OPENCODE_TUI_PLUGIN_SPEC)?;
     let v2_dir = dir.join(super::OPENCODE_V2_TUI_PLUGIN_DIR);
     fs::create_dir_all(&v2_dir)?;
-    fs::write(v2_dir.join("tui.js"), super::OPENCODE_V2_TUI_PLUGIN_ASSET)?;
+    write_config(&v2_dir.join("tui.js"), super::OPENCODE_V2_TUI_PLUGIN_ASSET)?;
     let cli_config_path = add_cli_plugin(
         &dir,
         &opencode_state_dir()?,
@@ -509,7 +509,7 @@ pub(crate) fn install_kilo() -> io::Result<KiloInstallPaths> {
     fs::create_dir_all(&plugins_dir)?;
 
     let plugin_path = plugins_dir.join(KILO_PLUGIN_INSTALL_NAME);
-    fs::write(&plugin_path, KILO_PLUGIN_ASSET)?;
+    write_config(&plugin_path, KILO_PLUGIN_ASSET)?;
 
     Ok(KiloInstallPaths { plugin_path })
 }
@@ -526,12 +526,12 @@ pub(crate) fn install_hermes() -> io::Result<HermesInstallPaths> {
 
     let plugin_dir = hermes_plugin_dir()?;
     fs::create_dir_all(&plugin_dir)?;
-    fs::write(
-        plugin_dir.join(HERMES_PLUGIN_MANIFEST_INSTALL_NAME),
+    write_config(
+        &plugin_dir.join(HERMES_PLUGIN_MANIFEST_INSTALL_NAME),
         HERMES_PLUGIN_MANIFEST_ASSET,
     )?;
-    fs::write(
-        plugin_dir.join(HERMES_PLUGIN_INIT_INSTALL_NAME),
+    write_config(
+        &plugin_dir.join(HERMES_PLUGIN_INIT_INSTALL_NAME),
         HERMES_PLUGIN_INIT_ASSET,
     )?;
 
@@ -937,7 +937,7 @@ pub(crate) fn install_qodercli() -> io::Result<QodercliInstallPaths> {
     fs::create_dir_all(&hooks_dir)?;
 
     let hook_path = hooks_dir.join(QODERCLI_HOOK_INSTALL_NAME);
-    fs::write(&hook_path, QODERCLI_HOOK_ASSET)?;
+    write_config(&hook_path, QODERCLI_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
     // Register the hook in ~/.qoder/settings.json. The schema mirrors claude
@@ -1002,7 +1002,7 @@ pub(crate) fn install_qwen() -> io::Result<QwenInstallPaths> {
     fs::create_dir_all(&hooks_dir)?;
 
     let hook_path = hooks_dir.join(QWEN_HOOK_INSTALL_NAME);
-    fs::write(&hook_path, QWEN_HOOK_ASSET)?;
+    write_config(&hook_path, QWEN_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
     let settings_path = dir.join("settings.json");
@@ -1254,7 +1254,7 @@ pub(crate) fn install_cursor() -> io::Result<CursorInstallPaths> {
     }
 
     let hook_path = dir.join(CURSOR_HOOK_INSTALL_NAME);
-    fs::write(&hook_path, CURSOR_HOOK_ASSET)?;
+    write_config(&hook_path, CURSOR_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
     let hooks_path = dir.join("hooks.json");
@@ -1414,7 +1414,7 @@ pub(crate) fn uninstall_letta() -> io::Result<LettaUninstallResult> {
         }
 
         if updated_settings {
-            fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
+            write_config(&settings_path, serde_json::to_string_pretty(&settings)?)?;
         }
     }
 
@@ -1492,7 +1492,7 @@ pub(crate) fn install_mastracode() -> io::Result<MastracodeInstallPaths> {
     fs::create_dir_all(&hook_dir)?;
 
     let hook_path = hook_dir.join(MASTRACODE_HOOK_INSTALL_NAME);
-    fs::write(&hook_path, MASTRACODE_HOOK_ASSET)?;
+    write_config(&hook_path, MASTRACODE_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
     let hooks_path = mastracode_home.join("hooks.json");
@@ -1596,7 +1596,7 @@ pub(crate) fn install_antigravity_cli() -> io::Result<AntigravityCliInstallPaths
     fs::create_dir_all(&hooks_dir)?;
 
     let hook_path = hooks_dir.join(ANTIGRAVITY_CLI_HOOK_INSTALL_NAME);
-    fs::write(&hook_path, ANTIGRAVITY_CLI_HOOK_ASSET)?;
+    write_config(&hook_path, ANTIGRAVITY_CLI_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
     let hooks_path = dir.join("hooks.json");
@@ -1746,11 +1746,11 @@ pub(crate) fn install_grok() -> io::Result<GrokInstallPaths> {
     fs::create_dir_all(&hooks_dir)?;
 
     let hook_path = hooks_dir.join(GROK_HOOK_INSTALL_NAME);
-    fs::write(&hook_path, GROK_HOOK_ASSET)?;
+    write_config(&hook_path, GROK_HOOK_ASSET)?;
     make_executable(&hook_path)?;
 
     let config_path = hooks_dir.join(GROK_HOOK_CONFIG_INSTALL_NAME);
-    fs::write(
+    write_config(
         &config_path,
         serde_json::to_string_pretty(&grok_hook_config(&hook_path))?,
     )?;

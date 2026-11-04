@@ -249,6 +249,7 @@ pub(crate) fn build_worktree_add_new_branch_command(
         "add".to_string(),
         "-b".to_string(),
         branch.to_string(),
+        "--".to_string(),
         path.display().to_string(),
         base.to_string(),
     ]);
@@ -268,6 +269,7 @@ pub(crate) fn build_worktree_add_existing_branch_command(
     args.extend([
         "worktree".to_string(),
         "add".to_string(),
+        "--".to_string(),
         path.display().to_string(),
         branch.to_string(),
     ]);
@@ -306,6 +308,18 @@ fn local_branch_exists(
     }
 }
 
+/// Rejects a git ref/branch argument that git could parse as an option.
+/// `-b <branch>` takes its value verbatim, so `--` cannot protect it.
+pub(crate) fn validate_git_ref_arg(kind: &str, value: &str) -> Result<(), String> {
+    if value.is_empty() {
+        return Err(format!("{kind} must not be empty"));
+    }
+    if value.starts_with('-') {
+        return Err(format!("{kind} must not start with '-': {value}"));
+    }
+    Ok(())
+}
+
 pub(crate) fn run_worktree_add_command(
     repo_root: &Path,
     path: &Path,
@@ -313,6 +327,8 @@ pub(crate) fn run_worktree_add_command(
     base: &str,
     trust_repository: bool,
 ) -> Result<(), String> {
+    validate_git_ref_arg("branch", branch)?;
+    validate_git_ref_arg("base", base)?;
     let command = if local_branch_exists(repo_root, branch, trust_repository)? {
         build_worktree_add_existing_branch_command(repo_root, path, branch, trust_repository)
     } else {
@@ -949,6 +965,7 @@ prunable stale
                 "add",
                 "-b",
                 "worktree/brave-river",
+                "--",
                 "/w/h0x/worktree-brave-river",
                 "HEAD"
             ]
@@ -971,9 +988,46 @@ prunable stale
                 "/repo/h0x",
                 "worktree",
                 "add",
+                "--",
                 "/w/h0x/worktree-brave-river",
                 "worktree/brave-river"
             ]
+        );
+    }
+
+    #[test]
+    fn validate_git_ref_arg_rejects_option_like_values() {
+        for value in ["", "-x", "--upload-pack=evil", "-"] {
+            let err = validate_git_ref_arg("branch", value).unwrap_err();
+            assert!(err.starts_with("branch must not"), "{value:?}: {err}");
+        }
+        for value in [
+            "main",
+            "feature/-x",
+            "worktree/brave-river",
+            "HEAD",
+            "v1.2-rc",
+        ] {
+            assert_eq!(validate_git_ref_arg("branch", value), Ok(()), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn run_worktree_add_command_rejects_option_like_branch_and_base_before_git() {
+        // The repo path does not exist: rejection must happen before any git call.
+        let repo = Path::new("/nonexistent/h0x-repo");
+        let path = Path::new("/nonexistent/h0x-worktree");
+        assert_eq!(
+            run_worktree_add_command(repo, path, "--upload-pack=evil", "HEAD", false),
+            Err("branch must not start with '-': --upload-pack=evil".to_string())
+        );
+        assert_eq!(
+            run_worktree_add_command(repo, path, "feature", "-x", false),
+            Err("base must not start with '-': -x".to_string())
+        );
+        assert_eq!(
+            run_worktree_add_command(repo, path, "", "HEAD", false),
+            Err("branch must not be empty".to_string())
         );
     }
 

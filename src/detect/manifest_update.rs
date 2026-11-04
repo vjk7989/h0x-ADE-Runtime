@@ -14,6 +14,7 @@ use super::{agent_label, parse_agent_label, Agent};
 
 pub(crate) const MANIFEST_ENGINE_VERSION: u32 = 3;
 const DEFAULT_CATALOG_URL: &str = "https://raw.githubusercontent.com/vjk7989/h0x-ADE-Runtime/main/distribution/agent-detection/index.toml";
+#[cfg(any(debug_assertions, test))]
 const CATALOG_URL_ENV: &str = "H0X_AGENT_DETECTION_MANIFEST_CATALOG_URL";
 const MAX_FETCH_BYTES: usize = 256 * 1024;
 
@@ -499,11 +500,16 @@ fn state_root() -> PathBuf {
 }
 
 fn catalog_url() -> String {
-    std::env::var(CATALOG_URL_ENV)
+    // The override only exists in debug/test builds; release always uses the default.
+    #[cfg(any(debug_assertions, test))]
+    if let Some(url) = std::env::var(CATALOG_URL_ENV)
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| DEFAULT_CATALOG_URL.to_string())
+    {
+        return url;
+    }
+    DEFAULT_CATALOG_URL.to_string()
 }
 
 fn fetch_text(url: &str) -> Result<String, String> {

@@ -107,6 +107,7 @@ fn parse_plugin_install_args(args: &[String]) -> Result<PluginInstallArgs, Strin
         match args[index].as_str() {
             "--ref" => {
                 let value = args.get(index + 1).ok_or("missing value for --ref")?;
+                crate::worktree::validate_git_ref_arg("--ref", value)?;
                 requested_ref = Some(value.clone());
                 index += 2;
             }
@@ -1437,6 +1438,11 @@ mod tests {
                 true,
             ),
             (
+                vec!["owner/repo", "--ref", "feature/-x"],
+                Some("feature/-x"),
+                false,
+            ),
+            (
                 vec!["--ref", "main", "owner/repo", "--yes"],
                 Some("main"),
                 true,
@@ -1454,8 +1460,6 @@ mod tests {
                 Some("main"),
                 true,
             ),
-            // Preserve ref-value consumption: a value named --yes is not consent.
-            (vec!["owner/repo", "--ref", "--yes"], Some("--yes"), false),
         ] {
             let args = args.into_iter().map(String::from).collect::<Vec<_>>();
             let parsed = parse_plugin_install_args(&args).unwrap();
@@ -1471,6 +1475,20 @@ mod tests {
             (vec![], PLUGIN_INSTALL_USAGE),
             (vec!["--yes"], PLUGIN_INSTALL_USAGE),
             (vec!["owner/repo", "--ref"], "missing value for --ref"),
+            // A ref value named --yes is neither consent nor a git option.
+            (
+                vec!["owner/repo", "--ref", "--yes"],
+                "--ref must not start with '-': --yes",
+            ),
+            (vec!["owner/repo", "--ref", ""], "--ref must not be empty"),
+            (
+                vec!["owner/repo", "--ref", "-x"],
+                "--ref must not start with '-': -x",
+            ),
+            (
+                vec!["owner/repo", "--ref", "--upload-pack=evil"],
+                "--ref must not start with '-': --upload-pack=evil",
+            ),
             (vec!["--unknown", "owner/repo"], "unknown option: --unknown"),
             (
                 vec!["owner/repo", "extra/repo"],

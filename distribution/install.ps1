@@ -251,9 +251,15 @@ function Invoke-CurlDownload {
     )
 
     $parsedUri = $null
-    if (-not [System.Uri]::TryCreate($Uri, [System.UriKind]::Absolute, [ref]$parsedUri) -or
-        $parsedUri.Scheme -notin @("http", "https")) {
-        throw "HyperOx download URL must use HTTP or HTTPS: $Uri"
+    if (-not [System.Uri]::TryCreate($Uri, [System.UriKind]::Absolute, [ref]$parsedUri)) {
+        throw "HyperOx download URL must use HTTPS: $Uri"
+    }
+    # Plain HTTP is accepted only for a local test server.
+    # IPv6 loopback is only ::1; .NET Framework renders it expanded, so match by type.
+    $isLoopbackHttp = $parsedUri.Scheme -eq "http" -and $parsedUri.IsLoopback -and
+        ($parsedUri.Host -in @("127.0.0.1", "localhost") -or $parsedUri.HostNameType -eq "IPv6")
+    if ($parsedUri.Scheme -ne "https" -and -not $isLoopbackHttp) {
+        throw "HyperOx download URL must use HTTPS: $Uri"
     }
 
     $curl = Get-Command curl.exe -CommandType Application -ErrorAction SilentlyContinue |
@@ -269,12 +275,16 @@ function Invoke-CurlDownload {
         "--location",
         "--connect-timeout", "30",
         "--speed-limit", "1024",
-        "--speed-time", "30"
+        "--speed-time", "30",
+        "--proto-redir", "=https"
     )
-    if ($parsedUri.Scheme -eq "https") {
+    if ($isLoopbackHttp) {
+        $arguments += @("--proto", "=http,https")
+    } else {
         $arguments += @("--proto", "=https", "--tlsv1.2")
     }
-    $arguments += @("--output", $Destination, "--", $Uri)
+    # Hand curl the URL exactly as validated above.
+    $arguments += @("--output", $Destination, "--", $parsedUri.AbsoluteUri)
 
     $curlOutput = & $curl.Source @arguments 2>&1
     $curlExitCode = $LASTEXITCODE

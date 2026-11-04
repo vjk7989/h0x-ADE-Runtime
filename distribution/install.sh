@@ -40,7 +40,7 @@ main() {
     # on the public latest release.
     TARGET="${os}-${arch}"
     log "fetching latest release manifest..."
-    MANIFEST="$(curl -fsSL --retry 3 --connect-timeout 10 --max-time 20 "$MANIFEST_URL")" \
+    MANIFEST="$(curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 10 --max-time 20 "$MANIFEST_URL")" \
         || err "can't reach ${MANIFEST_URL}. Please try again later; GitHub might be down."
     URL="$(printf '%s\n' "$MANIFEST" | awk -v target="\"${TARGET}\"" '
         /^[[:space:]]*"assets"[[:space:]]*:/ { in_assets = 1; next }
@@ -93,7 +93,7 @@ main() {
     TMP="$(mktemp -d)"
     trap 'rm -rf "$TMP"' EXIT
 
-    if ! curl -fsSL --retry 3 --connect-timeout 10 --max-time 120 "$URL" -o "${TMP}/${BIN}"; then
+    if ! curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 10 --max-time 120 "$URL" -o "${TMP}/${BIN}"; then
         err "download failed from ${URL}"
     fi
 

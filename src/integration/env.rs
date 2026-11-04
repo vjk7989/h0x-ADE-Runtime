@@ -245,21 +245,56 @@ pub(crate) fn home_dir() -> io::Result<PathBuf> {
     ))
 }
 
+/// Every environment variable the path resolvers above read. The test lock
+/// snapshots, clears and restores all of them so a test can never resolve the
+/// developer's real profile (e.g. a globally set `HERMES_HOME`).
+#[cfg(test)]
+const RESOLVER_ENV_VARS: &[&str] = &[
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LOCALAPPDATA",
+    "APPDATA",
+    "XDG_CONFIG_HOME",
+    "XDG_STATE_HOME",
+    PI_CODING_AGENT_DIR_ENV_VAR,
+    OMP_CONFIG_DIR_ENV_VAR,
+    CLAUDE_CONFIG_DIR_ENV_VAR,
+    CODEX_HOME_ENV_VAR,
+    KIMI_CODE_HOME_ENV_VAR,
+    COPILOT_HOME_ENV_VAR,
+    QODERCLI_CONFIG_DIR_ENV_VAR,
+    QWEN_HOME_ENV_VAR,
+    CURSOR_CONFIG_DIR_ENV_VAR,
+    ANTIGRAVITY_CLI_CONFIG_DIR_ENV_VAR,
+    GROK_CONFIG_DIR_ENV_VAR,
+    GROK_HOME_ENV_VAR,
+    HERMES_HOME_ENV_VAR,
+    OPENCODE_CONFIG_DIR_ENV_VAR,
+];
+
+/// Per-process stand-in for the user profile while the integration env lock
+/// is held. Stable within a process so tests can compare across locks.
+#[cfg(test)]
+pub(crate) fn integration_test_profile_root() -> PathBuf {
+    std::env::temp_dir().join(format!("h0x-integration-profile-{}", std::process::id()))
+}
+
 #[cfg(test)]
 pub(crate) struct IntegrationEnvLock {
     _guard: MutexGuard<'static, ()>,
-    #[cfg(windows)]
-    appdata: Option<std::ffi::OsString>,
+    saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
 }
 
 #[cfg(test)]
 impl Drop for IntegrationEnvLock {
     fn drop(&mut self) {
-        #[cfg(windows)]
-        if let Some(appdata) = self.appdata.take() {
-            std::env::set_var("APPDATA", appdata);
-        } else {
-            std::env::remove_var("APPDATA");
+        for (name, value) in self.saved.drain(..) {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
         }
     }
 }
@@ -268,16 +303,61 @@ impl Drop for IntegrationEnvLock {
 pub(crate) fn integration_env_lock() -> IntegrationEnvLock {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     let guard = LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+    let saved = RESOLVER_ENV_VARS
+        .iter()
+        .map(|name| (*name, std::env::var_os(name)))
+        .collect();
+    for name in RESOLVER_ENV_VARS {
+        std::env::remove_var(name);
+    }
+    let root = integration_test_profile_root();
+    for (name, dir) in [
+        ("HOME", "home"),
+        ("USERPROFILE", "home"),
+        ("LOCALAPPDATA", "local-app-data"),
+        ("APPDATA", "app-data"),
+    ] {
+        let dir = root.join(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var(name, dir);
+    }
     IntegrationEnvLock {
         _guard: guard,
-        #[cfg(windows)]
-        appdata: std::env::var_os("APPDATA"),
+        saved,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolvers_stay_under_the_test_profile_root() {
+        let _lock = integration_env_lock();
+        let root = integration_test_profile_root();
+        assert!(root.starts_with(std::env::temp_dir()));
+        for dir in [
+            hermes_dir().unwrap(),
+            hermes_plugin_dir().unwrap(),
+            claude_dir().unwrap(),
+            codex_dir().unwrap(),
+            home_dir().unwrap(),
+            devin_dir().unwrap(),
+            opencode_dir().unwrap(),
+            letta_dir().unwrap(),
+        ] {
+            assert!(
+                dir.starts_with(&root),
+                "{} escaped {}",
+                dir.display(),
+                root.display()
+            );
+        }
+        // HOME removed mid-test must still fall back inside the root.
+        std::env::remove_var("HOME");
+        assert!(home_dir().unwrap().starts_with(&root));
+        assert!(hermes_dir().unwrap().starts_with(&root));
+    }
 
     #[test]
     fn opencode_state_dir_defaults_to_local_state() {

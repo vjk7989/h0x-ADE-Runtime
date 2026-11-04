@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::release_notes::{normalize_body, strip_terminal_controls};
+
 const PRODUCT_ANNOUNCEMENTS_PATH: &str = "product-announcements.json";
 const FAKE_ANNOUNCEMENT_BODY_ENV: &str = "H0X_FAKE_PRODUCT_ANNOUNCEMENT_BODY";
 const FAKE_ANNOUNCEMENT_BODY_FILE_ENV: &str = "H0X_FAKE_PRODUCT_ANNOUNCEMENT_BODY_FILE";
@@ -119,10 +121,9 @@ fn announcement_from_manifest(
     let title = announcement
         .title
         .as_deref()
-        .map(str::trim)
+        .map(|title| strip_terminal_controls(title).trim().to_string())
         .filter(|title| !title.is_empty())
-        .unwrap_or("announcement")
-        .to_string();
+        .unwrap_or_else(|| "announcement".to_string());
 
     Some(ProductAnnouncement {
         version: manifest_version.trim().to_string(),
@@ -215,15 +216,6 @@ fn write_store_to_path(path: &Path, store: &AnnouncementStore) -> io::Result<()>
         return Err(err);
     }
     Ok(())
-}
-
-fn normalize_body(body: &str) -> String {
-    body.lines()
-        .map(str::trim_end)
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim()
-        .to_string()
 }
 
 #[cfg(test)]
@@ -348,5 +340,34 @@ mod tests {
             },
         )
         .is_none());
+    }
+
+    #[test]
+    fn manifest_announcement_strips_terminal_controls() {
+        let announcement = announcement_from_manifest(
+            "1.2.3",
+            &ManifestAnnouncement {
+                id: "notice".into(),
+                title: Some("\u{1b}]0;pwned\u{7}\u{202e}New".into()),
+                body: "hi\u{1b}]52;c;ZXZpbA==\u{7}\r\n\u{9b}2Jthere".into(),
+            },
+        )
+        .expect("announcement");
+        assert_eq!(announcement.title, "]0;pwnedNew");
+        assert_eq!(announcement.body, "hi]52;c;ZXZpbA==\n2Jthere");
+    }
+
+    #[test]
+    fn manifest_announcement_title_of_only_controls_falls_back() {
+        let announcement = announcement_from_manifest(
+            "1.2.3",
+            &ManifestAnnouncement {
+                id: "notice".into(),
+                title: Some("\u{1b}\u{7}\r".into()),
+                body: "hello".into(),
+            },
+        )
+        .expect("announcement");
+        assert_eq!(announcement.title, "announcement");
     }
 }
