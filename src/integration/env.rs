@@ -353,10 +353,19 @@ mod tests {
                 root.display()
             );
         }
-        // HOME removed mid-test must still fall back inside the root.
+        // HOME removed mid-test: Windows falls back to USERPROFILE, which must stay inside the root;
+        // elsewhere there is no fallback, so the lookup refuses instead of reaching a real home.
         std::env::remove_var("HOME");
-        assert!(home_dir().unwrap().starts_with(&root));
-        assert!(hermes_dir().unwrap().starts_with(&root));
+        #[cfg(windows)]
+        {
+            assert!(home_dir().unwrap().starts_with(&root));
+            assert!(hermes_dir().unwrap().starts_with(&root));
+        }
+        #[cfg(not(windows))]
+        {
+            assert!(home_dir().is_err());
+            assert!(hermes_dir().is_err());
+        }
     }
 
     #[test]
