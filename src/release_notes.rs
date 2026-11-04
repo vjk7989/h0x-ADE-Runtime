@@ -162,7 +162,8 @@ fn extract_version_section(content: &str, version: &str) -> Option<String> {
 }
 
 pub fn normalize_body(body: &str) -> String {
-    body.lines()
+    strip_terminal_controls(body)
+        .lines()
         .map(str::trim_end)
         .collect::<Vec<_>>()
         .join("\n")
@@ -170,9 +171,87 @@ pub fn normalize_body(body: &str) -> String {
         .to_string()
 }
 
+/// Drops characters a network-sourced feed could use to drive the terminal:
+/// C0 controls except `\n`/`\t` (so ESC-led CSI/OSC sequences become inert
+/// text), DEL, C1 controls and bidi override/isolate characters.
+pub fn strip_terminal_controls(text: &str) -> String {
+    text.chars()
+        .filter(|&c| {
+            !matches!(c,
+                '\u{0}'..='\u{8}'
+                | '\u{b}'..='\u{1f}'
+                | '\u{7f}'..='\u{9f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}')
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_terminal_controls_empty_input() {
+        assert_eq!(strip_terminal_controls(""), "");
+    }
+
+    #[test]
+    fn strip_terminal_controls_keeps_plain_text_newlines_and_tabs() {
+        let text = "### Changed\n- One\tTwo";
+        assert_eq!(strip_terminal_controls(text), text);
+    }
+
+    #[test]
+    fn strip_terminal_controls_neutralises_csi() {
+        assert_eq!(strip_terminal_controls("a\x1b[2Jb"), "a[2Jb");
+    }
+
+    #[test]
+    fn strip_terminal_controls_neutralises_osc_52() {
+        assert_eq!(
+            strip_terminal_controls("x\x1b]52;c;ZXZpbA==\x07y"),
+            "x]52;c;ZXZpbA==y"
+        );
+    }
+
+    #[test]
+    fn strip_terminal_controls_drops_carriage_return_keeps_newline() {
+        assert_eq!(
+            strip_terminal_controls("one\r\ntwo\rthree"),
+            "one\ntwothree"
+        );
+    }
+
+    #[test]
+    fn strip_terminal_controls_drops_del_and_c1() {
+        assert_eq!(
+            strip_terminal_controls("a\u{9b}2Jb\u{7f}\u{80}\u{9f}"),
+            "a2Jb"
+        );
+    }
+
+    #[test]
+    fn strip_terminal_controls_drops_bidi_overrides() {
+        assert_eq!(
+            strip_terminal_controls("\u{202a}a\u{202e}b\u{2066}c\u{2069}"),
+            "abc"
+        );
+    }
+
+    #[test]
+    fn strip_terminal_controls_keeps_emoji_and_cjk() {
+        let text = "\u{1f680} 新機能 \u{2728} 한국어";
+        assert_eq!(strip_terminal_controls(text), text);
+    }
+
+    #[test]
+    fn normalize_body_strips_escape_sequences() {
+        assert_eq!(
+            normalize_body("\x1b]0;pwned\x07### Changed\r\n- One\x1b[2J"),
+            "]0;pwned### Changed\n- One[2J"
+        );
+    }
 
     #[test]
     fn extracts_version_section() {
