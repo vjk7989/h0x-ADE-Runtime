@@ -291,6 +291,7 @@ pub(super) enum ClientShellOverlayKind {
     ContextMenu,
     GlobalMenu,
     Settings,
+    ApiConfirmation,
 }
 
 #[derive(Debug)]
@@ -594,6 +595,7 @@ pub(super) enum ClientShellOverlay {
     ContextMenu(ClientContextMenuOverlay),
     GlobalMenu(ClientGlobalMenuOverlay),
     Settings(ClientSettingsOverlay),
+    ApiConfirmation(crate::protocol::ClientShellApiConfirmation),
 }
 
 impl ClientShellOverlay {
@@ -612,6 +614,7 @@ impl ClientShellOverlay {
             Self::ContextMenu(_) => ClientShellOverlayKind::ContextMenu,
             Self::GlobalMenu(_) => ClientShellOverlayKind::GlobalMenu,
             Self::Settings(_) => ClientShellOverlayKind::Settings,
+            Self::ApiConfirmation(_) => ClientShellOverlayKind::ApiConfirmation,
         }
     }
 }
@@ -1566,6 +1569,17 @@ impl ClientShellState {
                     self.dismissed_product_announcement = None;
                 }
             }
+        }
+        // A pending API confirmation takes the screen until it is answered or withdrawn.
+        match (snapshot.api_confirmation.as_ref(), self.overlay.as_ref()) {
+            (Some(pending), Some(ClientShellOverlay::ApiConfirmation(current)))
+                if current == pending => {}
+            (Some(pending), _) => {
+                self.overlay = Some(ClientShellOverlay::ApiConfirmation(pending.clone()));
+                self.chrome_drag = None;
+            }
+            (None, Some(ClientShellOverlay::ApiConfirmation(_))) => self.overlay = None,
+            (None, _) => {}
         }
         if let Some(ClientShellOverlay::ReleaseNotes(current)) = self.overlay.as_ref() {
             match snapshot.release_notes.as_ref() {

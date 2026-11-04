@@ -1314,3 +1314,107 @@ fn client_settings_preview_restore_and_endpoint_integrations_are_owned_by_overla
         })) if integration_messages == &["installed codex"]
     ));
 }
+
+#[test]
+fn api_confirmation_overlay_follows_the_snapshot_and_sends_the_answer() {
+    let pending = crate::protocol::ClientShellApiConfirmation {
+        id: 7,
+        prompt: "Link plugin example.confirm from C:\\plugins\\confirm".into(),
+    };
+    let answers = |outcome: &ClientShellInput| {
+        outcome
+            .requests
+            .iter()
+            .filter_map(|request| match request {
+                ClientMessage::EndpointControl { kind, data }
+                    if kind == crate::protocol::endpoint::API_CONFIRMATION_ANSWER_KIND =>
+                {
+                    Some(
+                        serde_json::from_str::<
+                            crate::protocol::endpoint::EndpointApiConfirmationAnswer,
+                        >(data)
+                        .unwrap(),
+                    )
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    let mut projected = snapshot();
+    projected.api_confirmation = Some(pending.clone());
+    state.set_snapshot(Box::new(projected.clone()));
+    state.set_pane_surface(surface());
+    state.overlay = Some(ClientShellOverlay::GlobalMenu(ClientGlobalMenuOverlay {
+        highlighted: 0,
+    }));
+    let next = projected.clone();
+    state.set_snapshot(Box::new(next.clone()));
+    assert!(matches!(
+        state.overlay.as_ref(),
+        Some(ClientShellOverlay::ApiConfirmation(current)) if current == &pending
+    ));
+    let frame = state.compose(106, 24).expect("confirmation frame");
+    let text = frame
+        .cells
+        .chunks(frame.width as usize)
+        .map(|row| {
+            row.iter()
+                .map(|cell| cell.symbol.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        );
+    assert!(text.contains("Link plugin example.confirm from C:\\plugins\\confirm"));
+    assert!(text.contains("allow") && text.contains("deny"));
+
+    // Other keys neither answer nor dismiss the confirmation.
+    let ignored = state.handle_raw_events(vec![RawInputEvent::Key(
+        crate::input::TerminalKey::new(KeyCode::Char('x'), KeyModifiers::empty()),
+    )]);
+    assert!(answers(&ignored).is_empty());
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::ApiConfirmation(_))
+    ));
+
+    let allowed = state.handle_raw_events(vec![RawInputEvent::Key(
+        crate::input::TerminalKey::new(KeyCode::Enter, KeyModifiers::empty()),
+    )]);
+    assert_eq!(
+        answers(&allowed),
+        vec![crate::protocol::endpoint::EndpointApiConfirmationAnswer { id: 7, allow: true }]
+    );
+    assert!(state.overlay.is_none());
+
+    let mut second = next.clone();
+    second.api_confirmation = Some(crate::protocol::ClientShellApiConfirmation {
+        id: 8,
+        prompt: "Install the claude integration hooks".into(),
+    });
+    state.set_snapshot(Box::new(second.clone()));
+    let denied = state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
+        KeyCode::Esc,
+        KeyModifiers::empty(),
+    ))]);
+    assert_eq!(
+        answers(&denied),
+        vec![crate::protocol::endpoint::EndpointApiConfirmationAnswer {
+            id: 8,
+            allow: false
+        }]
+    );
+
+    // The endpoint withdrawing the request (answered elsewhere or timed out) closes the overlay.
+    state.set_snapshot(Box::new(second.clone()));
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::ApiConfirmation(_))
+    ));
+    second.api_confirmation = None;
+    state.set_snapshot(Box::new(second));
+    assert!(state.overlay.is_none());
+}

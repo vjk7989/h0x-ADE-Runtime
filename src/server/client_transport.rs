@@ -522,6 +522,11 @@ pub(crate) enum ServerEvent {
     ClientShellMouseCapture { client_id: u64, enabled: bool },
     /// The committed shell asks the server to replay presentation effects before input resumes.
     ClientShellPresentationSync { client_id: u64, token: String },
+    /// A client-owned shell allowed or denied a pending local API confirmation.
+    ClientShellApiConfirmation {
+        client_id: u64,
+        answer: crate::protocol::endpoint::EndpointApiConfirmationAnswer,
+    },
     /// A client-owned shell invoked one endpoint operation through this connection.
     ClientShellEndpointRequest {
         client_id: u64,
@@ -1345,6 +1350,15 @@ fn client_read_loop_with_endpoint_controls(
                     client_id,
                     token: data,
                 }
+            }
+            ClientMessage::EndpointControl { kind, data }
+                if kind == crate::protocol::endpoint::API_CONFIRMATION_ANSWER_KIND =>
+            {
+                let Ok(answer) = serde_json::from_str(&data) else {
+                    debug!(client_id, "ignoring malformed api confirmation answer");
+                    continue;
+                };
+                ServerEvent::ClientShellApiConfirmation { client_id, answer }
             }
             ClientMessage::EndpointControl { kind, data } => {
                 let Some(response) = crate::server::client_endpoint_control::response(&kind, data)

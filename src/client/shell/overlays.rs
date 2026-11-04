@@ -63,6 +63,7 @@ pub(crate) fn render_client_overlay(
         }
         ClientShellOverlay::Rename(v) => render_rename_overlay(b, v, p),
         ClientShellOverlay::ConfirmClose(v) => render_confirm_close_overlay(b, v, p),
+        ClientShellOverlay::ApiConfirmation(v) => render_api_confirmation_overlay(b, v, p),
         ClientShellOverlay::Help(v) => render_help_overlay(b, v, k, p),
         ClientShellOverlay::Navigator(v) => {
             render_navigator_overlay(b, v, endpoints, active_endpoint_id, p)
@@ -1250,6 +1251,61 @@ fn render_help_overlay(
         help_scroll_metrics: Some(metrics),
         help_max_scroll: max_scroll,
         cursor,
+        ..OverlayRender::default()
+    })
+}
+fn render_api_confirmation_overlay(
+    b: &mut Buffer,
+    c: &crate::protocol::ClientShellApiConfirmation,
+    p: &Palette,
+) -> Option<OverlayRender> {
+    let q = popup(b.area, 72, 6)?;
+    let i = panel(b, q, p.red, p.panel_bg)?;
+    put_text(
+        b,
+        i.x,
+        i.y,
+        i.width,
+        " A program asked HyperOx through the local API:",
+        Style::default()
+            .fg(p.red)
+            .bg(p.panel_bg)
+            .add_modifier(Modifier::BOLD),
+    );
+    put_text(
+        b,
+        i.x,
+        i.y + 1,
+        i.width,
+        &format!(" {}", c.prompt),
+        Style::default().fg(p.text).bg(p.panel_bg),
+    );
+    let rs = row(i, &[11, 10], 2, 3);
+    let [allow, deny] = rs.as_slice() else {
+        return None;
+    };
+    button(
+        b,
+        *allow,
+        " ↵ allow ",
+        Style::default()
+            .fg(contrast(p))
+            .bg(p.red)
+            .add_modifier(Modifier::BOLD),
+    );
+    button(
+        b,
+        *deny,
+        " esc deny ",
+        Style::default()
+            .fg(p.text)
+            .bg(p.surface0)
+            .add_modifier(Modifier::BOLD),
+    );
+    Some(OverlayRender {
+        area: q,
+        primary: *allow,
+        cancel: *deny,
         ..OverlayRender::default()
     })
 }
