@@ -213,6 +213,16 @@ pub(super) fn caller_pane_id() -> Option<String> {
         .filter(|value| !value.trim().is_empty())
 }
 
+/// Hook and plugin installs run in this process, without the API confirmation (ADR-049),
+/// only when the user runs the CLI outside any pane against the local machine.
+pub(super) fn installs_run_in_process() -> bool {
+    install_route_in_process(is_remote(), std::env::var("H0X_PANE_ID").ok().as_deref())
+}
+
+fn install_route_in_process(remote: bool, pane_id: Option<&str>) -> bool {
+    !remote && pane_id.is_none_or(|pane_id| pane_id.trim().is_empty())
+}
+
 fn parse_machine_prefix(args: &[String]) -> Result<Option<(String, Vec<String>)>, String> {
     let mut index = 1;
     let mut machine = None;
@@ -340,6 +350,17 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).into()).collect()
+    }
+
+    #[test]
+    fn installs_run_in_process_only_outside_panes_on_the_local_machine() {
+        assert!(install_route_in_process(false, None));
+        assert!(install_route_in_process(false, Some("")));
+        assert!(install_route_in_process(false, Some("  ")));
+        assert!(!install_route_in_process(false, Some("w1:p1")));
+        assert!(!install_route_in_process(false, Some("C:\\Users\\me")));
+        assert!(!install_route_in_process(true, None));
+        assert!(!install_route_in_process(true, Some("w1:p1")));
     }
 
     #[test]

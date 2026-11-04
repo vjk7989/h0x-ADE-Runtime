@@ -43,22 +43,16 @@ pub(super) fn run_plugin_command(args: &[String]) -> std::io::Result<i32> {
         Err(ParseError::Clap(error)) => return super::print_clap_error(&error),
     };
     match method {
-        Method::PluginLink(params) if runs_in_process() => {
+        Method::PluginLink(params) if super::target::installs_run_in_process() => {
             super::print_response(&offline_plugin_link_response(&params)?)
         }
-        Method::PluginEnable(params) if runs_in_process() => {
+        Method::PluginEnable(params) if super::target::installs_run_in_process() => {
             super::print_response(&offline_plugin_enable_response(&params.plugin_id)?)
         }
         Method::PluginLink(params) => plugin_link(params),
         Method::PluginList(params) => plugin_list(params, json),
         method => print_plugin_response(method),
     }
-}
-
-/// Link and enable run here, without the API confirmation (ADR-049), when the user runs the
-/// CLI outside any pane against the local machine. Inside a pane they go through the API.
-fn runs_in_process() -> bool {
-    !super::target::is_remote() && super::target::caller_pane_id().is_none()
 }
 
 fn plugin_link(params: PluginLinkParams) -> std::io::Result<i32> {

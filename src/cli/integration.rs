@@ -90,6 +90,16 @@ fn integration_install(args: &[String]) -> std::io::Result<i32> {
         return Ok(2);
     };
 
+    // Inside a pane or against another machine the install goes through the API, which
+    // asks the user in the attached client first (ADR-049).
+    if !super::target::installs_run_in_process() {
+        let IntegrationCommandTarget::Builtin(target) = target else {
+            eprintln!("letta can only be installed by running h0x outside a pane on this machine");
+            return Ok(1);
+        };
+        return integration_install_through_api(target);
+    }
+
     let installed = match target {
         IntegrationCommandTarget::Builtin(target) => crate::integration::install_target(target),
         IntegrationCommandTarget::Letta => crate::integration::install_experimental_letta(),
@@ -103,6 +113,30 @@ fn integration_install(args: &[String]) -> std::io::Result<i32> {
             eprintln!("{err}");
             Ok(1)
         }
+    }
+}
+
+fn integration_install_through_api(target: IntegrationTarget) -> std::io::Result<i32> {
+    let response = super::send_request(&crate::api::schema::Request {
+        id: "cli:integration".into(),
+        method: crate::api::schema::Method::IntegrationInstall(
+            crate::api::schema::IntegrationInstallParams { target },
+        ),
+    })?;
+    match response
+        .pointer("/result/details/messages")
+        .and_then(serde_json::Value::as_array)
+    {
+        Some(messages) if response.get("error").is_none() => {
+            print_integration_messages(
+                messages
+                    .iter()
+                    .filter_map(|message| message.as_str().map(str::to_owned))
+                    .collect(),
+            );
+            Ok(0)
+        }
+        _ => super::print_response(&response),
     }
 }
 
