@@ -2150,8 +2150,8 @@ mod tests {
     fn mark_linked_worktree(state: &mut AppState, ws_idx: usize) {
         state.workspaces[ws_idx].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
             key: "repo-key".into(),
-            label: "herdr".into(),
-            repo_root: "/repo/herdr".into(),
+            label: "h0x".into(),
+            repo_root: "/repo/h0x".into(),
             checkout_path: format!("/repo/worktree-{ws_idx}").into(),
             is_linked_worktree: true,
         });
@@ -2160,9 +2160,9 @@ mod tests {
     fn mark_parent_worktree(state: &mut AppState, ws_idx: usize) {
         state.workspaces[ws_idx].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
             key: "repo-key".into(),
-            label: "herdr".into(),
-            repo_root: "/repo/herdr".into(),
-            checkout_path: "/repo/herdr".into(),
+            label: "h0x".into(),
+            repo_root: "/repo/h0x".into(),
+            checkout_path: "/repo/h0x".into(),
             is_linked_worktree: false,
         });
     }
@@ -2173,8 +2173,8 @@ mod tests {
         let root = state.workspaces[0].tabs[0].root_pane;
 
         assert_eq!(
-            notification_context(&state.workspaces[0], "__herdr_projects__", 0, root),
-            "__herdr_projects__ · 1"
+            notification_context(&state.workspaces[0], "__h0x_projects__", 0, root),
+            "__h0x_projects__ · 1"
         );
     }
 
@@ -2261,9 +2261,9 @@ mod tests {
                 "./src/app/actions.rs:795",
             ),
             (
-                "open ../herdr-worktrees/issue-1",
-                "herdr",
-                "../herdr-worktrees/issue-1",
+                "open ../h0x-worktrees/issue-1",
+                "h0x",
+                "../h0x-worktrees/issue-1",
             ),
             (
                 "edit src/app/actions.rs,then",
@@ -2299,7 +2299,7 @@ mod tests {
             ),
             ("refs #123 and @owner/name", "#123", "#123"),
             ("refs #123 and @owner/name", "owner", "@owner/name"),
-            ("cargo test --package=herdr", "--package", "--package=herdr"),
+            ("cargo test --package=h0x", "--package", "--package=h0x"),
             (
                 "cargo test app::actions::tests",
                 "app::",
@@ -2312,7 +2312,7 @@ mod tests {
             ),
             ("ERROR [worker-1] request_id=abc-123", "worker", "worker-1"),
             (
-                "tmux|newhoo|fixhoo|newmoo|notification|window_bell|herdr",
+                "tmux|newhoo|fixhoo|newmoo|notification|window_bell|h0x",
                 "newhoo",
                 "newhoo",
             ),
@@ -2359,7 +2359,7 @@ mod tests {
     fn double_click_word_bounds_ignore_delimiters() {
         for (row, click) in [
             (
-                "tmux|newhoo|fixhoo|newmoo|notification|window_bell|herdr",
+                "tmux|newhoo|fixhoo|newmoo|notification|window_bell|h0x",
                 "|",
             ),
             ("alpha,beta;gamma", ","),
@@ -2888,16 +2888,16 @@ mod tests {
         let mut state = app_with_workspaces(&["main", "issue", "notes"]);
         state.workspaces[0].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
             key: "repo-key".into(),
-            label: "herdr".into(),
-            repo_root: "/repo/herdr".into(),
-            checkout_path: "/repo/herdr".into(),
+            label: "h0x".into(),
+            repo_root: "/repo/h0x".into(),
+            checkout_path: "/repo/h0x".into(),
             is_linked_worktree: false,
         });
         state.workspaces[1].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
             key: "repo-key".into(),
-            label: "herdr".into(),
-            repo_root: "/repo/herdr".into(),
-            checkout_path: "/repo/herdr-issue".into(),
+            label: "h0x".into(),
+            repo_root: "/repo/h0x".into(),
+            checkout_path: "/repo/h0x-issue".into(),
             is_linked_worktree: true,
         });
         state.selected = 0;
@@ -3808,7 +3808,7 @@ mod tests {
     }
 
     #[test]
-    fn shell_return_keeps_agents_herdr_recognizes_by_process() {
+    fn shell_return_keeps_agents_h0x_recognizes_by_process() {
         let mut state = app_with_workspaces(&["one"]);
         let (pane_id, terminal_id) = first_pane_terminal(&state);
         state.handle_app_event(AppEvent::AgentProcessDetected {
@@ -4133,8 +4133,7 @@ mod tests {
             .unwrap()
             .attached_terminal_id
             .clone();
-        let cwd =
-            std::env::temp_dir().join(format!("herdr-cwd-report-test-{}", std::process::id()));
+        let cwd = std::env::temp_dir().join(format!("h0x-cwd-report-test-{}", std::process::id()));
         std::fs::create_dir_all(&cwd).unwrap();
         state.session_dirty = false;
 
@@ -4255,7 +4254,7 @@ mod tests {
     }
 
     #[test]
-    fn active_workspace_active_tab_keeps_herdr_toast_suppressed_when_outer_terminal_is_unfocused() {
+    fn active_workspace_active_tab_keeps_h0x_toast_suppressed_when_outer_terminal_is_unfocused() {
         let mut state = app_with_workspaces(&["active"]);
         state.active = Some(0);
         state.outer_terminal_focus = Some(false);

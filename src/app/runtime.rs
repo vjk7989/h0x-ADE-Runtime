@@ -58,7 +58,7 @@ impl App {
     pub(crate) fn expire_metadata_at(&mut self, deadline: Instant, now: Instant) {
         let previous_toast = self.state.toast.clone();
         for update in self.state.expire_agent_metadata_at(deadline, now) {
-            self.refresh_new_herdr_toast_context_for_update(&update, &previous_toast);
+            self.refresh_new_h0x_toast_context_for_update(&update, &previous_toast);
             self.emit_pane_state_update(&update);
         }
         let (panes, workspaces) = self.state.expire_metadata_tokens(now);

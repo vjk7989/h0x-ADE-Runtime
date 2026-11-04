@@ -1643,7 +1643,7 @@ impl App {
     }
 
     /// A resume command belongs to the session it was reported with, so it is
-    /// kept only when Herdr accepted that session.
+    /// kept only when HyperOx accepted that session.
     fn session_report_applied(
         &self,
         ws_idx: usize,
@@ -3038,9 +3038,9 @@ mod tests {
         app.state.ensure_test_terminals();
         app.state.workspaces[0].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
             key: "repo-key".into(),
-            label: "herdr".into(),
-            repo_root: "/repo/herdr".into(),
-            checkout_path: "/repo/herdr-issue".into(),
+            label: "h0x".into(),
+            repo_root: "/repo/h0x".into(),
+            checkout_path: "/repo/h0x-issue".into(),
             is_linked_worktree: true,
         });
         app
@@ -3056,7 +3056,7 @@ mod tests {
                         .or_insert_with(|| {
                             crate::terminal::TerminalState::new(
                                 pane.attached_terminal_id.clone(),
-                                std::path::PathBuf::from("/herdr-test"),
+                                std::path::PathBuf::from("/h0x-test"),
                             )
                         });
                 }
@@ -4668,7 +4668,7 @@ mod tests {
     fn pane_report_metadata_rejects_invalid_applies_to_source() {
         let (mut app, pane_id) = app_with_test_workspace();
         let mut params = metadata_params(pane_id);
-        params.applies_to_source = Some("herdr source".into());
+        params.applies_to_source = Some("h0x source".into());
 
         let response = app.handle_pane_report_metadata("req".into(), params);
 

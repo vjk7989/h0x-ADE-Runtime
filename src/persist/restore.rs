@@ -1094,7 +1094,7 @@ mod tests {
     #[test]
     fn restored_worktree_space_membership_preserves_unavailable_checkout_and_rejects_replacement() {
         let root = std::env::temp_dir().join(format!(
-            "herdr-restored-worktree-{}-{}",
+            "h0x-restored-worktree-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1107,7 +1107,7 @@ mod tests {
         let checkout = root.join("checkout");
         let membership = crate::workspace::WorktreeSpaceMembership {
             key: "original-repo-key".into(),
-            label: "herdr".into(),
+            label: "h0x".into(),
             repo_root: root.join("original-repo"),
             checkout_path: checkout.clone(),
             is_linked_worktree: true,
@@ -1431,7 +1431,7 @@ mod tests {
             ))
             .unwrap();
             let cwd = std::env::current_dir().unwrap();
-            let missing = cwd.join("__herdr_missing_restore_directory__");
+            let missing = cwd.join("__h0x_missing_restore_directory__");
             assert!(!missing.exists());
             for workspace in &mut snapshot.workspaces {
                 workspace.identity_cwd = cwd.clone();
@@ -1466,7 +1466,7 @@ mod tests {
                 80,
                 0,
                 if missing_shell {
-                    "__herdr_missing_restore_shell__"
+                    "__h0x_missing_restore_shell__"
                 } else {
                     test_restore_shell()
                 },

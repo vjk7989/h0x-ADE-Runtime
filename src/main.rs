@@ -453,8 +453,8 @@ fn should_block_nested(config: &config::Config) -> bool {
     should_block_nested_for_env(config, std::env::var(H0X_ENV_VAR).ok().as_deref())
 }
 
-fn should_block_nested_for_env(config: &config::Config, herdr_env: Option<&str>) -> bool {
-    !config.experimental.allow_nested && herdr_env == Some(H0X_ENV_VALUE)
+fn should_block_nested_for_env(config: &config::Config, h0x_env: Option<&str>) -> bool {
+    !config.experimental.allow_nested && h0x_env == Some(H0X_ENV_VALUE)
 }
 
 fn random_nested_message() -> &'static str {
@@ -811,20 +811,20 @@ mod tests {
     }
 
     #[test]
-    fn nested_herdr_blocks_when_env_is_set() {
+    fn nested_h0x_blocks_when_env_is_set() {
         let config = config::Config::default();
         assert!(should_block_nested_for_env(&config, Some(H0X_ENV_VALUE)));
     }
 
     #[test]
-    fn nested_herdr_does_not_block_when_allowed() {
+    fn nested_h0x_does_not_block_when_allowed() {
         let config: config::Config =
             toml::from_str("[experimental]\nallow_nested = true\n").unwrap();
         assert!(!should_block_nested_for_env(&config, Some(H0X_ENV_VALUE)));
     }
 
     #[test]
-    fn nested_herdr_does_not_block_without_env() {
+    fn nested_h0x_does_not_block_without_env() {
         let config = config::Config::default();
         assert!(!should_block_nested_for_env(&config, None));
     }
@@ -836,7 +836,7 @@ mod tests {
     }
 
     #[test]
-    fn nested_message_strings_no_longer_repeat_herdr_prefix() {
+    fn nested_message_strings_no_longer_repeat_h0x_prefix() {
         assert!(NESTED_H0X_MESSAGES
             .iter()
             .all(|message| !message.starts_with("h0x:")));

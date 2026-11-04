@@ -245,7 +245,7 @@ mod tests {
     fn with_config(test: impl FnOnce()) {
         let _guard = crate::config::test_config_env_lock().lock().unwrap();
         let root = std::env::temp_dir().join(format!(
-            "herdr-plugin-cleanup-{}-{}",
+            "h0x-plugin-cleanup-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

@@ -263,7 +263,7 @@ mod tests {
         #[cfg(unix)]
         use interprocess::local_socket::traits::Listener as _;
         let path = std::env::temp_dir().join(format!(
-            "herdr-writer-{}-{}.sock",
+            "h0x-writer-{}-{}.sock",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

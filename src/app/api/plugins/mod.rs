@@ -965,7 +965,7 @@ action = "open"
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        std::env::temp_dir().join(format!("herdr-{name}-{}-{nanos}", std::process::id()))
+        std::env::temp_dir().join(format!("h0x-{name}-{}-{nanos}", std::process::id()))
     }
 
     fn canonical_path_string(path: &std::path::Path) -> String {
@@ -1336,20 +1336,20 @@ command = ["echo", " a", "first "]
     fn link_rejects_invalid_min_h0x_versions() {
         let cases = [
             (
-                "plugin-missing-min-herdr",
+                "plugin-missing-min-h0x",
                 r#"
-id = "example.missing-min-herdr"
-name = "Missing Min Herdr"
+id = "example.missing-min-h0x"
+name = "Missing Min HyperOx"
 version = "0.1.0"
 platforms = ["linux", "macos", "windows"]
 "#,
                 "invalid_plugin_min_h0x_version",
             ),
             (
-                "plugin-invalid-min-herdr",
+                "plugin-invalid-min-h0x",
                 r#"
-id = "example.invalid-min-herdr"
-name = "Invalid Min Herdr"
+id = "example.invalid-min-h0x"
+name = "Invalid Min HyperOx"
 version = "0.1.0"
 min_h0x_version = "soon"
 platforms = ["linux", "macos", "windows"]
@@ -1357,10 +1357,10 @@ platforms = ["linux", "macos", "windows"]
                 "invalid_plugin_min_h0x_version",
             ),
             (
-                "plugin-future-min-herdr",
+                "plugin-future-min-h0x",
                 r#"
-id = "example.future-min-herdr"
-name = "Future Min Herdr"
+id = "example.future-min-h0x"
+name = "Future Min HyperOx"
 version = "0.1.0"
 min_h0x_version = "999.0.0"
 platforms = ["linux", "macos", "windows"]
@@ -1660,7 +1660,7 @@ platforms = ["linux", "macos"]
         let where_exe = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
             .join("System32/where.exe");
         std::fs::copy(where_exe, &long_where).unwrap();
-        let where_probe = "herdr-long-path-probe.exe";
+        let where_probe = "h0x-long-path-probe.exe";
         std::fs::write(child_cwd.join(where_probe), b"").unwrap();
         assert!(
             root.as_os_str().encode_wide().count()
@@ -1876,13 +1876,13 @@ command = ["sh", "-c", '"$H0X_BIN_PATH" --list >/dev/null; printf "%s\n" "$?" > 
             assert_eq!(
                 (action_status.trim(), pane_status.trim()),
                 ("0", "0"),
-                "plugin action and pane must launch Herdr after its executable is replaced"
+                "plugin action and pane must launch HyperOx after its executable is replaced"
             );
             return;
         }
 
         let root = std::path::PathBuf::from("/var/tmp").join(format!(
-            "herdr-plugin-update-{}-{}",
+            "h0x-plugin-update-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -1890,7 +1890,7 @@ command = ["sh", "-c", '"$H0X_BIN_PATH" --list >/dev/null; printf "%s\n" "$?" > 
                 .as_nanos()
         ));
         std::fs::create_dir_all(&root).unwrap();
-        let executable = root.join("herdr test");
+        let executable = root.join("h0x test");
         std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
         let result = std::process::Command::new(&executable)
             .args([
@@ -1976,7 +1976,7 @@ command = ["sh", "-c", "printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \"$PWD\" \
                         "H0X_PLUGIN_CONTEXT_JSON".to_string(),
                         "{\"spoofed\":true}".to_string(),
                     ),
-                    ("H0X_BIN_PATH".to_string(), "/tmp/spoofed-herdr".to_string()),
+                    ("H0X_BIN_PATH".to_string(), "/tmp/spoofed-h0x".to_string()),
                 ]),
             }),
         });
@@ -1999,7 +1999,7 @@ command = ["sh", "-c", "printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \"$PWD\" \
         assert_eq!(lines.next(), Some(plugin_pane.pane.workspace_id.as_str()));
         assert_eq!(lines.next(), Some(plugin_pane.pane.pane_id.as_str()));
         let bin_path = lines.next().expect("bin path");
-        assert_ne!(bin_path, "/tmp/spoofed-herdr");
+        assert_ne!(bin_path, "/tmp/spoofed-h0x");
         assert_eq!(
             bin_path,
             std::env::current_exe()
@@ -3186,27 +3186,27 @@ command = ["sh", "-c", "printf '%s' \"$H0X_PLUGIN_CONTEXT_JSON\" > {}"]
 
         app.state.workspaces[0].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
             key: "repo-key".into(),
-            label: "herdr".into(),
-            repo_root: "/repo/herdr".into(),
-            checkout_path: "/repo/herdr-issue".into(),
+            label: "h0x".into(),
+            repo_root: "/repo/h0x".into(),
+            checkout_path: "/repo/h0x-issue".into(),
             is_linked_worktree: true,
         });
         let workspace = app.workspace_info(0);
         let worktree = crate::api::schema::WorktreeInfo {
-            path: "/repo/herdr-issue".into(),
+            path: "/repo/h0x-issue".into(),
             branch: Some("worktree/issue".into()),
             is_bare: false,
             is_detached: false,
             is_prunable: false,
             is_linked_worktree: true,
             open_workspace_id: None,
-            label: "herdr".into(),
+            label: "h0x".into(),
         };
         app.state.workspaces[0].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
             key: "repo-key".into(),
-            label: "herdr".into(),
-            repo_root: "/repo/herdr".into(),
-            checkout_path: "/repo/herdr-other".into(),
+            label: "h0x".into(),
+            repo_root: "/repo/h0x".into(),
+            checkout_path: "/repo/h0x-other".into(),
             is_linked_worktree: true,
         });
         let changed_context = app.plugin_context_for_event(
@@ -3226,7 +3226,7 @@ command = ["sh", "-c", "printf '%s' \"$H0X_PLUGIN_CONTEXT_JSON\" > {}"]
                 .worktree
                 .as_ref()
                 .map(|worktree| worktree.checkout_path.as_str()),
-            Some("/repo/herdr-issue")
+            Some("/repo/h0x-issue")
         );
 
         app.state.workspaces.clear();
@@ -3251,7 +3251,7 @@ command = ["sh", "-c", "printf '%s' \"$H0X_PLUGIN_CONTEXT_JSON\" > {}"]
                 .worktree
                 .as_ref()
                 .map(|worktree| worktree.checkout_path.as_str()),
-            Some("/repo/herdr-issue")
+            Some("/repo/h0x-issue")
         );
     }
 
@@ -3470,9 +3470,9 @@ action = "missing"
         app.state.workspaces[0].custom_name = Some("Plugin Work".into());
         app.state.workspaces[0].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
             key: "repo-key".into(),
-            label: "herdr".into(),
-            repo_root: "/repo/herdr".into(),
-            checkout_path: "/repo/herdr-issue".into(),
+            label: "h0x".into(),
+            repo_root: "/repo/h0x".into(),
+            checkout_path: "/repo/h0x-issue".into(),
             is_linked_worktree: true,
         });
         let pane_id = app.state.workspaces[0].tabs[0].root_pane;
@@ -3549,9 +3549,9 @@ command = ["show-ctx"]
         assert_eq!(context.correlation_id.as_deref(), Some("invoke-context"));
         let worktree = context.worktree.as_ref().unwrap();
         assert_eq!(worktree.repo_key, "repo-key");
-        assert_eq!(worktree.repo_name, "herdr");
-        assert_eq!(worktree.repo_root, "/repo/herdr");
-        assert_eq!(worktree.checkout_path, "/repo/herdr-issue");
+        assert_eq!(worktree.repo_name, "h0x");
+        assert_eq!(worktree.repo_root, "/repo/h0x");
+        assert_eq!(worktree.checkout_path, "/repo/h0x-issue");
         assert!(worktree.is_linked_worktree);
 
         let _ = std::fs::remove_dir_all(root);

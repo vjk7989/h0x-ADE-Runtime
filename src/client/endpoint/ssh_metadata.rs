@@ -123,7 +123,7 @@ mod tests {
     #[test]
     fn metadata_accepts_only_supported_platforms_and_absolute_paths() {
         for (os, path, valid) in [
-            ("linux", "/home/a b/herdr", true),
+            ("linux", "/home/a b/h0x", true),
             ("macos", "/opt/homebrew/bin/h0x", true),
             ("windows", r"C:\Program Files\h0x.exe", true),
             ("windows", r"\\server\share\h0x.exe", true),
@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn metadata_is_disposable_fingerprinted_and_independent_per_profile() {
-        let root = std::env::temp_dir().join(format!("herdr-ssh-metadata-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("h0x-ssh-metadata-{}", std::process::id()));
         let first = SshMetadataCache {
             path: root.join("first.json"),
             target: "mac".into(),
@@ -160,7 +160,7 @@ mod tests {
         };
         let metadata = SshMachineMetadata {
             os: "macos".into(),
-            executable: "/some path/herdr".into(),
+            executable: "/some path/h0x".into(),
         };
         assert!(first.load().is_none());
         first.store(&metadata);
@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn metadata_does_not_follow_symlinks() {
         let root =
-            std::env::temp_dir().join(format!("herdr-ssh-metadata-link-{}", std::process::id()));
+            std::env::temp_dir().join(format!("h0x-ssh-metadata-link-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let cache = SshMetadataCache {
             path: root.join("cache.json"),

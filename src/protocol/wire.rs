@@ -543,7 +543,7 @@ pub enum ClientMessage {
         takeover: bool,
     },
 
-    /// Result of the one armed Herdr-owned direct Kitty transmission.
+    /// Result of the one armed HyperOx-owned direct Kitty transmission.
     GraphicsTransmissionResult {
         transfer_id: u64,
         image_id: u32,
@@ -701,7 +701,7 @@ pub struct CellData {
     pub fg: u32,
     /// Background color as a packed u32.
     pub bg: u32,
-    /// Bitmask of style modifiers (bold, italic, etc.) plus Herdr extension bits.
+    /// Bitmask of style modifiers (bold, italic, etc.) plus HyperOx extension bits.
     pub modifier: u16,
     /// Whether this cell should be skipped during diff-based rendering.
     pub skip: bool,
@@ -1426,7 +1426,7 @@ pub enum ServerMessage {
 
     /// Set the foreground client's outer terminal window title.
     WindowTitle {
-        /// Sanitized title to write with OSC 0. `None` restores Herdr's default title.
+        /// Sanitized title to write with OSC 0. `None` restores HyperOx's default title.
         title: Option<String>,
     },
 
@@ -1435,7 +1435,7 @@ pub enum ServerMessage {
 
     /// Whether the client should currently capture host mouse input.
     MouseCapture {
-        /// True when Herdr mouse UI is enabled or the focused pane app requests mouse reporting.
+        /// True when HyperOx mouse UI is enabled or the focused pane app requests mouse reporting.
         enabled: bool,
         /// True only while the focused pane requests DEC SGR pixel mode 1016.
         sgr_pixels: bool,
@@ -1447,7 +1447,7 @@ pub enum ServerMessage {
         count: u16,
     },
 
-    /// One validated Herdr-owned Kitty regular-file RGBA transmission.
+    /// One validated HyperOx-owned Kitty regular-file RGBA transmission.
     GraphicsFile {
         path: String,
         expected_len: u64,
@@ -2801,7 +2801,7 @@ mod tests {
             server_keybindings_toml: Some("[keys]\nprefix = \"ctrl+a\"\n".into()),
             latest_release_notes_available: true,
             integration_updates_available: true,
-            worktree_directory: "/tmp/herdr-worktrees".into(),
+            worktree_directory: "/tmp/h0x-worktrees".into(),
             release_notes: Some(ClientShellReleaseNotes {
                 version: "0.8.3".into(),
                 body: "### New\n- Update ready".into(),
@@ -3022,7 +3022,7 @@ mod tests {
         assert_eq!(client, decoded);
 
         let server = ServerMessage::GraphicsFile {
-            path: "/run/user/1000/herdr/source/frame".into(),
+            path: "/run/user/1000/h0x/source/frame".into(),
             expected_len: 4,
             image_id: 42,
             transfer_id: 7,

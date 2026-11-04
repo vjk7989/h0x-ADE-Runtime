@@ -973,7 +973,7 @@ mod tests {
     #[cfg(unix)]
     fn temp_detection_path(name: &str) -> std::path::PathBuf {
         let unique = format!(
-            "herdr-detect-tests-{}-{}-{}",
+            "h0x-detect-tests-{}-{}-{}",
             name,
             std::process::id(),
             std::time::SystemTime::now()
@@ -1693,7 +1693,7 @@ mod tests {
             ("bun", "/home/can/.bun/bin/omp"),
             (
                 "bun.exe",
-                r"C:\Users\herdr\AppData\Roaming\npm\node_modules\@oh-my-pi\pi-coding-agent\dist\cli.js",
+                r"C:\Users\h0x\AppData\Roaming\npm\node_modules\@oh-my-pi\pi-coding-agent\dist\cli.js",
             ),
         ] {
             let job = crate::platform::ForegroundJob {
@@ -1714,7 +1714,7 @@ mod tests {
                 "bun.exe",
                 &[
                     "bun.exe",
-                    r"C:\Users\herdr\AppData\Roaming\npm\node_modules\@oh-my-pi\pi-coding-agent\dist\setup.js",
+                    r"C:\Users\h0x\AppData\Roaming\npm\node_modules\@oh-my-pi\pi-coding-agent\dist\setup.js",
                 ],
             )],
         };
@@ -1730,7 +1730,7 @@ mod tests {
                 "node.exe",
                 &[
                     "node.exe",
-                    "C:\\Users\\herdr\\AppData\\Roaming\\npm\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js",
+                    "C:\\Users\\h0x\\AppData\\Roaming\\npm\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js",
                 ],
             )],
         };
@@ -1752,8 +1752,8 @@ mod tests {
                 123,
                 "node.exe",
                 &[
-                    r"C:\Users\herdr\AppData\Local\pi-node\current\node.exe",
-                    r"C:\Users\herdr\AppData\Local\pi-node\current/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+                    r"C:\Users\h0x\AppData\Local\pi-node\current\node.exe",
+                    r"C:\Users\h0x\AppData\Local\pi-node\current/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
                 ],
             )],
         };
@@ -1773,7 +1773,7 @@ mod tests {
                 "node.exe",
                 &[
                     "node.exe",
-                    "C:\\Users\\herdr\\AppData\\Roaming\\npm\\node_modules\\mastracode\\dist\\cli.js",
+                    "C:\\Users\\h0x\\AppData\\Roaming\\npm\\node_modules\\mastracode\\dist\\cli.js",
                 ],
             )],
         };
@@ -1807,8 +1807,8 @@ mod tests {
     #[test]
     fn identify_agent_in_job_ignores_non_cli_pi_package_scripts() {
         for script in [
-            r"C:\Users\herdr\AppData\Roaming\npm\node_modules\@earendil-works\pi-coding-agent\scripts\build.js",
-            r"C:\Users\herdr\AppData\Local\pi-node\current\node_modules\@earendil-works\pi-coding-agent\dist\bundle\update.js",
+            r"C:\Users\h0x\AppData\Roaming\npm\node_modules\@earendil-works\pi-coding-agent\scripts\build.js",
+            r"C:\Users\h0x\AppData\Local\pi-node\current\node_modules\@earendil-works\pi-coding-agent\dist\bundle\update.js",
             r"C:\workspace\dist\bundle\cli.js",
             r"C:\workspace\node_modules\other-package\dist\bundle\cli.js",
             r"C:\workspace\node_modules\@earendil-works\pi-coding-agent\dist\cli.exe",
@@ -1837,7 +1837,7 @@ mod tests {
                     "/D",
                     "/S",
                     "/C",
-                    "C:\\Users\\herdr\\AppData\\Roaming\\npm\\codex.cmd --model gpt-5",
+                    "C:\\Users\\h0x\\AppData\\Roaming\\npm\\codex.cmd --model gpt-5",
                 ],
             )],
         };
@@ -1859,7 +1859,7 @@ mod tests {
                     "powershell.exe",
                     "-NoProfile",
                     "-File",
-                    "C:\\Users\\herdr\\Documents\\PowerShell\\Scripts\\claude.ps1",
+                    "C:\\Users\\h0x\\Documents\\PowerShell\\Scripts\\claude.ps1",
                 ],
             )],
         };
@@ -1870,11 +1870,11 @@ mod tests {
         );
     }
 
-    // A plain shell pane launched with herdr's injected prompt integration
+    // A plain shell pane launched with h0x's injected prompt integration
     // must still classify as a shell, not an agent, even though its argv now
     // carries a -Command payload.
     #[test]
-    fn identify_agent_in_job_ignores_herdr_powershell_shell_integration_argv() {
+    fn identify_agent_in_job_ignores_h0x_powershell_shell_integration_argv() {
         let job = crate::platform::ForegroundJob {
             process_group_id: 123,
             processes: vec![foreground_process(

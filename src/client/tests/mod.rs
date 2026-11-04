@@ -453,7 +453,7 @@ fn terminal_frame_kitty_detection_matches_apc_prefix() {
 }
 
 #[test]
-fn kitty_graphics_image_id_parser_tracks_herdr_ids_only() {
+fn kitty_graphics_image_id_parser_tracks_h0x_ids_only() {
     let ids = kitty_graphics_image_ids(
         b"text\x1b_Ga=t,t=d,f=32,s=1,v=1,i=10023,q=2;AAAA\x1b\\\x1b_Ga=p,i=10023,p=7;\x1b\\",
     );

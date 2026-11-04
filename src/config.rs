@@ -106,7 +106,7 @@ impl Config {
         self.validated_keybinds().1
     }
 
-    /// Parsed keybinds for Herdr actions.
+    /// Parsed keybinds for HyperOx actions.
     pub fn keybinds(&self) -> Keybinds {
         self.validated_keybinds().3
     }

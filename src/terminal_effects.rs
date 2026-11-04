@@ -36,7 +36,7 @@ mod tests {
     }
 
     #[test]
-    fn window_title_strips_terminators_and_defaults_to_herdr() {
+    fn window_title_strips_terminators_and_defaults_to_h0x() {
         let mut output = Vec::new();
         write_window_title(&mut output, Some("h0x\x1b api\u{7}\u{9c}")).unwrap();
         assert_eq!(output, b"\x1b]0;h0x api\x07");

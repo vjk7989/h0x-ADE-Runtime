@@ -750,7 +750,7 @@ fn server_start_restores_legacy_session_through_api_identity() {
     let h0x_cwd = h0x_cwd.to_str().expect("test cwd should be UTF-8");
     let legacy_session = include_str!("../fixtures/session/legacy-pre-tabs-v2.json")
         .replace("/tmp/pion", pion_cwd)
-        .replace("/tmp/h0x", h0x_cwd);
+        .replace("/tmp/herdr", h0x_cwd);
     fs::write(data_dir.join("session.json"), legacy_session).unwrap();
 
     let h0x = spawn_h0x(&config_home, &runtime_dir, &socket_path);

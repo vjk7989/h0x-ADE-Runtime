@@ -561,7 +561,7 @@ mod tests {
 
     fn temp_log_path(name: &str) -> PathBuf {
         let unique = format!(
-            "herdr-logging-tests-{}-{}-{}",
+            "h0x-logging-tests-{}-{}-{}",
             name,
             std::process::id(),
             std::time::SystemTime::now()

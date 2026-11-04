@@ -1076,7 +1076,7 @@ fn run_plugin_build_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    scrub_herdr_runtime_env(&mut child);
+    scrub_h0x_runtime_env(&mut child);
 
     let mut child = match child.spawn() {
         Ok(child) => child,
@@ -1254,7 +1254,7 @@ fn read_tail_capped_output(mut reader: impl Read, cap: usize) -> CappedOutput {
     }
 }
 
-fn scrub_herdr_runtime_env(command: &mut Command) {
+fn scrub_h0x_runtime_env(command: &mut Command) {
     for key in [
         crate::api::SOCKET_PATH_ENV_VAR,
         crate::server::socket_paths::CLIENT_SOCKET_PATH_ENV_VAR,
@@ -1418,7 +1418,7 @@ mod tests {
                 subdir: subdir.map(str::to_string),
                 requested_ref: None,
                 resolved_commit: Some("abc123".to_string()),
-                managed_path: Some(format!("/tmp/herdr/plugins/{id}")),
+                managed_path: Some(format!("/tmp/h0x/plugins/{id}")),
                 installed_unix_ms: Some(42),
             },
             warnings: vec![],

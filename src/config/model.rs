@@ -266,7 +266,7 @@ pub struct TerminalConfig {
 #[serde(default)]
 pub struct SessionConfig {
     /// Resume supported AI-agent panes into their native conversation sessions
-    /// when restoring a Herdr session. Default: true.
+    /// when restoring a HyperOx session. Default: true.
     pub resume_agents_on_restore: bool,
     /// Milliseconds between automatic agent restores. Zero disables spacing.
     pub startup_per_agent_delay_ms: u32,
@@ -369,7 +369,7 @@ pub struct KeysConfig {
     pub navigate_pane_up: BindingConfig,
     /// Focus the pane to the right in navigate mode. Default: "l". Right arrow is always an alias.
     pub navigate_pane_right: BindingConfig,
-    /// Detach the current client from its Herdr server. Default: "prefix+q".
+    /// Detach the current client from its HyperOx server. Default: "prefix+q".
     pub detach: BindingConfig,
     /// Reload config.toml in the running app/server. Default: "prefix+shift+r".
     pub reload_config: BindingConfig,
@@ -385,7 +385,7 @@ pub struct KeysConfig {
     pub next_agent: BindingConfig,
     /// Focus an agent by index 1-9. Unset by default.
     pub focus_agent: BindingConfig,
-    /// Local-client shortcut that sends a clipboard image to a remote Herdr session. Default: "ctrl+v".
+    /// Local-client shortcut that sends a clipboard image to a remote HyperOx session. Default: "ctrl+v".
     pub remote_image_paste: String,
     /// Create a new tab in the active workspace. Default: "prefix+c"
     pub new_tab: BindingConfig,
@@ -868,7 +868,7 @@ pub struct IndexedKeysConfig {
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct WorktreesConfig {
-    /// Root directory under which Herdr creates <repo>/<branch-slug> checkouts.
+    /// Root directory under which HyperOx creates <repo>/<branch-slug> checkouts.
     pub directory: String,
 }
 
@@ -946,9 +946,9 @@ pub struct UiConfig {
     pub sidebar_start_collapsed: bool,
     /// Collapsed sidebar presentation. Default: compact.
     pub sidebar_collapsed_mode: SidebarCollapsedModeConfig,
-    /// Terminal width at or below which Herdr uses the mobile single-column layout. Default: 64.
+    /// Terminal width at or below which HyperOx uses the mobile single-column layout. Default: 64.
     pub mobile_width_threshold: u16,
-    /// Capture mouse input for Herdr's mouse UI. Default: true.
+    /// Capture mouse input for HyperOx's mouse UI. Default: true.
     pub mouse_capture: bool,
     /// Copy text selected with the mouse. Default: true.
     pub copy_on_select: bool,
@@ -993,7 +993,7 @@ pub struct UiConfig {
     pub window_title: String,
     /// Agent sidebar ordering. Saved values are "spaces" or "priority". Default: "spaces".
     pub agent_panel_sort: AgentPanelSortConfig,
-    /// Retired setting that Herdr wrote before the workspace filter was removed.
+    /// Retired setting that HyperOx wrote before the workspace filter was removed.
     #[serde(rename = "agent_panel_scope")]
     _legacy_agent_panel_scope: Option<LegacyAgentPanelScopeConfig>,
     /// Agent status indicator style. Saved values are "dots" or "symbols". Default: "dots".
@@ -1075,7 +1075,7 @@ impl Default for RemoteConfig {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct ExperimentalConfig {
-    /// Allow launching herdr inside an existing h0x pane. Default: false.
+    /// Allow launching h0x inside an existing h0x pane. Default: false.
     pub allow_nested: bool,
     /// Deprecated compatibility key for `terminal.kitty_graphics`.
     pub kitty_graphics: Option<bool>,
@@ -1574,10 +1574,10 @@ tab_bar_right_separator = " · "
 
         let toml = r#"
 [worktrees]
-directory = "~/Projects/herdr-worktrees"
+directory = "~/Projects/h0x-worktrees"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
-        assert_eq!(config.worktrees.directory, "~/Projects/herdr-worktrees");
+        assert_eq!(config.worktrees.directory, "~/Projects/h0x-worktrees");
     }
 
     #[test]
@@ -1919,7 +1919,7 @@ delivery = "system"
     }
 
     #[test]
-    fn toast_config_legacy_enabled_true_maps_to_herdr() {
+    fn toast_config_legacy_enabled_true_maps_to_h0x() {
         let toml = r#"
 [ui.toast]
 enabled = true

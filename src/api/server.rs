@@ -1063,7 +1063,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("herdr-{name}-{}-{nanos}", std::process::id()))
+        std::env::temp_dir().join(format!("h0x-{name}-{}-{nanos}", std::process::id()))
     }
 
     fn read_line(stream: &mut LocalStream) -> String {
@@ -1211,7 +1211,7 @@ mod tests {
     #[test]
     fn socket_path_prefers_explicit_env_override() {
         let _guard = env_lock().lock().unwrap();
-        let unique = format!("/tmp/herdr-test-{}.sock", std::process::id());
+        let unique = format!("/tmp/h0x-test-{}.sock", std::process::id());
         std::env::remove_var(crate::session::SESSION_ENV_VAR);
         crate::session::clear_explicit_session_for_test();
         std::env::set_var(crate::api::SOCKET_PATH_ENV_VAR, &unique);
@@ -1417,7 +1417,7 @@ mod tests {
             &tx,
             None,
             Some(&stop),
-            Some("pid 42 (herdr)".into()),
+            Some("pid 42 (h0x)".into()),
             None,
         );
 
@@ -1428,7 +1428,7 @@ mod tests {
         assert_eq!(
             stop.take_reason(),
             Some(ShutdownReason::ApiStop {
-                caller: Some("pid 42 (herdr)".into())
+                caller: Some("pid 42 (h0x)".into())
             })
         );
 

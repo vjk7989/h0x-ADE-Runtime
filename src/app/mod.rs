@@ -1090,7 +1090,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("herdr-{name}-{}-{stamp}", std::process::id()))
+        std::env::temp_dir().join(format!("h0x-{name}-{}-{stamp}", std::process::id()))
     }
 
     fn config_env_lock() -> &'static Mutex<()> {
@@ -1099,7 +1099,7 @@ mod tests {
 
     fn temp_config_path(name: &str) -> std::path::PathBuf {
         let unique = format!(
-            "herdr-{name}-{}-{}",
+            "h0x-{name}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1213,7 +1213,7 @@ mod tests {
     }
 
     #[test]
-    fn notification_show_api_creates_herdr_toast_with_position() {
+    fn notification_show_api_creates_h0x_toast_with_position() {
         let mut app = test_app();
         app.state.toast_config.delivery = crate::config::ToastDelivery::H0x;
 
@@ -2428,8 +2428,8 @@ mod tests {
     #[test]
     fn workspace_creation_in_navigate_mode_uses_selected_workspace_seed_cwd() {
         let mut app = test_app();
-        let mut first = Workspace::test_new("herdr");
-        first.identity_cwd = std::path::PathBuf::from("/tmp/herdr");
+        let mut first = Workspace::test_new("h0x");
+        first.identity_cwd = std::path::PathBuf::from("/tmp/h0x");
         let mut second = Workspace::test_new("pion");
         second.identity_cwd = std::path::PathBuf::from("/tmp/pion");
 
@@ -2449,10 +2449,10 @@ mod tests {
     fn new_terminal_cwd_follow_uses_source_cwd() {
         let cwd = creation::resolve_new_terminal_cwd(
             &crate::config::NewTerminalCwdConfig::Follow,
-            Some(std::path::PathBuf::from("/tmp/herdr-source")),
+            Some(std::path::PathBuf::from("/tmp/h0x-source")),
         );
 
-        assert_eq!(cwd, std::path::PathBuf::from("/tmp/herdr-source"));
+        assert_eq!(cwd, std::path::PathBuf::from("/tmp/h0x-source"));
     }
 
     #[test]
@@ -2470,11 +2470,11 @@ mod tests {
     #[test]
     fn new_terminal_cwd_path_uses_configured_path() {
         let cwd = creation::resolve_new_terminal_cwd(
-            &crate::config::NewTerminalCwdConfig::Path("/tmp/herdr-fixed".into()),
-            Some(std::path::PathBuf::from("/tmp/herdr-source")),
+            &crate::config::NewTerminalCwdConfig::Path("/tmp/h0x-fixed".into()),
+            Some(std::path::PathBuf::from("/tmp/h0x-source")),
         );
 
-        assert_eq!(cwd, std::path::PathBuf::from("/tmp/herdr-fixed"));
+        assert_eq!(cwd, std::path::PathBuf::from("/tmp/h0x-fixed"));
     }
 
     #[test]
@@ -3132,17 +3132,17 @@ mod tests {
         let mut parent = Workspace::test_new("api-pane-close-parent");
         parent.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
             key: "repo-key".into(),
-            label: "herdr".into(),
-            repo_root: "/repo/herdr".into(),
-            checkout_path: "/repo/herdr".into(),
+            label: "h0x".into(),
+            repo_root: "/repo/h0x".into(),
+            checkout_path: "/repo/h0x".into(),
             is_linked_worktree: false,
         });
         let mut child = Workspace::test_new("api-pane-close-child");
         child.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
             key: "repo-key".into(),
-            label: "herdr".into(),
-            repo_root: "/repo/herdr".into(),
-            checkout_path: "/repo/herdr-child".into(),
+            label: "h0x".into(),
+            repo_root: "/repo/h0x".into(),
+            checkout_path: "/repo/h0x-child".into(),
             is_linked_worktree: true,
         });
         app.state.workspaces = vec![parent, child];

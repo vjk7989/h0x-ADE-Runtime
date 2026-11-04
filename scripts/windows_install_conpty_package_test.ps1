@@ -197,8 +197,8 @@ try {
         -ManifestUrl $stableManifestUrl `
         -InstallDir $installDir
 
-    # Keep the existing positional web-installer contract, including Retain in slot four.
-    & $installerPath "stable" $stableManifestUrl $installDir 3
+    # Keep the existing positional web-installer contract, including Retain in slot three.
+    & $installerPath $stableManifestUrl $installDir 3
 
     $localInstallDir = Join-Path $root "local-bin"
     $env:H0X_HOME = Join-Path $root "local-home"

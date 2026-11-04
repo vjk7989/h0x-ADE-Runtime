@@ -864,7 +864,7 @@ mod tests {
     fn config_loaders_report_unreadable_path() {
         let _guard = crate::config::test_config_env_lock().lock().unwrap();
         let path =
-            std::env::temp_dir().join(format!("herdr-config-unreadable-{}", std::process::id()));
+            std::env::temp_dir().join(format!("h0x-config-unreadable-{}", std::process::id()));
         std::fs::create_dir_all(&path).unwrap();
         std::env::set_var(CONFIG_PATH_ENV_VAR, &path);
 
@@ -1044,7 +1044,7 @@ mouse_captur = true
     fn startup_config_accepts_legacy_agent_panel_scope_without_warning() {
         let _guard = crate::config::test_config_env_lock().lock().unwrap();
         let path = std::env::temp_dir().join(format!(
-            "herdr-config-legacy-agent-panel-scope-{}.toml",
+            "h0x-config-legacy-agent-panel-scope-{}.toml",
             std::process::id()
         ));
         std::fs::write(&path, "[ui]\nagent_panel_scope = \"all\"\n").unwrap();
@@ -1062,7 +1062,7 @@ mouse_captur = true
     fn startup_config_load_warns_about_unknown_top_level_sections() {
         let _guard = crate::config::test_config_env_lock().lock().unwrap();
         let path = std::env::temp_dir().join(format!(
-            "herdr-config-unknown-section-{}.toml",
+            "h0x-config-unknown-section-{}.toml",
             std::process::id()
         ));
         std::fs::write(
@@ -1180,7 +1180,7 @@ mouse_capture = false
     fn config_load_recovers_from_a_mid_file_bom() {
         let _guard = crate::config::test_config_env_lock().lock().unwrap();
         let path = std::env::temp_dir().join(format!(
-            "herdr-config-mid-file-bom-{}.toml",
+            "h0x-config-mid-file-bom-{}.toml",
             std::process::id()
         ));
         std::fs::write(

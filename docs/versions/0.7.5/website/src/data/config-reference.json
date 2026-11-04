@@ -726,10 +726,10 @@
           "key": "ui.toast.delivery",
           "type": "enum",
           "default": "\"off\"",
-          "description": "Popup notification delivery. off disables popups, herdr shows in-app toasts, terminal asks the outer terminal for a desktop notification, system asks the OS notification service directly.",
+          "description": "Popup notification delivery. off disables popups, h0x shows in-app toasts, terminal asks the outer terminal for a desktop notification, system asks the OS notification service directly.",
           "values": [
             "off",
-            "herdr",
+            "h0x",
             "terminal",
             "system"
           ]
@@ -741,7 +741,7 @@
           "description": "Seconds to wait before sending finished or needs-input agent notifications. HyperOx notifies only if the pane is still in the same state when the delay expires. 0 is instant; valid values are 0 through 3600."
         },
         {
-          "key": "ui.toast.herdr.position",
+          "key": "ui.toast.h0x.position",
           "type": "enum",
           "default": "\"bottom-right\"",
           "description": "In-app toast position, relative to the full HyperOx frame.",
@@ -1032,7 +1032,7 @@
         {
           "key": "worktrees.directory",
           "type": "string",
-          "default": "\"~/.herdr/worktrees\"",
+          "default": "\"~/.h0x/worktrees\"",
           "description": "Root directory under which HyperOx creates <repo>/<branch-slug> checkouts."
         }
       ]

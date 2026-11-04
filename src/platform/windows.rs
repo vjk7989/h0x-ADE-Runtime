@@ -676,7 +676,7 @@ thread_local! {
 
 /// Native processor architecture of the Windows host as an
 /// `IMAGE_FILE_MACHINE_*` value. `IsWow64Process2` reports the native machine
-/// even when an x64 Herdr runs under emulation on Windows ARM64, which the
+/// even when an x64 HyperOx runs under emulation on Windows ARM64, which the
 /// build target alone cannot reveal.
 pub(crate) fn native_machine_type() -> u16 {
     let mut process_machine = 0u16;
@@ -3165,7 +3165,7 @@ fn read_unicode_string(process: HANDLE, unicode: UNICODE_STRING) -> Option<Strin
 
 // Prefix-mode ASCII input source support (see `switch_ascii_input_source_in_prefix`).
 //
-// Windows IMEs live in the terminal-emulator process, not in herdr. Empirically:
+// Windows IMEs live in the terminal-emulator process, not in h0x. Empirically:
 //   - `WM_IME_CONTROL` / `IMC_GETOPENSTATUS` reads whether the IME is open
 //     (composing native characters) reliably across the process boundary (this
 //     is what kren-select uses), so we detect state with it. The read goes
@@ -3209,7 +3209,7 @@ const IME_STATUS_READ_TIMEOUT_MS: u32 = 200;
 /// Reads the IME open status (`IMC_GETOPENSTATUS`) with a bounded timeout.
 ///
 /// `WM_IME_CONTROL` crosses into the terminal-emulator process, and a plain
-/// `SendMessageW` would block herdr's client thread until that process responds
+/// `SendMessageW` would block h0x's client thread until that process responds
 /// (indefinitely if it is hung). `SendMessageTimeoutW` with `SMTO_ABORTIFHUNG`
 /// caps the wait; on timeout or failure this returns `None` and callers leave
 /// the IME untouched rather than blocking or guessing.
@@ -3487,7 +3487,7 @@ mod tests {
         use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
         use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
         use windows_sys::Win32::System::Pipes::CreateNamedPipeW;
-        let path = std::path::PathBuf::from(format!("herdr-busy-{}", std::process::id()));
+        let path = std::path::PathBuf::from(format!("h0x-busy-{}", std::process::id()));
         let name = super::wide_null(&format!(r"\\.\pipe\{}", path.display()));
         let handle = unsafe {
             CreateNamedPipeW(
@@ -3550,8 +3550,7 @@ mod tests {
         };
         use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
-        let path =
-            std::env::temp_dir().join(format!("herdr-user-pipe-{}.sock", std::process::id()));
+        let path = std::env::temp_dir().join(format!("h0x-user-pipe-{}.sock", std::process::id()));
         let listener = crate::ipc::bind_local_listener(&path).unwrap();
         let mut raw_token = std::ptr::null_mut();
         assert_ne!(
@@ -3732,7 +3731,7 @@ mod tests {
     #[test]
     fn windows_plugin_runtime_path_keeps_extended_path_when_normal_form_is_not_equivalent() {
         let path = std::path::PathBuf::from(format!(
-            r"\\?\C:\herdr-missing-plugin-runtime-path-{}",
+            r"\\?\C:\h0x-missing-plugin-runtime-path-{}",
             std::process::id()
         ));
         assert_eq!(super::plugin_runtime_path_platform(&path), path);
@@ -3743,7 +3742,7 @@ mod tests {
         use std::os::windows::ffi::OsStrExt;
 
         let base = std::env::temp_dir().join(format!(
-            "herdr-plugin-runtime-path-limit-test-{}",
+            "h0x-plugin-runtime-path-limit-test-{}",
             std::process::id()
         ));
         fs::create_dir_all(&base).expect("create test base");
@@ -3787,7 +3786,7 @@ mod tests {
     #[test]
     fn private_remote_directory_supports_long_paths() {
         let base = std::env::temp_dir().join(format!(
-            "herdr-private-remote-dir-test-{}",
+            "h0x-private-remote-dir-test-{}",
             std::process::id()
         ));
         fs::create_dir_all(&base).expect("create test base");
@@ -3929,7 +3928,7 @@ mod tests {
     fn windows_shells_round_trip_agent_arguments_through_a_real_command() {
         let _lock = crate::integration::integration_env_lock();
         let base = std::env::temp_dir().join(format!(
-            "herdr-agent-argv-{}-{}",
+            "h0x-agent-argv-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -4106,7 +4105,7 @@ mod tests {
         }
 
         let base = std::env::temp_dir().join(format!(
-            "herdr-wmi-daemon-test-{}-{}",
+            "h0x-wmi-daemon-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -4289,10 +4288,8 @@ mod tests {
 
     #[test]
     fn detached_custom_command_preserves_quoted_command_tail() {
-        let path = std::env::temp_dir().join(format!(
-            "herdr-raw-command-quotes-{}.txt",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("h0x-raw-command-quotes-{}.txt", std::process::id()));
         let command = format!(r#"echo "hi" > "{}""#, path.display());
 
         let status = super::detached_custom_command_process_platform(&command)
@@ -4311,7 +4308,7 @@ mod tests {
         use std::io::{Read, Write};
         use std::path::PathBuf;
 
-        let name = format!("Herdr-Cwd-Case-{}", std::process::id());
+        let name = format!("HyperOx-Cwd-Case-{}", std::process::id());
         let cwd = std::env::temp_dir().join(&name);
         fs::create_dir_all(&cwd).expect("create cwd fixture");
         let cwd = super::normalize_cwd_for_launch_platform(&cwd);
@@ -4364,17 +4361,17 @@ mod tests {
                     String::from_utf8_lossy(&output)
                 ))
             };
-            writeln!(child.stdin.as_ref().unwrap(), "echo herdr-cwd-ready\r")
+            writeln!(child.stdin.as_ref().unwrap(), "echo h0x-cwd-ready\r")
                 .expect("check cmd readiness");
-            let ready = wait_for(b"herdr-cwd-ready");
+            let ready = wait_for(b"h0x-cwd-ready");
             let initial = super::process_cwd(child.id());
             writeln!(
                 child.stdin.as_ref().unwrap(),
-                "cd /d \"{}\" 2>&1 && echo herdr-cwd-changed\r",
+                "cd /d \"{}\" 2>&1 && echo h0x-cwd-changed\r",
                 changed.display()
             )
             .expect("change cmd cwd");
-            let cd_completed = wait_for(b"herdr-cwd-changed");
+            let cd_completed = wait_for(b"h0x-cwd-changed");
             let after_cd = super::process_cwd(child.id());
             let pane_cwd = super::pane_process_cwd(child.id());
             let _ = child.kill();
@@ -5209,7 +5206,7 @@ mod tests {
                 "node.exe",
                 &[
                     "node.exe",
-                    "C:\\Users\\herdr\\AppData\\Roaming\\npm\\node_modules\\codex\\bin\\codex.js",
+                    "C:\\Users\\h0x\\AppData\\Roaming\\npm\\node_modules\\codex\\bin\\codex.js",
                 ],
             ),
         ];
@@ -5233,7 +5230,7 @@ mod tests {
                     "/D",
                     "/S",
                     "/C",
-                    "C:\\Users\\herdr\\AppData\\Roaming\\npm\\codex.cmd --model gpt-5",
+                    "C:\\Users\\h0x\\AppData\\Roaming\\npm\\codex.cmd --model gpt-5",
                 ],
             ),
         ];
@@ -5254,14 +5251,14 @@ mod tests {
                 "node.exe",
                 &[
                     "node.exe",
-                    "C:\\Users\\herdr\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js",
+                    "C:\\Users\\h0x\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js",
                 ],
             ),
             test_entry(
                 30,
                 20,
                 "codex.exe",
-                &["C:\\Users\\herdr\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe"],
+                &["C:\\Users\\h0x\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe"],
             ),
             test_entry(40, 30, "node_repl.exe", &["node_repl.exe"]),
             test_entry(
@@ -5436,7 +5433,7 @@ mod tests {
 
     #[test]
     fn scrollback_editor_argv_uses_editor_env_and_appends_path() {
-        let path = std::path::Path::new(r"C:\Users\User\AppData\Local\Temp\herdr scrollback.txt");
+        let path = std::path::Path::new(r"C:\Users\User\AppData\Local\Temp\h0x scrollback.txt");
         let argv = super::scrollback_editor_argv_with_env(
             path,
             Some(r#""C:\Program Files\Microsoft VS Code\Code.exe" --wait"#),
@@ -5450,7 +5447,7 @@ mod tests {
 
     #[test]
     fn scrollback_editor_argv_falls_back_to_notepad() {
-        let path = std::path::Path::new(r"C:\Temp\herdr-scrollback.txt");
+        let path = std::path::Path::new(r"C:\Temp\h0x-scrollback.txt");
         let argv = super::scrollback_editor_argv_with_env(path, None).unwrap();
 
         assert_eq!(
@@ -5541,7 +5538,7 @@ mod tests {
     #[test]
     fn pane_runtime_marker_is_added_only_to_git_bash_environment() {
         let root = std::env::temp_dir().join(format!(
-            "herdr-git-bash-test-{}",
+            "h0x-git-bash-test-{}",
             super::next_pane_runtime_marker()
         ));
         fs::create_dir_all(root.join("bin")).expect("create Git Bash bin fixture");

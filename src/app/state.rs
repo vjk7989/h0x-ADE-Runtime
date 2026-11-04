@@ -816,7 +816,7 @@ pub struct AppState {
     pub config_diagnostic: Option<String>,
     pub toast: Option<ToastNotification>,
     pub pending_agent_notifications: std::collections::HashMap<PaneId, PendingAgentNotification>,
-    /// Last reported focus state for the outer terminal hosting herdr.
+    /// Last reported focus state for the outer terminal hosting h0x.
     /// None means unsupported or not yet reported, which preserves active-pane suppression.
     pub outer_terminal_focus: Option<bool>,
     // Config
@@ -869,7 +869,7 @@ pub struct AppState {
     pub agent_manifest_summaries: Vec<crate::detect::manifest::AgentManifestSummary>,
     /// Cached remote detection manifest update diagnostics for runtime/API status.
     pub agent_manifest_update_status: crate::detect::manifest_update::ManifestUpdateStatus,
-    /// Installed or linked plugins known to this running Herdr instance.
+    /// Installed or linked plugins known to this running HyperOx instance.
     pub(crate) installed_plugins: InstalledPluginRegistry,
     /// Pane ids opened through the plugin pane API.
     pub(crate) plugin_panes: std::collections::HashMap<PaneId, PluginPaneRecord>,
@@ -1046,7 +1046,7 @@ impl AppState {
             mode: Mode::Navigate,
             should_quit: false,
             request_client_config_reload: false,
-            worktree_directory: std::path::PathBuf::from("/tmp/herdr-worktrees"),
+            worktree_directory: std::path::PathBuf::from("/tmp/h0x-worktrees"),
             latest_release_notes: None,
             product_announcement: None,
             view: ViewState {

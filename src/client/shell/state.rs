@@ -914,7 +914,7 @@ pub(crate) struct ClientShellState {
     /// The host tty's erase character is `^H`: a raw 0x08 is Backspace, not
     /// Ctrl+H (MobaXterm, PuTTY-style terminals; tmux reads VERASE the same way).
     pub(super) host_erase_is_ctrl_h: bool,
-    /// The focused pane asks for every key as an escape code, so Herdr pushed
+    /// The focused pane asks for every key as an escape code, so HyperOx pushed
     /// report-all to the host; plain text input then reaches it as text.
     pub(super) host_reports_all_keys: bool,
     pub(super) replaying_url_click: bool,

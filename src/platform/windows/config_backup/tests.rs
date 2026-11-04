@@ -17,7 +17,7 @@ struct Directory(PathBuf);
 impl Directory {
     fn new(case: &str) -> Self {
         let path =
-            std::env::temp_dir().join(format!("herdr-config-backup-{case}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("h0x-config-backup-{case}-{}", std::process::id()));
         fs::create_dir(&path).unwrap();
         Self(path)
     }

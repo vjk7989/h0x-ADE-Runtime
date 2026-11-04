@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn windows_explicit_relative_executable_runs_from_working_directory() {
         let root = std::env::temp_dir().join(format!(
-            "herdr-plugin-relative-command-{}",
+            "h0x-plugin-relative-command-{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&root).expect("create relative command fixture");

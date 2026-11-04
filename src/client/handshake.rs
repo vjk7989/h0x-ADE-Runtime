@@ -164,7 +164,7 @@ pub(super) struct HandshakePixelCapabilities {
 ///
 /// Direct terminal clients retain the same-install private protocol. Client-owned
 /// shells use the stable endpoint generation and negotiate whole codecs without
-/// comparing Herdr build versions. `local_transport` means the endpoint shares the
+/// comparing HyperOx build versions. `local_transport` means the endpoint shares the
 /// client's filesystem, not merely that its bridge exposes a local socket.
 // Cancellation extends the existing handshake call; regrouping unrelated display options
 // would broaden this lifecycle fix across all client entry points.

@@ -785,7 +785,7 @@ pub fn process_cwd(pid: u32) -> Option<PathBuf> {
     std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
 }
 
-/// Read a Herdr agent identity hint from a process environment.
+/// Read a HyperOx agent identity hint from a process environment.
 pub fn process_agent_hint(pid: u32) -> Option<crate::detect::Agent> {
     if pid == 0 {
         return None;
@@ -1732,10 +1732,8 @@ mod tests {
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("system time should follow unix epoch")
             .as_nanos();
-        let temp_dir = std::env::temp_dir().join(format!(
-            "herdr-fake-wl-copy-{}-{unique}",
-            std::process::id()
-        ));
+        let temp_dir =
+            std::env::temp_dir().join(format!("h0x-fake-wl-copy-{}-{unique}", std::process::id()));
         std::fs::create_dir_all(&temp_dir).expect("temp dir should be created");
         let mut cleanup = Cleanup {
             old_path: std::env::var_os("PATH"),
@@ -1889,7 +1887,7 @@ mod tests {
             .expect("system time should follow unix epoch")
             .as_nanos();
         let temp_dir = std::env::temp_dir().join(format!(
-            "herdr-failed-wl-copy-{}-{unique}",
+            "h0x-failed-wl-copy-{}-{unique}",
             std::process::id()
         ));
         std::fs::create_dir_all(&temp_dir).expect("temp dir should be created");
@@ -2024,8 +2022,7 @@ mod tests {
     #[test]
     fn read_clipboard_image_rejects_xclip_text_served_for_image_target() {
         let _guard = env_lock().lock().unwrap();
-        let temp_dir =
-            std::env::temp_dir().join(format!("herdr-fake-xclip-{}", std::process::id()));
+        let temp_dir = std::env::temp_dir().join(format!("h0x-fake-xclip-{}", std::process::id()));
         std::fs::create_dir_all(&temp_dir).expect("temp dir should be created");
         let fake_xclip = temp_dir.join("xclip");
         std::fs::write(&fake_xclip, "#!/bin/sh\nprintf '# Tasks'\n")
@@ -2077,7 +2074,7 @@ mod tests {
     fn read_clipboard_image_rejects_wayland_xclip_fallback_text_for_image_target() {
         let _guard = env_lock().lock().unwrap();
         let temp_dir =
-            std::env::temp_dir().join(format!("herdr-fake-wayland-xclip-{}", std::process::id()));
+            std::env::temp_dir().join(format!("h0x-fake-wayland-xclip-{}", std::process::id()));
         std::fs::create_dir_all(&temp_dir).expect("temp dir should be created");
         let fake_wl_paste = temp_dir.join("wl-paste");
         let fake_xclip = temp_dir.join("xclip");
@@ -2204,7 +2201,7 @@ mod tests {
         }
 
         let path =
-            std::env::temp_dir().join(format!("herdr-notify-send-args-{}", std::process::id()));
+            std::env::temp_dir().join(format!("h0x-notify-send-args-{}", std::process::id()));
         let script = "printf '%s\\n' \"$@\" > \"$H0X_NOTIFY_ARGS\"";
         let shown = show_desktop_notification_with_command("-danger", Some("body"), |_| {
             let mut cmd = Command::new("sh");
@@ -2219,17 +2216,17 @@ mod tests {
         assert!(shown);
         let args = std::fs::read_to_string(&path).expect("args file");
         let _ = std::fs::remove_file(&path);
-        assert_eq!(args, "--app-name\nHerdr\n--\n-danger\nbody\n");
+        assert_eq!(args, "--app-name\nHyperOx\n--\n-danger\nbody\n");
     }
 
     #[test]
     fn scrollback_editor_argv_preserves_unix_editor_shell_semantics() {
-        let path = std::path::Path::new("/tmp/herdr scrollback.txt");
+        let path = std::path::Path::new("/tmp/h0x scrollback.txt");
         let argv = scrollback_editor_argv(path).unwrap();
 
         assert_eq!(argv[0], "/bin/sh");
         assert_eq!(argv[1], "-c");
         assert!(argv[2].contains("EDITOR:-vi"));
-        assert!(argv[2].contains("/tmp/herdr scrollback.txt"));
+        assert!(argv[2].contains("/tmp/h0x scrollback.txt"));
     }
 }

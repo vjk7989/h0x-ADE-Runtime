@@ -576,7 +576,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        std::env::temp_dir().join(format!("herdr-{name}-{}-{nanos}", std::process::id()))
+        std::env::temp_dir().join(format!("h0x-{name}-{}-{nanos}", std::process::id()))
     }
 
     fn run_git(repo: &Path, args: &[&str]) {
@@ -598,8 +598,8 @@ mod tests {
         let repo = unique_temp_path(name);
         std::fs::create_dir_all(&repo).unwrap();
         run_git(&repo, &["init", "--quiet"]);
-        run_git(&repo, &["config", "user.email", "herdr@example.invalid"]);
-        run_git(&repo, &["config", "user.name", "Herdr Test"]);
+        run_git(&repo, &["config", "user.email", "h0x@example.invalid"]);
+        run_git(&repo, &["config", "user.name", "HyperOx Test"]);
         std::fs::write(repo.join("README.md"), "test\n").unwrap();
         run_git(&repo, &["add", "README.md"]);
         run_git(&repo, &["commit", "--quiet", "-m", "initial"]);
@@ -609,12 +609,12 @@ mod tests {
     #[test]
     fn trusted_repository_git_args_are_request_scoped() {
         assert_eq!(
-            repository_git_args(Path::new("/repo/herdr"), false),
-            ["-C", "/repo/herdr"]
+            repository_git_args(Path::new("/repo/h0x"), false),
+            ["-C", "/repo/h0x"]
         );
         assert_eq!(
-            repository_git_args(Path::new("/repo/herdr"), true),
-            ["-c", "safe.directory=/repo/herdr", "-C", "/repo/herdr",]
+            repository_git_args(Path::new("/repo/h0x"), true),
+            ["-c", "safe.directory=/repo/h0x", "-C", "/repo/h0x",]
         );
     }
 
@@ -703,10 +703,10 @@ prunable stale
         assert_eq!(
             home_dir_from_env(true, |key| match key {
                 "HOME" => Some("~".into()),
-                "USERPROFILE" => Some(r"C:\Users\herdr".into()),
+                "USERPROFILE" => Some(r"C:\Users\h0x".into()),
                 _ => None,
             }),
-            Ok(PathBuf::from(r"C:\Users\herdr"))
+            Ok(PathBuf::from(r"C:\Users\h0x"))
         );
     }
 
@@ -715,10 +715,10 @@ prunable stale
         assert_eq!(
             home_dir_from_env(true, |key| match key {
                 "HOMEDRIVE" => Some("C:".into()),
-                "HOMEPATH" => Some(r"\Users\herdr".into()),
+                "HOMEPATH" => Some(r"\Users\h0x".into()),
                 _ => None,
             }),
-            Ok(PathBuf::from(r"C:\Users\herdr"))
+            Ok(PathBuf::from(r"C:\Users\h0x"))
         );
     }
 
@@ -735,7 +735,7 @@ prunable stale
         assert_eq!(
             home_dir_from_env(true, |key| match key {
                 "HOMEDRIVE" => Some("C:".into()),
-                "HOMEPATH" => Some("Users\\herdr".into()),
+                "HOMEPATH" => Some("Users\\h0x".into()),
                 _ => None,
             }),
             Err(())
@@ -760,23 +760,20 @@ prunable stale
         fn env(key: &str) -> Option<OsString> {
             match key {
                 "HOME" => Some("~".into()),
-                "USERPROFILE" => Some(r"C:\Users\herdr".into()),
+                "USERPROFILE" => Some(r"C:\Users\h0x".into()),
                 _ => None,
             }
         }
 
         let default_path = expand_tilde_path_from_env("~/.h0x/worktrees", true, env);
-        assert_eq!(
-            default_path,
-            PathBuf::from(r"C:\Users\herdr\.h0x\worktrees")
-        );
+        assert_eq!(default_path, PathBuf::from(r"C:\Users\h0x\.h0x\worktrees"));
         assert_eq!(
             default_path.display().to_string(),
-            r"C:\Users\herdr\.h0x\worktrees"
+            r"C:\Users\h0x\.h0x\worktrees"
         );
         assert_eq!(
             expand_tilde_path_from_env(r"~\.h0x\worktrees", true, env),
-            PathBuf::from(r"C:\Users\herdr\.h0x\worktrees")
+            PathBuf::from(r"C:\Users\h0x\.h0x\worktrees")
         );
     }
 
@@ -785,10 +782,10 @@ prunable stale
         assert_eq!(
             default_checkout_path(
                 Path::new("/home/me/.h0x/worktrees"),
-                "herdr",
+                "h0x",
                 "worktree/brave-river",
             ),
-            PathBuf::from("/home/me/.h0x/worktrees/herdr/worktree-brave-river")
+            PathBuf::from("/home/me/.h0x/worktrees/h0x/worktree-brave-river")
         );
     }
 
@@ -821,29 +818,23 @@ prunable stale
     #[test]
     fn worktree_remove_command_preserves_branch_by_not_deleting_it() {
         let command = build_worktree_remove_command(
-            Path::new("/repo/herdr"),
-            Path::new("/w/herdr/issue-137"),
+            Path::new("/repo/h0x"),
+            Path::new("/w/h0x/issue-137"),
             false,
             false,
         );
         assert_eq!(command.program, "git");
         assert_eq!(
             command.args,
-            vec![
-                "-C",
-                "/repo/herdr",
-                "worktree",
-                "remove",
-                "/w/herdr/issue-137"
-            ]
+            vec!["-C", "/repo/h0x", "worktree", "remove", "/w/h0x/issue-137"]
         );
     }
 
     #[test]
     fn forced_worktree_remove_command_uses_git_force_flag() {
         let command = build_worktree_remove_command(
-            Path::new("/repo/herdr"),
-            Path::new("/w/herdr/issue-137"),
+            Path::new("/repo/h0x"),
+            Path::new("/w/h0x/issue-137"),
             true,
             false,
         );
@@ -851,11 +842,11 @@ prunable stale
             command.args,
             vec![
                 "-C",
-                "/repo/herdr",
+                "/repo/h0x",
                 "worktree",
                 "remove",
                 "--force",
-                "/w/herdr/issue-137"
+                "/w/h0x/issue-137"
             ]
         );
     }
@@ -863,13 +854,13 @@ prunable stale
     #[test]
     fn dirty_remove_error_detection_matches_git_force_hint() {
         assert!(is_dirty_worktree_remove_error(
-            "fatal: '/w/herdr' contains modified or untracked files, use --force to delete it"
+            "fatal: '/w/h0x' contains modified or untracked files, use --force to delete it"
         ));
         assert!(!is_dirty_worktree_remove_error(
-            "fatal: '/w/herdr' is a missing but already registered worktree"
+            "fatal: '/w/h0x' is a missing but already registered worktree"
         ));
         assert!(!is_dirty_worktree_remove_error(
-            "fatal: '/w/herdr' contains a locked worktree, use --force only if you know why"
+            "fatal: '/w/h0x' contains a locked worktree, use --force only if you know why"
         ));
     }
 
@@ -942,8 +933,8 @@ prunable stale
     #[test]
     fn worktree_add_command_creates_new_branch_from_base() {
         let command = build_worktree_add_new_branch_command(
-            Path::new("/repo/herdr"),
-            Path::new("/w/herdr/worktree-brave-river"),
+            Path::new("/repo/h0x"),
+            Path::new("/w/h0x/worktree-brave-river"),
             "worktree/brave-river",
             "HEAD",
             false,
@@ -953,12 +944,12 @@ prunable stale
             command.args,
             vec![
                 "-C",
-                "/repo/herdr",
+                "/repo/h0x",
                 "worktree",
                 "add",
                 "-b",
                 "worktree/brave-river",
-                "/w/herdr/worktree-brave-river",
+                "/w/h0x/worktree-brave-river",
                 "HEAD"
             ]
         );
@@ -967,8 +958,8 @@ prunable stale
     #[test]
     fn worktree_add_command_checks_out_existing_branch() {
         let command = build_worktree_add_existing_branch_command(
-            Path::new("/repo/herdr"),
-            Path::new("/w/herdr/worktree-brave-river"),
+            Path::new("/repo/h0x"),
+            Path::new("/w/h0x/worktree-brave-river"),
             "worktree/brave-river",
             false,
         );
@@ -977,10 +968,10 @@ prunable stale
             command.args,
             vec![
                 "-C",
-                "/repo/herdr",
+                "/repo/h0x",
                 "worktree",
                 "add",
-                "/w/herdr/worktree-brave-river",
+                "/w/h0x/worktree-brave-river",
                 "worktree/brave-river"
             ]
         );
