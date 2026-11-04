@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -743,6 +744,42 @@ def cmd_sync_latest_json(args: argparse.Namespace) -> int:
     return 0
 
 
+def release_latest_json(
+    template: dict[str, Any], version: str, notes: str, sha256: dict[str, str], repo: str
+) -> str:
+    """Build the published manifest for tag `v<version>` from the committed, older template."""
+    ensure_manifest_is_outdated(template, version)
+    tag = f"v{normalize_version(version)}"
+    assets = {
+        target: f"https://github.com/{repo}/releases/download/{tag}/{name}"
+        for target, name in EXPECTED_ASSET_NAMES.items()
+    }
+    return build_latest_json(
+        version,
+        notes,
+        assets,
+        sha256=sha256,
+        releases=archived_releases_from_current_manifest(template),
+    )
+
+
+def cmd_release_latest_json(args: argparse.Namespace) -> int:
+    artifacts = Path(args.artifacts)
+    sha256 = {
+        target: hashlib.sha256((artifacts / name / name).read_bytes()).hexdigest()
+        for target, name in EXPECTED_ASSET_NAMES.items()
+    }
+    output = release_latest_json(
+        load_json(Path(args.path)),
+        args.version,
+        load_text(Path(args.notes)),
+        sha256,
+        args.repo,
+    )
+    write_text(Path(args.output), output)
+    return 0
+
+
 def cmd_validate_product_announcement(args: argparse.Namespace) -> int:
     announcement = load_product_announcement(Path(args.path))
     if announcement is None:
@@ -814,6 +851,18 @@ def build_parser() -> argparse.ArgumentParser:
     sync_latest_json.add_argument("--protocol", type=int)
     sync_latest_json.add_argument("--endpoint-generation", type=int)
     sync_latest_json.set_defaults(func=cmd_sync_latest_json)
+
+    release_latest = subparsers.add_parser(
+        "release-latest-json",
+        help="Build the release's latest.json from the committed template and built assets",
+    )
+    release_latest.add_argument("--version", required=True)
+    release_latest.add_argument("--repo", required=True)
+    release_latest.add_argument("--notes", required=True)
+    release_latest.add_argument("--artifacts", required=True)
+    release_latest.add_argument("--output", required=True)
+    release_latest.add_argument("--path", default=str(DEFAULT_LATEST_JSON_PATH))
+    release_latest.set_defaults(func=cmd_release_latest_json)
 
     validate_product_announcement = subparsers.add_parser(
         "validate-product-announcement",

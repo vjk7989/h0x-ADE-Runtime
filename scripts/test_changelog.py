@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -23,6 +24,7 @@ from scripts.changelog import (
     prepare_release,
     read_endpoint_protocol_generation,
     read_protocol_version,
+    release_latest_json,
 )
 
 
@@ -432,6 +434,117 @@ class ChangelogScriptTests(unittest.TestCase):
 
     def test_ensure_manifest_is_outdated_allows_older_version(self) -> None:
         ensure_manifest_is_outdated({"version": "0.1.0"}, "0.1.1")
+
+    def release_template(self, version: str = "0.1.0") -> dict:
+        return json.loads(
+            build_latest_json(
+                version,
+                "### New\n- First",
+                release_assets(version),
+                sha256={target: "0" * 64 for target in release_sha256()},
+                releases={"0.0.9": {"notes": "### Fixed\n- Old", "assets": default_release_assets("0.0.9")}},
+            )
+        )
+
+    def test_release_latest_json_builds_the_tag_version_from_an_older_template(self) -> None:
+        manifest = json.loads(
+            release_latest_json(
+                self.release_template(),
+                "v0.1.1",
+                "### Fixed\n- One\n",
+                release_sha256(),
+                "vjk7989/h0x-ADE-Runtime",
+            )
+        )
+
+        self.assertEqual(manifest["version"], "0.1.1")
+        self.assertEqual(manifest["notes"], "### Fixed\n- One")
+        self.assertEqual(manifest["assets"], release_assets("0.1.1"))
+        self.assertEqual(manifest["sha256"], release_sha256())
+        self.assertEqual(manifest["protocol"], read_protocol_version())
+        self.assertEqual(manifest["endpoint_generation"], read_endpoint_protocol_generation())
+        self.assertEqual(list(manifest["releases"]), ["0.1.1", "0.1.0", "0.0.9"])
+        current = manifest["releases"]["0.1.1"]
+        self.assertEqual(current["notes"], "### Fixed\n- One")
+        self.assertEqual(current["assets"], release_assets("0.1.1"))
+        self.assertEqual(current["sha256"], release_sha256())
+        self.assertEqual(manifest["releases"]["0.1.0"]["notes"], "### New\n- First")
+        self.assertEqual(manifest["releases"]["0.1.0"]["assets"], release_assets("0.1.0"))
+        self.assertEqual(manifest["releases"]["0.0.9"]["notes"], "### Fixed\n- Old")
+        self.assertNotIn("note", manifest)
+
+    def test_release_latest_json_uses_the_given_repository(self) -> None:
+        manifest = json.loads(
+            release_latest_json(self.release_template(), "0.1.1", "notes", release_sha256(), "someone/fork")
+        )
+
+        self.assertEqual(
+            manifest["assets"]["windows-x86_64"],
+            "https://github.com/someone/fork/releases/download/v0.1.1/h0x-windows-x86_64.zip",
+        )
+
+    def test_release_latest_json_rejects_a_template_at_the_same_or_a_newer_version(self) -> None:
+        for template_version in ("0.1.1", "0.2.0"):
+            with self.assertRaisesRegex(ChangelogError, f"already at v{template_version}"):
+                release_latest_json(
+                    self.release_template(template_version),
+                    "0.1.1",
+                    "notes",
+                    release_sha256(),
+                    "vjk7989/h0x-ADE-Runtime",
+                )
+
+    def test_release_latest_json_rejects_empty_notes_and_missing_digests(self) -> None:
+        with self.assertRaisesRegex(ChangelogError, "release notes are empty"):
+            release_latest_json(self.release_template(), "0.1.1", " \n", release_sha256(), "o/r")
+
+        digests = release_sha256()
+        del digests["windows-x86_64"]
+        with self.assertRaises(ChangelogError):
+            release_latest_json(self.release_template(), "0.1.1", "notes", digests, "o/r")
+
+    def test_release_latest_json_command_hashes_the_downloaded_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            template = root / "latest.json"
+            template.write_text(json.dumps(self.release_template()), encoding="utf-8")
+            notes = root / "RELEASE_NOTES.md"
+            notes.write_text("### Fixed\n- One\n", encoding="utf-8")
+            expected = {}
+            for target, url in release_assets("0.1.1").items():
+                name = url.rsplit("/", 1)[1]
+                (root / name).mkdir()
+                (root / name / name).write_bytes(target.encode())
+                expected[target] = hashlib.sha256(target.encode()).hexdigest()
+            output = root / "dist-latest.json"
+
+            args = build_parser().parse_args([
+                "release-latest-json", "--version", "0.1.1", "--repo", "vjk7989/h0x-ADE-Runtime",
+                "--notes", str(notes), "--artifacts", str(root), "--output", str(output),
+                "--path", str(template),
+            ])
+            self.assertEqual(args.func(args), 0)
+
+            manifest = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["version"], "0.1.1")
+            self.assertEqual(manifest["sha256"], expected)
+            self.assertEqual(manifest["releases"]["0.1.1"]["sha256"], expected)
+
+    def test_release_latest_json_command_fails_on_a_missing_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            template = root / "latest.json"
+            template.write_text(json.dumps(self.release_template()), encoding="utf-8")
+            notes = root / "RELEASE_NOTES.md"
+            notes.write_text("notes", encoding="utf-8")
+            args = build_parser().parse_args([
+                "release-latest-json", "--version", "0.1.1", "--repo", "o/r",
+                "--notes", str(notes), "--artifacts", str(root), "--output", str(root / "out.json"),
+                "--path", str(template),
+            ])
+            with self.assertRaises(FileNotFoundError):
+                args.func(args)
+            self.assertFalse((root / "out.json").exists())
 
     def test_canonicalize_manifest_requires_all_asset_targets(self) -> None:
         with self.assertRaisesRegex(ChangelogError, "missing asset URL for macos-aarch64"):
