@@ -208,6 +208,7 @@ If a larger recent read still does not reveal the completed response, ask the ag
 - Parse IDs from JSON responses. Do not derive them from sidebar order or examples.
 - Do not close workspaces, tabs, panes, or sessions you did not create unless the user explicitly asked. Ordinary CLI/API closes do not inherit the TUI's last-pane confirmation. `workspace close --group` closes the primary workspace and its linked worktree workspaces; never add it merely to bypass `workspace_group_close_required`.
 - Use `--trust-repository` only after the user has verified the repository. It grants per-request Git trust; it is not a routine retry for a failed worktree command.
+- `h0x integration install`, `h0x plugin link` and `h0x plugin enable` run from a pane or with `--machine` wait for the user to answer in an attached client. `denied_by_user`, `not_confirmed` and `needs_confirmation` are the user's answer or absence: report them; do not retry, and do not rerun the command outside HyperOx to skip the prompt.
 - Client and server versions can differ after an update. Check `h0x status` before relying on new server features. A missing method is not permission to stop or upgrade a server.
 - Never run `h0x server stop` from an active session unless the user explicitly intends to stop the server and its pane processes.
 - Never kill the main HyperOx process. Use named test sessions for experiments that need an isolated server.
