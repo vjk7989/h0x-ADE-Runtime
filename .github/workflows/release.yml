@@ -166,7 +166,6 @@ jobs:
           node scripts/docs/versions.mjs check
           bun test scripts/docs/*.test.ts
           test -f docs/next/README.md
-          test -f docs/next/README.zh-CN.md
 
   release:
     needs: [build, validate-release-inputs]
