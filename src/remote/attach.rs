@@ -2674,6 +2674,10 @@ fn download_release_asset(platform: &RemotePlatform) -> io::Result<InstallSource
         let _ = fs::remove_dir_all(&dir);
         return Err(io::Error::other("download failed"));
     }
+    if let Err(err) = crate::update::verify_downloaded_release(&path, &asset.url) {
+        let _ = fs::remove_dir_all(&dir);
+        return Err(io::Error::other(err));
+    }
     if let Some(expected) = &asset.sha256 {
         if let Err(err) = crate::checksum::verify_sha256(&path, expected) {
             let _ = fs::remove_dir_all(&dir);
@@ -2704,6 +2708,13 @@ fn fetch_remote_manifest(url: &str) -> io::Result<Vec<u8>> {
     if !output.status.success() {
         return Err(command_failed("failed to fetch update manifest", &output));
     }
+    crate::update::verify_release_signature(
+        "the update manifest",
+        &output.stdout,
+        crate::update::fetch_release_signature(url).as_deref(),
+        crate::update::RELEASE_PUBLIC_KEY,
+    )
+    .map_err(io::Error::other)?;
     Ok(output.stdout)
 }
 
@@ -6131,5 +6142,42 @@ function Get-Process {
         InstallSource::temporary(path, dir.clone()).cleanup();
 
         assert!(!dir.exists());
+    }
+
+    /// The manifest fetch checks `<url>.minisig` before the bytes are parsed (file:// here).
+    #[test]
+    fn remote_manifest_needs_the_release_signature_beside_it() {
+        use crate::update::signature_tests::{PAYLOAD, SIG};
+        let dir = std::env::temp_dir().join(format!("h0x-attach-signature-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = dir.join("latest.json");
+        std::fs::write(&manifest, PAYLOAD).unwrap();
+        let url = format!(
+            "file:///{}",
+            manifest
+                .to_string_lossy()
+                .replace('\\', "/")
+                .trim_start_matches('/')
+        );
+
+        let missing = fetch_remote_manifest(&url).unwrap_err().to_string();
+        assert!(
+            missing.starts_with(
+                "the update manifest is not signed by the h0x release key: it has no signature"
+            ),
+            "{missing}"
+        );
+
+        // Signed by the throwaway test key, which is not the release key.
+        std::fs::write(dir.join("latest.json.minisig"), SIG).unwrap();
+        let foreign = fetch_remote_manifest(&url).unwrap_err().to_string();
+        assert!(
+            foreign.starts_with(
+                "the update manifest is not signed by the h0x release key: its signature does not match"
+            ),
+            "{foreign}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

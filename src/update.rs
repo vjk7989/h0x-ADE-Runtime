@@ -26,7 +26,8 @@ use serde::{Deserialize, Deserializer};
 const UPDATE_MANIFEST_URL: &str =
     "https://github.com/vjk7989/h0x-ADE-Runtime/releases/latest/download/latest.json";
 /// The public half of the key CI signs every release asset with (key id 29957E064EAB76C4).
-const RELEASE_PUBLIC_KEY: &str = "RWTEdqtOBn6VKQ/x9x3qWk/gIWUb/I1OlZXsTlHyrkp9Yq30qBki+tdt";
+pub(crate) const RELEASE_PUBLIC_KEY: &str =
+    "RWTEdqtOBn6VKQ/x9x3qWk/gIWUb/I1OlZXsTlHyrkp9Yq30qBki+tdt";
 const H0X_UPDATE_COMMAND: &str = "h0x update";
 const NIX_UPDATE_COMMAND: &str = "update through Nix";
 const FAKE_UPDATE_VERSION_ENV: &str = "H0X_FAKE_UPDATE_VERSION";
@@ -301,7 +302,7 @@ where
 }
 
 /// Downloads `<url>.minisig`; `None` when it does not download.
-fn fetch_release_signature(url: &str) -> Option<String> {
+pub(crate) fn fetch_release_signature(url: &str) -> Option<String> {
     let output = crate::noninteractive_process::curl_command()
         .args([
             "-sfL",
@@ -322,7 +323,7 @@ fn fetch_release_signature(url: &str) -> Option<String> {
 }
 
 /// Checks `bytes` against its minisign `signature` by `key`.
-fn verify_release_signature(
+pub(crate) fn verify_release_signature(
     name: &str,
     bytes: &[u8],
     signature: Option<&str>,
@@ -340,7 +341,7 @@ fn verify_release_signature(
 }
 
 /// Checks a downloaded release asset at `path` against `<url>.minisig`.
-fn verify_downloaded_release(path: &Path, url: &str) -> Result<(), String> {
+pub(crate) fn verify_downloaded_release(path: &Path, url: &str) -> Result<(), String> {
     let bytes = fs::read(path).map_err(|e| format!("failed to read downloaded update: {e}"))?;
     verify_release_signature(
         "the downloaded update",
@@ -3279,13 +3280,13 @@ mod tests {
 }
 
 #[cfg(test)]
-mod signature_tests {
+pub(crate) mod signature_tests {
     /// A throwaway test key pair (not the release key), its signature of
     /// `PAYLOAD`, and the same payload signed by a second throwaway key; made
     /// with rsign2 (`generate -W`, `sign -W`).
     const TEST_KEY: &str = "RWRwAuiTWRHKFc9nVniDNoa4b+UqLBXWC7QunJ05dZw+XkvYJ6aaoXoK";
-    const PAYLOAD: &str = "h0x-core test release\n";
-    const SIG: &str = "untrusted comment: signature from rsign secret key
+    pub(crate) const PAYLOAD: &str = "h0x-core test release\n";
+    pub(crate) const SIG: &str = "untrusted comment: signature from rsign secret key
 RURwAuiTWRHKFeiB7A2s5PXfB39odODFiAf+77MxJqllRsihUgeswBruN+SLEaLI6zFdPAqRO+o0muW+5/ISjwzOHIVMxfYZUws=
 trusted comment: test
 FbefAmnfeDeGxboZTkIU3PcVBdecdQ85mQjQTOCf3nUiq0yiND8kte8+Ymv7UmzvNNb7BgVZLCS+McLnbN9oDg==
