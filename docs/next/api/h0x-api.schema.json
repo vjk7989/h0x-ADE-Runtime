@@ -3110,7 +3110,7 @@
         },
         "PaneRightClickTarget": {
           "enum": [
-            "herdr",
+            "h0x",
             "pane"
           ],
           "type": "string"
@@ -3242,7 +3242,7 @@
             },
             "right_click": {
               "$ref": "#/schemas/request/$defs/PaneRightClickTarget",
-              "default": "herdr"
+              "default": "h0x"
             },
             "target_pane_id": {
               "type": [

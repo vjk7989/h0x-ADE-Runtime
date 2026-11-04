@@ -14,7 +14,7 @@ use super::common::{AgentStatus, PaneAgentState, ReadFormat, ReadSource, SplitDi
 #[serde(rename_all = "snake_case")]
 pub enum PaneRightClickTarget {
     #[default]
-    Herdr,
+    H0x,
     Pane,
 }
 
@@ -33,7 +33,7 @@ crate::cli::projection::cli_params! {
         #[serde(default)]
         pub focus: bool => Field::new(false).input(binding::boolean("focus", true)).input(binding::boolean("no-focus", false)),
         #[serde(default)]
-        pub right_click: PaneRightClickTarget => Field::new(PaneRightClickTarget::Herdr).input(binding::right_click()),
+        pub right_click: PaneRightClickTarget => Field::new(PaneRightClickTarget::H0x).input(binding::right_click()),
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         pub env: HashMap<String, String> => Field::new(HashMap::new()).input(binding::environment()),
     }
@@ -43,7 +43,7 @@ crate::cli::projection::cli_params! {
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
     pub struct PaneInputSetParams => PaneInputProjection {
         pub pane_id: String => binding::input_target(),
-        pub right_click: PaneRightClickTarget => Field::new(PaneRightClickTarget::Herdr).input(binding::right_click().required()),
+        pub right_click: PaneRightClickTarget => Field::new(PaneRightClickTarget::H0x).input(binding::right_click().required()),
     }
 }
 

@@ -21,7 +21,7 @@ pub(crate) const SPLITS: &[Choice<SplitDirection>] = &[
     Choice::new("down", SplitDirection::Down),
 ];
 const RIGHT_CLICK: &[Choice<PaneRightClickTarget>] = &[
-    Choice::new("herdr", PaneRightClickTarget::Herdr),
+    Choice::new("h0x", PaneRightClickTarget::H0x),
     Choice::new("pane", PaneRightClickTarget::Pane),
 ];
 const STATES: &[Choice<PaneAgentState>] = &[

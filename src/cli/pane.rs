@@ -321,17 +321,17 @@ mod tests {
             ),
             (
                 "input",
-                vec!["pane", "--right-click", "herdr"],
+                vec!["pane", "--right-click", "h0x"],
                 "cli:pane:input:set",
                 "pane.input.set",
-                json!({"pane_id": "pane", "right_click": "herdr"}),
+                json!({"pane_id": "pane", "right_click": "h0x"}),
             ),
             (
                 "split",
                 vec!["pane", "--direction", "down"],
                 "cli:pane:split",
                 "pane.split",
-                json!({"target_pane_id": "pane", "direction": "down", "focus": false, "right_click": "herdr"}),
+                json!({"target_pane_id": "pane", "direction": "down", "focus": false, "right_click": "h0x"}),
             ),
             (
                 "swap",
@@ -498,7 +498,7 @@ mod tests {
         assert_eq!(params.target_pane_id, Some("issue-1".into()));
         assert_eq!(params.direction, SplitDirection::Right);
         assert_eq!(params.ratio, Some(0.333));
-        assert_eq!(params.right_click, PaneRightClickTarget::Herdr);
+        assert_eq!(params.right_click, PaneRightClickTarget::H0x);
     }
 
     #[test]
