@@ -322,15 +322,24 @@ platforms = ["linux", "macos", "windows"]
     .unwrap();
 }
 
-fn link_plugin(socket_path: &Path, root: &Path) {
-    assert_ok(request(
-        socket_path,
-        serde_json::json!({
-            "id": "test:plugin:link",
-            "method": "plugin.link",
-            "params": {"path": root, "enabled": true}
-        }),
-    ));
+/// Links through the user's own CLI outside any pane: it writes the server's registry in-process.
+/// `plugin.link` on the socket waits for a confirmation in an attached client (ADR-049).
+fn link_plugin(config_home: &Path, runtime_dir: &Path, root: &Path) {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_h0x"))
+        .args(["plugin", "link"])
+        .arg(root)
+        .env("XDG_CONFIG_HOME", config_home)
+        .env("XDG_RUNTIME_DIR", runtime_dir)
+        .env_remove("H0X_PANE_ID")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "plugin link failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_ok(response);
 }
 
 fn listed_plugin_ids(socket_path: &Path) -> Vec<String> {
@@ -951,7 +960,7 @@ fn live_handoff_preserves_installed_plugins() {
     wait_for_socket(&api_socket, Duration::from_secs(10));
     register_runtime_dir(&runtime_dir);
 
-    link_plugin(&api_socket, &existing_plugin);
+    link_plugin(&config_home, &runtime_dir, &existing_plugin);
     assert_eq!(
         listed_plugin_ids(&api_socket),
         ["test.live-handoff-existing"]
@@ -968,7 +977,7 @@ fn live_handoff_preserves_installed_plugins() {
         listed_plugin_ids(&api_socket),
         ["test.live-handoff-existing"]
     );
-    link_plugin(&api_socket, &added_plugin);
+    link_plugin(&config_home, &runtime_dir, &added_plugin);
     assert_eq!(
         saved_plugin_ids(&registry_path),
         ["test.live-handoff-added", "test.live-handoff-existing"]
