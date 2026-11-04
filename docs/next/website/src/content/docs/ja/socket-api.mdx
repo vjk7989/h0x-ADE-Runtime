@@ -107,6 +107,18 @@ h0x pane read w1:p2 --source recent --lines 50
 | インテグレーション | `integration.install`、`integration.uninstall` |
 | プラグイン | `plugin.link`、`plugin.list`、`plugin.unlink`、`plugin.enable`、`plugin.disable`、`plugin.action.list`、`plugin.action.invoke`、`plugin.log.list`、`plugin.pane.open`、`plugin.pane.focus`、`plugin.pane.close` |
 
+### インストール時のユーザー確認
+
+ソケットに到達できるプログラムは、ペイン内で動くものも含め、そのままではエージェントのフックやプラグインのコードを黙ってインストールできてしまいます。そのため、ソケット API から送られた `integration.install`、`plugin.link`、`plugin.enable` には、接続中の HyperOx クライアントでのユーザー確認が必要です。
+
+1. リクエストは保留され、ユーザーが答えた後にだけレスポンスが返ります。接続中のクライアントは、操作名（「Install the claude integration hooks」、「Link plugin `<id>` from `<path>`」、「Enable plugin `<id>`」）と **Allow**、**Deny** を表示するモーダルを開きます。
+2. **Allow** はリクエストを実行し、通常の結果（または通常のエラー）を返します。
+3. **Deny** はエラー `denied_by_user`（「denied by user」）を返します。
+4. 120 秒以内に答えがない場合はエラー `not_confirmed`（「not confirmed」）を返します。
+5. 接続中のクライアントがない場合（ヘッドレスサーバーなど）、リクエストはすぐに `needs_confirmation`（「needs confirmation in an attached h0x client」）で失敗します。
+
+マニフェストを読めない `plugin.link` は、確認せずに通常のエラーで失敗します。クライアント自身からのリクエスト（設定、オンボーディング）は再確認されません。`h0x integration install`、`h0x plugin link`、`h0x plugin enable` の CLI コマンドは、ペインの外でローカルマシンに対して実行した場合は確認なしで動きます。ペイン内や `--machine` 付きの場合はソケット API を通り、確認を求めます。API 経由で黙ってインストールしていたスクリプトは、代わりに HyperOx の外で CLI を実行してください。
+
 `agent.wait` はサーバー所有でイベント駆動です。解決したペイン占有者に固定されるため、置換されたエージェントが待機を満たすことはありません。`agent.prompt` は `until` と `timeout_ms` を持つ省略可能な `wait` オブジェクトを受け付けます。これにより、プロンプト送信と待機開始を 1 つのリクエストで行い、別々の呼び出し間の競合を避けられます。解決したエージェントがすでに `blocked` の場合、`agent.prompt` は入力を送信せず、待機も開始せずに `agent_blocked` を返します。
 
 `workspace.move_block` は、順序付きの `workspace_ids` を `before_workspace_id` の前へアトミックに移動します。アンカーを省略するとブロックを末尾へ移動します。id は一意である必要があり、アンカーをブロックに含めることはできません。レスポンスにはサーバーが確定した順序付きワークスペース一覧が含まれます。

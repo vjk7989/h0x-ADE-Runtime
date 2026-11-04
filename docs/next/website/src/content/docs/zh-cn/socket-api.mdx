@@ -107,6 +107,18 @@ h0x pane read w1:p2 --source recent --lines 50
 | 集成 | `integration.install`、`integration.uninstall` |
 | 插件 | `plugin.link`、`plugin.list`、`plugin.unlink`、`plugin.enable`、`plugin.disable`、`plugin.action.list`、`plugin.action.invoke`、`plugin.log.list`、`plugin.pane.open`、`plugin.pane.focus`、`plugin.pane.close` |
 
+### 安装时的用户确认
+
+能访问套接字的任何程序,包括在窗格内运行的程序,原本都可以悄悄安装智能体钩子或插件代码。因此,通过套接字 API 发送的 `integration.install`、`plugin.link` 和 `plugin.enable` 需要用户在已连接的 HyperOx 客户端中确认:
+
+1. 请求保持挂起,用户回答后才返回响应。已连接的客户端会显示一个模态框,写明操作("Install the claude integration hooks"、"Link plugin `<id>` from `<path>`"、"Enable plugin `<id>`"),并提供 **Allow** 和 **Deny**。
+2. **Allow** 执行请求并返回正常结果(或正常错误)。
+3. **Deny** 返回错误 `denied_by_user`("denied by user")。
+4. 120 秒内没有回答则返回错误 `not_confirmed`("not confirmed")。
+5. 没有已连接的客户端时(例如无头服务器),请求立即以 `needs_confirmation`("needs confirmation in an attached h0x client")失败。
+
+清单无法读取的 `plugin.link` 不会询问,直接以正常错误失败。来自客户端自身的请求(设置、引导)不会再次询问。在任何窗格之外针对本机运行 `h0x integration install`、`h0x plugin link` 和 `h0x plugin enable` CLI 命令时不会提示;在窗格内或使用 `--machine` 时,它们会经过套接字 API 并请求确认。原先通过 API 静默安装的脚本应改为在 HyperOx 之外运行 CLI。
+
 `agent.wait` 由服务器拥有并由事件驱动。它会固定到已解析的窗格占用者,因此替换后的智能体不能满足该等待。`agent.prompt` 接受可选的 `wait` 对象,其中包含 `until` 和 `timeout_ms`;这样可在一个请求中提交提示并开始等待,避免两个独立调用之间的竞态。如果解析出的智能体已经是 `blocked`,`agent.prompt` 不会发送输入或开始等待,而是返回 `agent_blocked`。
 
 `workspace.move_block` 会将有序的 `workspace_ids` 原子地移动到 `before_workspace_id` 之前;省略锚点则将该块移动到末尾。id 必须唯一,且锚点不能属于被移动的块。响应包含服务器确认的有序工作区列表。
