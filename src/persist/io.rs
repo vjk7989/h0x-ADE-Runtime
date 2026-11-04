@@ -49,11 +49,20 @@ pub(super) fn save_to_path(path: &Path, snapshot: &SessionSnapshot) -> std::io::
 fn save_json_to_path<T: serde::Serialize>(path: &Path, snapshot: &T) -> std::io::Result<()> {
     let target = resolve_write_target(path)?;
     if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent)?;
+        let mut dir = std::fs::DirBuilder::new();
+        dir.recursive(true);
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut dir, 0o700);
+        dir.create(parent)?;
     }
     let json = serde_json::to_string_pretty(snapshot)?;
     let tmp_path = target.with_extension("json.tmp");
-    let mut temporary = std::fs::File::create(&tmp_path)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    // Session files hold pane history and paths: owner-only, kept through the rename.
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut temporary = options.open(&tmp_path)?;
     // A rename can survive a hard crash before unflushed file contents reach disk.
     let result = temporary
         .write_all(json.as_bytes())
@@ -308,6 +317,23 @@ mod tests {
         clear_path(&path).unwrap();
 
         assert!(!path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_to_path_writes_owner_only_file_and_dir() {
+        use std::os::unix::fs::PermissionsExt;
+        let (session_path, history_path) = temp_session_paths("file-mode");
+
+        save_to_path(&session_path, &empty_snapshot()).unwrap();
+        save_history_to_path(&history_path, Some(&history_snapshot("mode-secret"))).unwrap();
+        // A second save goes through the temp-then-rename path over an existing file.
+        save_to_path(&session_path, &empty_snapshot()).unwrap();
+
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&session_path), 0o600);
+        assert_eq!(mode(&history_path), 0o600);
+        assert_eq!(mode(session_path.parent().unwrap()), 0o700);
     }
 
     #[cfg(unix)]
