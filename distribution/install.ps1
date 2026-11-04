@@ -1,6 +1,5 @@
 [CmdletBinding()]
 param(
-    [string]$Channel = $env:H0X_CHANNEL,
     [string]$ManifestUrl = $env:H0X_MANIFEST_URL,
     [string]$InstallDir = $env:H0X_INSTALL_DIR,
     [int]$Retain = 3,
@@ -13,13 +12,6 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-
-# Only the stable channel exists; -Channel is accepted for compatibility with
-# `h0x update`, which passes -Channel stable. A preview channel is unsupported.
-if (-not [string]::IsNullOrWhiteSpace($Channel) -and $Channel -ne "stable") {
-    Write-Error "Invalid HyperOx channel '$Channel'. Only 'stable' is supported."
-    exit 1
-}
 
 $localPackageValueCount = @(
     $LocalPackagePath,

@@ -534,7 +534,7 @@ fn install_windows_update_with_installer(
     command
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
         .arg(&update.installer_path)
-        .args(["-Channel", "stable", "-LocalPackagePath"])
+        .arg("-LocalPackagePath")
         .arg(&update.package_path)
         .args([
             "-LocalPackageFormat",

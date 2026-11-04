@@ -446,7 +446,6 @@ try {
 
     $updatedManifest | Out-File -LiteralPath $stableManifestPath -Encoding utf8
     & "$PSScriptRoot\..\distribution\install.ps1" `
-        -Channel stable `
         -ManifestUrl $stableManifestUrl `
         -InstallDir $installDir `
         -Retain 1
