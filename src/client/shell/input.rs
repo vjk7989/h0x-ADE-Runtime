@@ -622,6 +622,7 @@ impl ClientShellState {
                 ClientShellOverlay::Onboarding
                     | ClientShellOverlay::ProductAnnouncement(_)
                     | ClientShellOverlay::ReleaseNotes(_)
+                    | ClientShellOverlay::ApiConfirmation(_)
             )
         ) {
             if key.kind == KeyEventKind::Press {

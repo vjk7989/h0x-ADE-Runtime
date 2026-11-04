@@ -483,6 +483,15 @@ impl ClientShellState {
     ) {
         use crossterm::event::KeyModifiers;
 
+        if matches!(self.overlay, Some(ClientShellOverlay::ApiConfirmation(_))) {
+            match key.code {
+                KeyCode::Enter | KeyCode::Char('y') => self.answer_api_confirmation(true, outcome),
+                KeyCode::Esc | KeyCode::Char('n') => self.answer_api_confirmation(false, outcome),
+                _ => {}
+            }
+            return;
+        }
+
         if matches!(self.overlay, Some(ClientShellOverlay::Onboarding)) {
             if matches!(
                 key.code,
@@ -1081,6 +1090,23 @@ impl ClientShellState {
             crate::api::schema::Method::TabClose(crate::api::schema::TabTarget { tab_id }),
             outcome,
         );
+    }
+
+    pub(super) fn answer_api_confirmation(&mut self, allow: bool, outcome: &mut ClientShellInput) {
+        let Some(ClientShellOverlay::ApiConfirmation(pending)) = self.overlay.take() else {
+            return;
+        };
+        outcome.repaint = true;
+        let answer = crate::protocol::endpoint::EndpointApiConfirmationAnswer {
+            id: pending.id,
+            allow,
+        };
+        if let Ok(data) = serde_json::to_string(&answer) {
+            outcome.requests.push(ClientMessage::EndpointControl {
+                kind: crate::protocol::endpoint::API_CONFIRMATION_ANSWER_KIND.into(),
+                data,
+            });
+        }
     }
 
     pub(super) fn accept_close_confirmation(&mut self, outcome: &mut ClientShellInput) {
