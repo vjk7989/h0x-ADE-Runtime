@@ -4,6 +4,7 @@
 //! Manual `h0x update` downloads and installs the binary.
 //! Background checks only surface availability and release notes.
 //! Uses `curl` as a subprocess for HTTP — no additional Rust HTTP dependencies.
+//! The manifest and the downloaded asset must carry the release key's minisign signature.
 //! JSON parsing uses serde_json (already in deps for persistence).
 
 use std::collections::BTreeMap;
@@ -24,6 +25,8 @@ use serde::{Deserialize, Deserializer};
 
 const UPDATE_MANIFEST_URL: &str =
     "https://github.com/vjk7989/h0x-ADE-Runtime/releases/latest/download/latest.json";
+/// The public half of the key CI signs every release asset with (key id 29957E064EAB76C4).
+const RELEASE_PUBLIC_KEY: &str = "RWTEdqtOBn6VKQ/x9x3qWk/gIWUb/I1OlZXsTlHyrkp9Yq30qBki+tdt";
 const H0X_UPDATE_COMMAND: &str = "h0x update";
 const NIX_UPDATE_COMMAND: &str = "update through Nix";
 const FAKE_UPDATE_VERSION_ENV: &str = "H0X_FAKE_UPDATE_VERSION";
@@ -286,9 +289,65 @@ where
     if !output.status.success() {
         return Err("failed to fetch update manifest".into());
     }
+    verify_release_signature(
+        "the update manifest",
+        &output.stdout,
+        fetch_release_signature(url).as_deref(),
+        RELEASE_PUBLIC_KEY,
+    )?;
 
     serde_json::from_slice(&output.stdout)
         .map_err(|e| format!("failed to parse update manifest JSON: {e}"))
+}
+
+/// Downloads `<url>.minisig`; `None` when it does not download.
+fn fetch_release_signature(url: &str) -> Option<String> {
+    let output = crate::noninteractive_process::curl_command()
+        .args([
+            "-sfL",
+            "--retry",
+            "3",
+            "--connect-timeout",
+            "10",
+            "--max-time",
+            "20",
+        ])
+        .arg(format!("{url}.minisig"))
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Checks `bytes` against its minisign `signature` by `key`.
+fn verify_release_signature(
+    name: &str,
+    bytes: &[u8],
+    signature: Option<&str>,
+    key: &str,
+) -> Result<(), String> {
+    let checked = (|| {
+        let key = minisign_verify::PublicKey::from_base64(key).map_err(|e| e.to_string())?;
+        let text = signature.ok_or("it has no signature")?;
+        let signature = minisign_verify::Signature::decode(text)
+            .map_err(|e| format!("its signature is unreadable: {e}"))?;
+        key.verify(bytes, &signature, false)
+            .map_err(|e| format!("its signature does not match: {e}"))
+    })();
+    checked.map_err(|why| format!("{name} is not signed by the h0x release key: {why}"))
+}
+
+/// Checks a downloaded release asset at `path` against `<url>.minisig`.
+fn verify_downloaded_release(path: &Path, url: &str) -> Result<(), String> {
+    let bytes = fs::read(path).map_err(|e| format!("failed to read downloaded update: {e}"))?;
+    verify_release_signature(
+        "the downloaded update",
+        &bytes,
+        fetch_release_signature(url).as_deref(),
+        RELEASE_PUBLIC_KEY,
+    )
 }
 
 fn handle_manifest_announcement(version: &str, value: Option<&serde_json::Value>) {
@@ -431,6 +490,11 @@ fn download_update(release: &ReleaseInfo) -> Result<DownloadedUpdate, String> {
         return Err("download failed".into());
     }
 
+    if let Err(e) = verify_downloaded_release(&tmp_path, &release.download_url) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(e);
+    }
+
     if let Some(expected) = &release.sha256 {
         if let Err(e) = crate::checksum::verify_sha256(&tmp_path, expected) {
             let _ = fs::remove_file(&tmp_path);
@@ -514,6 +578,8 @@ fn download_windows_update(release: &ReleaseInfo) -> Result<DownloadedWindowsUpd
     if !status.success() {
         return Err("download failed".into());
     }
+    // A refused package is deleted when `update` drops.
+    verify_downloaded_release(&update.package_path, &release.download_url)?;
     crate::checksum::verify_sha256(&update.package_path, expected_sha256)
         .map_err(|err| format!("downloaded update checksum verification failed: {err}"))?;
     tracing::info!(sha256 = %expected_sha256, "downloaded update checksum verified");
@@ -3209,5 +3275,113 @@ mod tests {
                     .is_some_and(|value| value.len() == 64));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod signature_tests {
+    /// A throwaway test key pair (not the release key), its signature of
+    /// `PAYLOAD`, and the same payload signed by a second throwaway key; made
+    /// with rsign2 (`generate -W`, `sign -W`).
+    const TEST_KEY: &str = "RWRwAuiTWRHKFc9nVniDNoa4b+UqLBXWC7QunJ05dZw+XkvYJ6aaoXoK";
+    const PAYLOAD: &str = "h0x-core test release\n";
+    const SIG: &str = "untrusted comment: signature from rsign secret key
+RURwAuiTWRHKFeiB7A2s5PXfB39odODFiAf+77MxJqllRsihUgeswBruN+SLEaLI6zFdPAqRO+o0muW+5/ISjwzOHIVMxfYZUws=
+trusted comment: test
+FbefAmnfeDeGxboZTkIU3PcVBdecdQ85mQjQTOCf3nUiq0yiND8kte8+Ymv7UmzvNNb7BgVZLCS+McLnbN9oDg==
+";
+    const OTHER_KEY_SIG: &str = "untrusted comment: signature from rsign secret key
+RURaRIrUmDKGf+VfuMRCB6G+7YmOZuDtq2kGvfhr9JFuy2kWFMZ6J+L3UogLdr/J7fvVdNbKYfGvxVj6sSbZQmp4hSeTA28H6g8=
+trusted comment: test
+ZJhj3MtbsDPyt278bwB0BcVRB5ZoKqA6VCCZ5s51lq49BobYTBUuzlJqofyqGhaBwWB6iLyCd1cVXXQhXnGlBg==
+";
+
+    fn refused(payload: &str, signature: Option<&str>, key: &str, why: &str) {
+        let err = super::verify_release_signature(
+            "the update manifest",
+            payload.as_bytes(),
+            signature,
+            key,
+        )
+        .unwrap_err();
+        assert!(
+            err.starts_with("the update manifest is not signed by the h0x release key: "),
+            "{err}"
+        );
+        assert!(err.contains(why), "{why}: {err}");
+    }
+
+    #[test]
+    fn update_signed_by_the_key_is_accepted() {
+        super::verify_release_signature(
+            "the update manifest",
+            PAYLOAD.as_bytes(),
+            Some(SIG),
+            TEST_KEY,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn update_tampered_or_empty_payload_is_refused() {
+        refused(
+            "h0x-core test releasE\n",
+            Some(SIG),
+            TEST_KEY,
+            "its signature does not match",
+        );
+        refused("", Some(SIG), TEST_KEY, "its signature does not match");
+    }
+
+    #[test]
+    fn update_missing_or_empty_signature_is_refused() {
+        refused(PAYLOAD, None, TEST_KEY, "it has no signature");
+        refused(PAYLOAD, Some(""), TEST_KEY, "its signature is unreadable");
+    }
+
+    #[test]
+    fn update_signature_by_another_key_is_refused() {
+        refused(
+            PAYLOAD,
+            Some(OTHER_KEY_SIG),
+            TEST_KEY,
+            "its signature does not match",
+        );
+        // The test signature does not pass for the embedded release key either.
+        refused(
+            PAYLOAD,
+            Some(SIG),
+            super::RELEASE_PUBLIC_KEY,
+            "its signature does not match",
+        );
+    }
+
+    /// The download path fetches `<url>.minisig` beside the asset (file:// in tests).
+    #[test]
+    fn update_downloaded_asset_needs_the_release_signature_beside_it() {
+        let dir = std::env::temp_dir().join(format!("h0x-update-signature-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let asset = dir.join("h0x-linux-x86_64");
+        std::fs::write(&asset, PAYLOAD).unwrap();
+        let url = format!(
+            "file:///{}",
+            asset
+                .to_string_lossy()
+                .replace('\\', "/")
+                .trim_start_matches('/')
+        );
+
+        let missing = super::verify_downloaded_release(&asset, &url).unwrap_err();
+        assert!(missing.contains("it has no signature"), "{missing}");
+
+        // Signed by the test key, which is not the release key.
+        std::fs::write(dir.join("h0x-linux-x86_64.minisig"), SIG).unwrap();
+        let foreign = super::verify_downloaded_release(&asset, &url).unwrap_err();
+        assert!(
+            foreign.starts_with("the downloaded update is not signed by the h0x release key: its signature does not match"),
+            "{foreign}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
