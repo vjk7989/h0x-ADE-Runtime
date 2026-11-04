@@ -11,8 +11,8 @@ import {
 } from './snapshot.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
-const repoRoot = process.env.HERDR_DOCS_REPO_ROOT
-  ? resolve(process.env.HERDR_DOCS_REPO_ROOT)
+const repoRoot = process.env.H0X_DOCS_REPO_ROOT
+  ? resolve(process.env.H0X_DOCS_REPO_ROOT)
   : resolve(scriptDir, '../..');
 const versionsDir = resolve(repoRoot, 'docs/versions');
 const manifestPath = resolve(versionsDir, 'manifest.json');
@@ -119,6 +119,15 @@ export async function backfillVersions() {
   });
 }
 
+function tagExists(tag) {
+  try {
+    git(['rev-parse', '--verify', '--quiet', `refs/tags/${tag}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function checkVersions() {
   const manifest = await readManifest();
   if (
@@ -156,11 +165,17 @@ export async function checkVersions() {
       if (!/^[0-9a-f]{40}$/.test(entry.commit)) {
         throw new Error(`docs version ${entry.version} has invalid commit ${entry.commit}`);
       }
-      const taggedCommit = resolveCommit(git, entry.tag);
-      if (taggedCommit !== entry.commit) {
-        throw new Error(
-          `docs version ${entry.version} tag ${entry.tag} moved from ${entry.commit} to ${taggedCommit}`,
+      if (!tagExists(entry.tag)) {
+        process.stdout.write(
+          `docs version ${entry.version}: tag ${entry.tag} is not in this repository; skipping its commit provenance check\n`,
         );
+      } else {
+        const taggedCommit = resolveCommit(git, entry.tag);
+        if (taggedCommit !== entry.commit) {
+          throw new Error(
+            `docs version ${entry.version} tag ${entry.tag} moved from ${entry.commit} to ${taggedCommit}`,
+          );
+        }
       }
     }
     if (!['website/src/content/docs', 'docs/next/website/src/content/docs'].includes(entry.source)) {

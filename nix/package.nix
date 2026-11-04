@@ -15,7 +15,7 @@
 let
   manifest = lib.importTOML ../Cargo.toml;
   zigDeps = callPackage ../vendor/libghostty-vt/build.zig.zon.nix {
-    name = "herdr-libghostty-vt-zig-cache";
+    name = "h0x-libghostty-vt-zig-cache";
     inherit zstd;
     linkFarm =
       name: entries:
@@ -32,7 +32,7 @@ let
   ];
 in
 rustPlatform.buildRustPackage {
-  pname = "herdr";
+  pname = "h0x";
   version = manifest.package.version;
 
   src = lib.fileset.toSource {
@@ -42,7 +42,7 @@ rustPlatform.buildRustPackage {
         ../assets
         ../crates
         ../distribution/install.ps1
-        ../docs/next/api/herdr-api.schema.json
+        ../docs/next/api/h0x-api.schema.json
         ../src
         ../vendor/libghostty-vt
         ../vendor/libghostty-vt.vendor.json
@@ -50,7 +50,7 @@ rustPlatform.buildRustPackage {
         ../build.rs
         ../Cargo.lock
         ../Cargo.toml
-        ../skills/herdr/SKILL.md
+        ../skills/h0x/SKILL.md
       ]
     );
   };
@@ -82,10 +82,10 @@ rustPlatform.buildRustPackage {
   doCheck = false;
 
   meta = {
-    description = "Terminal workspace manager for AI coding agents";
-    homepage = "https://herdr.dev";
+    description = "HyperOx: terminal runtime for coding agents";
+    homepage = "https://github.com/vjk7989/h0x-ADE-Runtime";
     license = lib.licenses.asl20;
-    mainProgram = "herdr";
+    mainProgram = "h0x";
     platforms = lib.platforms.linux ++ lib.platforms.darwin;
   };
 }

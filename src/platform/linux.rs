@@ -33,7 +33,7 @@ mod power;
 pub(crate) use power::monitor_host_power;
 
 const WSL_MARKER_ENV_VARS: &[&str] = &["WSL_DISTRO_NAME", "WSL_INTEROP"];
-const PROCESS_DETECTION_ENV_VAR: &str = "HERDR_PROCESS_DETECTION";
+const PROCESS_DETECTION_ENV_VAR: &str = "H0X_PROCESS_DETECTION";
 const CHILD_GROUPS_SCAN_LIMIT: usize = 64;
 /// Upper bound on the number of processes visited while resolving a pane's
 /// foreground process-group tree. Foreground-job detection reads /proc/<pid>/stat
@@ -1004,7 +1004,7 @@ fn show_desktop_notification_with_command(
     }
 
     let mut cmd = command("notify-send");
-    cmd.arg("--app-name").arg("Herdr").arg("--").arg(title);
+    cmd.arg("--app-name").arg("HyperOx").arg("--").arg(title);
     if let Some(body) = body.filter(|body| !body.is_empty()) {
         cmd.arg(body);
     }
@@ -1719,9 +1719,9 @@ mod tests {
                         Some(path) => std::env::set_var("PATH", path),
                         None => std::env::remove_var("PATH"),
                     }
-                    std::env::remove_var("HERDR_TEST_WL_COPY_MARKER");
-                    std::env::remove_var("HERDR_TEST_WL_COPY_PAYLOAD");
-                    std::env::remove_var("HERDR_TEST_WL_COPY_ARGS");
+                    std::env::remove_var("H0X_TEST_WL_COPY_MARKER");
+                    std::env::remove_var("H0X_TEST_WL_COPY_PAYLOAD");
+                    std::env::remove_var("H0X_TEST_WL_COPY_ARGS");
                 }
                 let _ = std::fs::remove_dir_all(&self.temp_dir);
             }
@@ -1748,7 +1748,7 @@ mod tests {
         let args = temp_dir.join("args");
         std::fs::write(
             &fake_wl_copy,
-            "#!/bin/sh\ncat > \"$HERDR_TEST_WL_COPY_PAYLOAD\"\nprintf '%s\\n' \"$@\" > \"$HERDR_TEST_WL_COPY_ARGS\"\nprintf '%s' \"$$\" > \"$HERDR_TEST_WL_COPY_MARKER\"\nexec sleep 30\n",
+            "#!/bin/sh\ncat > \"$H0X_TEST_WL_COPY_PAYLOAD\"\nprintf '%s\\n' \"$@\" > \"$H0X_TEST_WL_COPY_ARGS\"\nprintf '%s' \"$$\" > \"$H0X_TEST_WL_COPY_MARKER\"\nexec sleep 30\n",
         )
         .expect("fake wl-copy should be written");
         let mut permissions = std::fs::metadata(&fake_wl_copy)
@@ -1768,9 +1768,9 @@ mod tests {
         };
         unsafe {
             std::env::set_var("PATH", test_path);
-            std::env::set_var("HERDR_TEST_WL_COPY_MARKER", &marker);
-            std::env::set_var("HERDR_TEST_WL_COPY_PAYLOAD", &payload);
-            std::env::set_var("HERDR_TEST_WL_COPY_ARGS", &args);
+            std::env::set_var("H0X_TEST_WL_COPY_MARKER", &marker);
+            std::env::set_var("H0X_TEST_WL_COPY_PAYLOAD", &payload);
+            std::env::set_var("H0X_TEST_WL_COPY_ARGS", &args);
         }
 
         for delay in ["", "sleep 0.3"] {
@@ -1792,7 +1792,7 @@ mod tests {
         }
         std::fs::write(
             &fake_wl_copy,
-            "#!/bin/sh\ncat > \"$HERDR_TEST_WL_COPY_PAYLOAD\"\nprintf '%s\\n' \"$@\" > \"$HERDR_TEST_WL_COPY_ARGS\"\nprintf '%s' \"$$\" > \"$HERDR_TEST_WL_COPY_MARKER\"\nexec sleep 30\n",
+            "#!/bin/sh\ncat > \"$H0X_TEST_WL_COPY_PAYLOAD\"\nprintf '%s\\n' \"$@\" > \"$H0X_TEST_WL_COPY_ARGS\"\nprintf '%s' \"$$\" > \"$H0X_TEST_WL_COPY_MARKER\"\nexec sleep 30\n",
         ).expect("hung helper should be written");
 
         let (result_tx, result_rx) = mpsc::channel();
@@ -1877,7 +1877,7 @@ mod tests {
                         Some(value) => std::env::set_var("DISPLAY", value),
                         None => std::env::remove_var("DISPLAY"),
                     }
-                    std::env::remove_var("HERDR_TEST_XCLIP_PAYLOAD");
+                    std::env::remove_var("H0X_TEST_XCLIP_PAYLOAD");
                 }
                 let _ = std::fs::remove_dir_all(&self.temp_dir);
             }
@@ -1906,7 +1906,7 @@ mod tests {
             .expect("fake wl-copy should be written");
         std::fs::write(
             &fake_xclip,
-            "#!/bin/sh\n/bin/cat > \"$HERDR_TEST_XCLIP_PAYLOAD\"\n",
+            "#!/bin/sh\n/bin/cat > \"$H0X_TEST_XCLIP_PAYLOAD\"\n",
         )
         .expect("fake xclip should be written");
         for command in [&fake_wl_copy, &fake_xclip] {
@@ -1922,7 +1922,7 @@ mod tests {
             std::env::set_var("PATH", &temp_dir);
             std::env::set_var("WAYLAND_DISPLAY", "wayland-0");
             std::env::set_var("DISPLAY", ":0");
-            std::env::set_var("HERDR_TEST_XCLIP_PAYLOAD", &payload);
+            std::env::set_var("H0X_TEST_XCLIP_PAYLOAD", &payload);
         }
 
         assert!(write_clipboard(b"clipboard fallback"));
@@ -2205,13 +2205,13 @@ mod tests {
 
         let path =
             std::env::temp_dir().join(format!("herdr-notify-send-args-{}", std::process::id()));
-        let script = "printf '%s\\n' \"$@\" > \"$HERDR_NOTIFY_ARGS\"";
+        let script = "printf '%s\\n' \"$@\" > \"$H0X_NOTIFY_ARGS\"";
         let shown = show_desktop_notification_with_command("-danger", Some("body"), |_| {
             let mut cmd = Command::new("sh");
             cmd.arg("-c")
                 .arg(script)
                 .arg("notify-send")
-                .env("HERDR_NOTIFY_ARGS", &path);
+                .env("H0X_NOTIFY_ARGS", &path);
             cmd
         })
         .expect("notification command should run");

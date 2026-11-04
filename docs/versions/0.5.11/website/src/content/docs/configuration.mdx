@@ -1,47 +1,47 @@
 ---
 title: Configuration
-description: Configure Herdr keybindings, themes, sidebar behavior, notifications, and advanced options.
+description: Configure HyperOx keybindings, themes, sidebar behavior, notifications, and advanced options.
 ---
 
-Herdr works without a config file. Add one when you want custom keys, themes, sidebar settings, notifications, or advanced behavior.
+HyperOx works without a config file. Add one when you want custom keys, themes, sidebar settings, notifications, or advanced behavior.
 
 ## Config file
 
-Herdr reads config from:
+HyperOx reads config from:
 
 ```text
-~/.config/herdr/config.toml
+~/.config/h0x/config.toml
 ```
 
 Print the full default config:
 
 ```bash
-herdr --default-config
+h0x --default-config
 ```
 
 Save it as your config if you want a complete starting point:
 
 ```bash
-herdr --default-config > ~/.config/herdr/config.toml
+h0x --default-config > ~/.config/h0x/config.toml
 ```
 
-If a config value is invalid, Herdr falls back to a safe default and shows a startup warning.
+If a config value is invalid, HyperOx falls back to a safe default and shows a startup warning.
 
 ## Reload config
 
 Reload a running server after editing `config.toml`:
 
 ```bash
-herdr server reload-config
+h0x server reload-config
 ```
 
-You can also open the global menu in Herdr and choose `reload config`.
+You can also open the global menu in HyperOx and choose `reload config`.
 
 Reload applies most UI settings without restarting panes. Startup-only settings still need a restart.
 
 ## Keybindings
 
-Herdr has a prefix mode similar to tmux. The default prefix is `ctrl+b`.
+HyperOx has a prefix mode similar to tmux. The default prefix is `ctrl+b`.
 
 A small keybinding override looks like this:
 
@@ -96,7 +96,7 @@ These expand over number keys 1 through 9. For example, `tabs = "ctrl"` makes `c
 
 ## Custom command keybindings
 
-Custom prefix-mode commands can run shell helpers from inside Herdr.
+Custom prefix-mode commands can run shell helpers from inside HyperOx.
 
 ```toml
 [[keys.command]]
@@ -122,7 +122,7 @@ Built-in themes:
 
 `catppuccin`, `catppuccin-latte`, `terminal`, `tokyo-night`, `tokyo-night-day`, `dracula`, `nord`, `gruvbox`, `gruvbox-light`, `one-dark`, `one-light`, `solarized`, `solarized-light`, `kanagawa`, `kanagawa-lotus`, `rose-pine`, `rose-pine-dawn`, `vesper`.
 
-Use `terminal` when you want Herdr UI colors to follow your host terminal's ANSI palette.
+Use `terminal` when you want HyperOx UI colors to follow your host terminal's ANSI palette.
 
 You can override individual colors:
 
@@ -140,7 +140,7 @@ Color values accept hex, named colors, `rgb(r,g,b)`, or reset aliases like `rese
 
 ## UI and sidebar
 
-The sidebar is the main Herdr dashboard. It shows workspaces, tabs, panes, and agent state.
+The sidebar is the main HyperOx dashboard. It shows workspaces, tabs, panes, and agent state.
 
 Common options:
 
@@ -167,14 +167,14 @@ Set `show_agent_labels_on_pane_borders = true` if you want detected agent labels
 
 ## Notifications
 
-Herdr can show toast notifications when agents finish or need input.
+HyperOx can show toast notifications when agents finish or need input.
 
 ```toml
 [ui.toast]
 delivery = "auto"
 ```
 
-On macOS, Herdr can use system notifications when supported by the foreground client.
+On macOS, HyperOx can use system notifications when supported by the foreground client.
 
 ## Sound
 
@@ -200,7 +200,7 @@ Existing panes keep their current buffer until they are recreated.
 
 ## Nested launches
 
-Herdr normally protects you from launching Herdr inside Herdr.
+HyperOx normally protects you from launching HyperOx inside HyperOx.
 
 ```toml
 [experimental]
@@ -224,10 +224,10 @@ Leave this off unless you are testing terminal image behavior.
 
 | Variable | Purpose |
 | --- | --- |
-| `HERDR_CONFIG_PATH` | Override the config file path. |
-| `HERDR_SESSION` | Select a named session for CLI commands. |
-| `HERDR_SOCKET_PATH` | Low-level socket path override. |
-| `HERDR_LOG` | Set log filtering, for example `HERDR_LOG=herdr=debug`. |
+| `H0X_CONFIG_PATH` | Override the config file path. |
+| `H0X_SESSION` | Select a named session for CLI commands. |
+| `H0X_SOCKET_PATH` | Low-level socket path override. |
+| `H0X_LOG` | Set log filtering, for example `H0X_LOG=h0x=debug`. |
 
 ## Logs
 
@@ -236,9 +236,9 @@ Logs are useful when diagnosing startup warnings, integration state, or socket A
 Common log files:
 
 ```text
-~/.config/herdr/herdr.log
-~/.config/herdr/herdr-client.log
-~/.config/herdr/herdr-server.log
+~/.config/h0x/h0x.log
+~/.config/h0x/h0x-client.log
+~/.config/h0x/h0x-server.log
 ```
 
 Logs rotate automatically. Include the current log and rotated siblings when reporting issues.

@@ -63,7 +63,7 @@ fn default_update_channel_for_build(is_windows: bool, is_preview: bool) -> Updat
 pub enum ToastDelivery {
     #[default]
     Off,
-    Herdr,
+    H0x,
     Terminal,
     System,
 }
@@ -72,7 +72,7 @@ pub enum ToastDelivery {
     Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema, Default,
 )]
 #[serde(rename_all = "kebab-case")]
-pub enum ToastHerdrPosition {
+pub enum ToastH0xPosition {
     TopLeft,
     TopRight,
     BottomLeft,
@@ -199,14 +199,14 @@ fn parse_right_click_passthrough_modifier(value: &str) -> Option<Option<KeyModif
 pub struct ToastConfig {
     pub delivery: ToastDelivery,
     pub delay_seconds: u64,
-    pub herdr: HerdrToastConfig,
+    pub h0x: H0xToastConfig,
     pub clipboard: ClipboardToastConfig,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
-pub struct HerdrToastConfig {
-    pub position: ToastHerdrPosition,
+pub struct H0xToastConfig {
+    pub position: ToastH0xPosition,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -1059,7 +1059,7 @@ pub struct AdvancedConfig {
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct RemoteConfig {
-    /// Add keepalive fallbacks and private connection reuse for `herdr --remote`.
+    /// Add keepalive fallbacks and private connection reuse for `h0x --remote`.
     /// Set false to run plain ssh unchanged. Default: true.
     pub manage_ssh_config: bool,
 }
@@ -1075,7 +1075,7 @@ impl Default for RemoteConfig {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct ExperimentalConfig {
-    /// Allow launching herdr inside an existing herdr pane. Default: false.
+    /// Allow launching herdr inside an existing h0x pane. Default: false.
     pub allow_nested: bool,
     /// Deprecated compatibility key for `terminal.kitty_graphics`.
     pub kitty_graphics: Option<bool>,
@@ -1190,7 +1190,7 @@ impl Default for KeysConfig {
 impl Default for WorktreesConfig {
     fn default() -> Self {
         Self {
-            directory: "~/.herdr/worktrees".into(),
+            directory: "~/.h0x/worktrees".into(),
         }
     }
 }
@@ -1251,16 +1251,16 @@ impl Default for ToastConfig {
         Self {
             delivery: ToastDelivery::Off,
             delay_seconds: 1,
-            herdr: HerdrToastConfig::default(),
+            h0x: H0xToastConfig::default(),
             clipboard: ClipboardToastConfig::default(),
         }
     }
 }
 
-impl Default for HerdrToastConfig {
+impl Default for H0xToastConfig {
     fn default() -> Self {
         Self {
-            position: ToastHerdrPosition::BottomRight,
+            position: ToastH0xPosition::BottomRight,
         }
     }
 }
@@ -1285,13 +1285,13 @@ impl<'de> Deserialize<'de> for ToastConfig {
             delivery: Option<ToastDelivery>,
             enabled: Option<bool>,
             delay_seconds: Option<u64>,
-            herdr: HerdrToastConfig,
+            h0x: H0xToastConfig,
             clipboard: ClipboardToastConfig,
         }
 
         let raw = RawToastConfig::deserialize(deserializer)?;
         let legacy_delivery = match raw.enabled {
-            Some(true) => ToastDelivery::Herdr,
+            Some(true) => ToastDelivery::H0x,
             Some(false) | None => ToastDelivery::Off,
         };
         let delivery = raw.delivery.unwrap_or(legacy_delivery);
@@ -1305,7 +1305,7 @@ impl<'de> Deserialize<'de> for ToastConfig {
         Ok(Self {
             delivery,
             delay_seconds,
-            herdr: raw.herdr,
+            h0x: raw.h0x,
             clipboard: raw.clipboard,
         })
     }
@@ -1570,7 +1570,7 @@ tab_bar_right_separator = " · "
     #[test]
     fn worktrees_directory_defaults_and_parses() {
         let default_config = Config::default();
-        assert_eq!(default_config.worktrees.directory, "~/.herdr/worktrees");
+        assert_eq!(default_config.worktrees.directory, "~/.h0x/worktrees");
 
         let toml = r#"
 [worktrees]
@@ -1877,7 +1877,7 @@ mouse_scroll_lines = 0
 delivery = "terminal"
 delay_seconds = 2
 
-[ui.toast.herdr]
+[ui.toast.h0x]
 position = "top-left"
 
 [ui.toast.clipboard]
@@ -1887,7 +1887,7 @@ position = "top-center"
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.ui.toast.delivery, ToastDelivery::Terminal);
         assert_eq!(config.ui.toast.delay_seconds, 2);
-        assert_eq!(config.ui.toast.herdr.position, ToastHerdrPosition::TopLeft);
+        assert_eq!(config.ui.toast.h0x.position, ToastH0xPosition::TopLeft);
         assert!(!config.ui.toast.clipboard.enabled);
         assert_eq!(
             config.ui.toast.clipboard.position,
@@ -1900,10 +1900,7 @@ position = "top-center"
         let config = Config::default();
         assert_eq!(config.ui.toast.delivery, ToastDelivery::Off);
         assert_eq!(config.ui.toast.delay_seconds, 1);
-        assert_eq!(
-            config.ui.toast.herdr.position,
-            ToastHerdrPosition::BottomRight
-        );
+        assert_eq!(config.ui.toast.h0x.position, ToastH0xPosition::BottomRight);
         assert!(config.ui.toast.clipboard.enabled);
         assert_eq!(
             config.ui.toast.clipboard.position,
@@ -1928,7 +1925,7 @@ delivery = "system"
 enabled = true
 "#;
         let config: Config = toml::from_str(toml).unwrap();
-        assert_eq!(config.ui.toast.delivery, ToastDelivery::Herdr);
+        assert_eq!(config.ui.toast.delivery, ToastDelivery::H0x);
     }
 
     #[test]

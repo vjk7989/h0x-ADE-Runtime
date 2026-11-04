@@ -191,7 +191,7 @@ impl App {
             let space = crate::workspace::git_space_metadata(&path).ok_or_else(|| {
                 ApiFailure::new(
                     "not_git_worktree",
-                    "Herdr worktree actions require a path inside a Git work tree",
+                    "HyperOx worktree actions require a path inside a Git work tree",
                 )
             })?;
             if space.is_linked_worktree {
@@ -256,7 +256,7 @@ impl App {
         let Some(space) = git_space else {
             return Err(ApiFailure::new(
                 "not_git_worktree",
-                "Herdr worktree actions require a workspace inside a Git work tree",
+                "HyperOx worktree actions require a workspace inside a Git work tree",
             ));
         };
         if space.is_linked_worktree {
@@ -688,7 +688,7 @@ mod tests {
     fn install_event_plugin(app: &mut App, name: &str, event: &str) -> PathBuf {
         let plugin_root = unique_temp_path(name);
         std::fs::create_dir_all(&plugin_root).unwrap();
-        let manifest_path = plugin_root.join("herdr-plugin.toml");
+        let manifest_path = plugin_root.join("h0x-plugin.toml");
         std::fs::write(&manifest_path, format!("id = 'example.{name}'\n")).unwrap();
         app.state.installed_plugins.insert(
             format!("example.{name}"),
@@ -696,7 +696,7 @@ mod tests {
                 plugin_id: format!("example.{name}"),
                 name: name.into(),
                 version: "0.1.0".into(),
-                min_herdr_version: "0.7.0".into(),
+                min_h0x_version: "0.7.0".into(),
                 description: None,
                 manifest_path: manifest_path.display().to_string(),
                 plugin_root: plugin_root.display().to_string(),
@@ -1073,7 +1073,7 @@ mod tests {
             .event_tx
             .try_send(AppEvent::UpdateReady {
                 version: "9.9.9".into(),
-                install_command: "herdr update".into(),
+                install_command: "h0x update".into(),
             })
             .is_ok()
         {}

@@ -1,19 +1,19 @@
 [package]
-name = "herdr"
+name = "h0x"
 version = "0.9.5"
 edition = "2021"
 build = "build.rs"
-description = "terminal workspace manager for AI coding agents"
+description = "HyperOx: terminal runtime for coding agents"
 license = "Apache-2.0"
-repository = "https://github.com/herdrdev/herdr"
-homepage = "https://herdr.dev"
+repository = "https://github.com/vjk7989/h0x-ADE-Runtime"
+homepage = "https://github.com/vjk7989/h0x-ADE-Runtime"
 keywords = ["terminal", "tui", "ai", "agents", "multiplexer"]
 categories = ["command-line-utilities"]
 include = [
     "src/**/*",
     "assets/sounds/*",
-    "docs/next/api/herdr-api.schema.json",
-    "skills/herdr/SKILL.md",
+    "docs/next/api/h0x-api.schema.json",
+    "skills/h0x/SKILL.md",
     "distribution/install.ps1",
     "README.md",
     "LICENSE",

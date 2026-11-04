@@ -104,7 +104,7 @@ fn apply_pane_terminal_env(cmd: &mut CommandBuilder) {
     // when the remote side lacks matching terminfo entries.
     cmd.env("TERM", PANE_TERM);
     cmd.env("COLORTERM", PANE_COLORTERM);
-    cmd.env("TERM_PROGRAM", "herdr");
+    cmd.env("TERM_PROGRAM", "h0x");
     cmd.env("TERM_PROGRAM_VERSION", crate::build_info::version());
     // fish only skips its own resize repaint for terminals it recognizes as
     // reflowing. Herdr reflows too, and the competing repaint glues prompt copies.
@@ -199,7 +199,7 @@ fn apply_pane_launch_env(cmd: &mut CommandBuilder, launch_env: &PaneLaunchEnv) {
     for (key, value) in &launch_env.extra {
         cmd.env(key, value);
     }
-    cmd.env(crate::HERDR_ENV_VAR, crate::HERDR_ENV_VALUE);
+    cmd.env(crate::H0X_ENV_VAR, crate::H0X_ENV_VALUE);
     crate::integration::apply_pane_base_env(cmd);
     crate::platform::apply_pane_runtime_marker(cmd);
     match &launch_env.identity {
@@ -209,12 +209,12 @@ fn apply_pane_launch_env(cmd: &mut CommandBuilder, launch_env: &PaneLaunchEnv) {
             tab_id,
             pane_id,
         } => {
-            cmd.env(crate::integration::HERDR_WORKSPACE_ID_ENV_VAR, workspace_id);
-            cmd.env(crate::integration::HERDR_TAB_ID_ENV_VAR, tab_id);
-            cmd.env(crate::integration::HERDR_PANE_ID_ENV_VAR, pane_id);
+            cmd.env(crate::integration::H0X_WORKSPACE_ID_ENV_VAR, workspace_id);
+            cmd.env(crate::integration::H0X_TAB_ID_ENV_VAR, tab_id);
+            cmd.env(crate::integration::H0X_PANE_ID_ENV_VAR, pane_id);
         }
         PaneLaunchIdentity::OmitPane => {
-            cmd.env_remove(crate::integration::HERDR_PANE_ID_ENV_VAR);
+            cmd.env_remove(crate::integration::H0X_PANE_ID_ENV_VAR);
         }
     }
 }
@@ -4395,7 +4395,7 @@ mod tests {
         for key in keys {
             assert!(cmd.get_env(key).is_none(), "{key} must not leak into panes");
         }
-        assert_eq!(cmd.get_env("TERM_PROGRAM"), Some(OsStr::new("herdr")));
+        assert_eq!(cmd.get_env("TERM_PROGRAM"), Some(OsStr::new("h0x")));
         assert_eq!(
             cmd.get_env("TERM_PROGRAM_VERSION"),
             Some(OsStr::new(&crate::build_info::version()))
@@ -4676,7 +4676,7 @@ mod tests {
     #[test]
     fn windows_default_pane_shell_prefers_pwsh_on_path() {
         let dir = std::env::temp_dir().join(format!(
-            "herdr-windows-default-shell-pwsh-{}",
+            "h0x-windows-default-shell-pwsh-{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&dir).unwrap();
@@ -4695,7 +4695,7 @@ mod tests {
     #[test]
     fn windows_default_pane_shell_falls_back_to_inbox_powershell() {
         let dir = std::env::temp_dir().join(format!(
-            "herdr-windows-default-shell-fallback-{}",
+            "h0x-windows-default-shell-fallback-{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&dir).unwrap();
@@ -4713,7 +4713,7 @@ mod tests {
     #[test]
     fn windows_default_pane_shell_rejects_non_executable_pe_images() {
         let dir = std::env::temp_dir().join(format!(
-            "herdr-windows-default-shell-invalid-{}",
+            "h0x-windows-default-shell-invalid-{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&dir).unwrap();
@@ -4794,7 +4794,7 @@ mod tests {
     #[test]
     fn windows_executable_file_rejects_arm64_image_on_amd64_host() {
         let dir = std::env::temp_dir().join(format!(
-            "herdr-windows-default-shell-arm64-{}",
+            "h0x-windows-default-shell-arm64-{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&dir).unwrap();
@@ -4814,7 +4814,7 @@ mod tests {
     #[test]
     fn windows_default_pane_shell_skips_invalid_pwsh_candidates() {
         let base = std::env::temp_dir().join(format!(
-            "herdr-windows-default-shell-skip-{}",
+            "h0x-windows-default-shell-skip-{}",
             std::process::id()
         ));
         let invalid_dir = base.join("invalid");
@@ -6687,7 +6687,7 @@ mod tests {
 
         tx.try_send(AppEvent::UpdateReady {
             version: "9.9.9".into(),
-            install_command: "herdr update".into(),
+            install_command: "h0x update".into(),
         })
         .unwrap();
 

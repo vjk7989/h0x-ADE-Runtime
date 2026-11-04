@@ -415,7 +415,7 @@ crate::cli::projection::cli_params! {
         pub agent_session_id: Option<String> => Field::new(None).input(binding::optional_text("agent-session-id", "ID")),
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub agent_session_path: Option<String> => Field::new(None).input(binding::optional_text("agent-session-path", "PATH").path()),
-        /// Command that resumes this agent's session after a Herdr restart. The
+        /// Command that resumes this agent's session after a HyperOx restart. The
         /// first element must be a plain command name.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub resume_argv: Option<Vec<String>> => Field::new(None).input(binding::resume()),
@@ -436,7 +436,7 @@ crate::cli::projection::cli_params! {
         pub agent_session_path: Option<String> => Field::new(None).input(binding::optional_text("agent-session-path", "PATH").path()),
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub session_start_source: Option<String> => Field::new(None).input(binding::optional_text("session-start-source", "SOURCE")),
-        /// Command that resumes this agent's session after a Herdr restart. The
+        /// Command that resumes this agent's session after a HyperOx restart. The
         /// first element must be a plain command name.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub resume_argv: Option<Vec<String>> => Field::new(None).input(binding::resume()),

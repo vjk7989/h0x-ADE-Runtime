@@ -103,10 +103,8 @@ impl Replacement {
             .unwrap_or(Path::new("."));
         for _ in 0..128 {
             let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
-            let temporary = parent.join(format!(
-                ".herdr-config-{}-{sequence}.tmp",
-                std::process::id()
-            ));
+            let temporary =
+                parent.join(format!(".h0x-config-{}-{sequence}.tmp", std::process::id()));
             // Existing configs can contain secrets. Start their staging file private;
             // the platform writer preserves the original permissions before publication.
             // New configs retain ordinary create/umask/inherited-ACL defaults.

@@ -52,7 +52,7 @@ async fn watch_connection(
             "Inhibit",
             &(
                 "shutdown",
-                "Herdr",
+                "HyperOx",
                 "Save terminal workspace layout",
                 "delay",
             ),

@@ -270,11 +270,11 @@ mod tests {
     #[test]
     fn release_notes_inline_code_spans_are_styled_without_backticks() {
         let palette = Palette::catppuccin();
-        let lines = release_notes_lines("- `herdr pane run ...` now works", &palette);
+        let lines = release_notes_lines("- `h0x pane run ...` now works", &palette);
 
         assert_eq!(lines.len(), 1);
-        assert_eq!(line_text(&lines[0].1), " • herdr pane run ... now works");
-        assert_eq!(lines[0].1.spans[1].content.as_ref(), "herdr pane run ...");
+        assert_eq!(line_text(&lines[0].1), " • h0x pane run ... now works");
+        assert_eq!(lines[0].1.spans[1].content.as_ref(), "h0x pane run ...");
         assert_eq!(lines[0].1.spans[1].style.fg, Some(palette.accent));
         assert_eq!(lines[0].1.spans[1].style.bg, Some(palette.surface0));
     }
@@ -298,20 +298,21 @@ mod tests {
     #[test]
     fn release_notes_preview_lines_show_update_steps() {
         let palette = Palette::catppuccin();
-        let lines = release_notes_preview_line_entries("herdr update", &palette)
+        let lines = release_notes_preview_line_entries("h0x update", &palette)
             .into_iter()
             .map(|(_, line)| line)
             .collect::<Vec<_>>();
 
         assert_eq!(lines.len(), 2);
         assert_eq!(line_text(&lines[0]), " ● update ready");
-        assert_eq!(
-            line_text(&lines[1]),
-            " detach, run herdr update, then run Herdr again to reconnect"
-        );
+        // The instruction wording belongs to `crate::update`; this module only
+        // owns the leading space and the backtick-free inline-code rendering.
+        let instruction = crate::update::update_install_instruction("h0x update").replace('`', "");
+        assert!(instruction.contains("h0x update"));
+        assert_eq!(line_text(&lines[1]), format!(" {instruction}"));
         assert_eq!(lines[0].spans[1].style.fg, Some(palette.accent));
         assert_eq!(lines[0].spans[2].style.fg, Some(palette.text));
-        assert_eq!(lines[1].spans[2].content.as_ref(), "herdr update");
+        assert_eq!(lines[1].spans[2].content.as_ref(), "h0x update");
         assert_eq!(lines[1].spans[2].style.fg, Some(palette.accent));
         assert_eq!(lines[1].spans[2].style.bg, Some(palette.surface0));
     }
@@ -326,13 +327,12 @@ mod tests {
             preview: true,
         };
 
-        let lines = release_notes_display_lines(&notes, "herdr update", &palette);
+        let lines = release_notes_display_lines(&notes, "h0x update", &palette);
 
         assert_eq!(line_text(&lines[0].1), " ● update ready");
-        assert_eq!(
-            line_text(&lines[1].1),
-            " detach, run herdr update, then run Herdr again to reconnect"
-        );
+        let instruction = crate::update::update_install_instruction("h0x update").replace('`', "");
+        assert!(instruction.contains("h0x update"));
+        assert_eq!(line_text(&lines[1].1), format!(" {instruction}"));
         assert_eq!(line_text(&lines[2].1), "");
         assert_eq!(line_text(&lines[3].1), " ADDED");
         assert_eq!(line_text(&lines[4].1), " • One");

@@ -72,7 +72,7 @@ impl App {
             let jobs = Arc::clone(&jobs);
             let next = Arc::clone(&next);
             let event_tx = self.event_tx.clone();
-            let spawned = crate::thread_spawn::spawn_named("herdr-worktree-check", move || {
+            let spawned = crate::thread_spawn::spawn_named("h0x-worktree-check", move || {
                 while let Some((workspace_id, expected)) =
                     jobs.get(next.fetch_add(1, Ordering::Relaxed))
                 {
@@ -133,7 +133,7 @@ impl App {
         if self.git_identity_refresh_requested {
             demand.branch = true;
         }
-        let spawned = crate::thread_spawn::spawn_named("herdr-git-refresh", move || {
+        let spawned = crate::thread_spawn::spawn_named("h0x-git-refresh", move || {
             let output =
                 refresh_workspace_git_statuses_with_cache_and_demand(workspaces, &cache, demand);
             let _ = event_tx.blocking_send(AppEvent::GitStatusRefreshed {

@@ -35,7 +35,7 @@ impl ConfigEdit<'_> {
             Self::ToastDelivery(delivery) => {
                 let value = match delivery {
                     super::ToastDelivery::Off => "\"off\"",
-                    super::ToastDelivery::Herdr => "\"herdr\"",
+                    super::ToastDelivery::H0x => "\"h0x\"",
                     super::ToastDelivery::Terminal => "\"terminal\"",
                     super::ToastDelivery::System => "\"system\"",
                 };

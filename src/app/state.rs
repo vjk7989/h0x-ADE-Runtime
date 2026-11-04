@@ -722,7 +722,7 @@ pub struct ToastNotification {
     pub kind: ToastKind,
     pub title: String,
     pub context: String,
-    pub position: Option<crate::config::ToastHerdrPosition>,
+    pub position: Option<crate::config::ToastH0xPosition>,
     pub target: Option<ToastTarget>,
 }
 
@@ -1054,7 +1054,7 @@ impl AppState {
                 pane_infos: Vec::new(),
             },
             update_available: None,
-            update_install_command: "herdr update".into(),
+            update_install_command: "h0x update".into(),
             latest_release_notes_available: false,
             update_dismissed: false,
             config_diagnostic: None,

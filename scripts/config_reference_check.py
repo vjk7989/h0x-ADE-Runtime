@@ -2,7 +2,7 @@
 
 Walks the serde structs in src/config/*.rs starting from the root `Config`
 struct, builds the set of canonical dotted TOML key paths, and compares it
-against the keys documented in the preview config reference. Compatibility
+against the keys documented in the docs/next config reference. Compatibility
 aliases are intentionally documented on their canonical entries rather than
 as separate rows.
 

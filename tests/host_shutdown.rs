@@ -121,24 +121,24 @@ async fn host_shutdown_saves_layout_before_releasing_delay_lock() {
     let mut bus = private_bus(&address);
     let peer = Arc::new(Mutex::new(None));
     let mut service = login_service(&address, peer.clone()).await;
-    let socket = base.join("herdr-dev/sessions/shutdown/herdr.sock");
+    let socket = base.join("h0x-dev/sessions/shutdown/h0x.sock");
     let config = base.join("config.toml");
     std::fs::write(&config, "onboarding = false\n[experimental]\nallow_nested = true\n[terminal]\ndefault_shell = \"/bin/sh\"\n").unwrap();
     let mut server = ChildGuard(
-        Command::new(env!("CARGO_BIN_EXE_herdr"))
+        Command::new(env!("CARGO_BIN_EXE_h0x"))
             .args(["--session", "shutdown", "server"])
             .env("XDG_CONFIG_HOME", &base)
             .env("XDG_STATE_HOME", &base)
             .env("XDG_RUNTIME_DIR", &base)
-            .env("HERDR_CONFIG_PATH", &config)
-            .env_remove("HERDR_SOCKET_PATH")
+            .env("H0X_CONFIG_PATH", &config)
+            .env_remove("H0X_SOCKET_PATH")
             .env("DBUS_SYSTEM_BUS_ADDRESS", address.trim())
-            .env_remove("HERDR_CLIENT_SOCKET_PATH")
-            .env_remove("HERDR_STARTUP_CWD")
-            .env_remove("HERDR_SESSION")
-            .env_remove("HERDR_WORKSPACE_ID")
-            .env_remove("HERDR_TAB_ID")
-            .env_remove("HERDR_PANE_ID")
+            .env_remove("H0X_CLIENT_SOCKET_PATH")
+            .env_remove("H0X_STARTUP_CWD")
+            .env_remove("H0X_SESSION")
+            .env_remove("H0X_WORKSPACE_ID")
+            .env_remove("H0X_TAB_ID")
+            .env_remove("H0X_PANE_ID")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .spawn()
@@ -204,7 +204,7 @@ async fn host_shutdown_saves_layout_before_releasing_delay_lock() {
     })
     .await
     .unwrap();
-    let saved = base.join("herdr-dev/sessions/shutdown/session.json");
+    let saved = base.join("h0x-dev/sessions/shutdown/session.json");
     let layout: serde_json::Value = serde_json::from_slice(&std::fs::read(saved).unwrap()).unwrap();
     assert_eq!(layout["workspaces"].as_array().unwrap().len(), 3);
     assert_eq!(layout["workspaces"][2]["custom_name"], "three");

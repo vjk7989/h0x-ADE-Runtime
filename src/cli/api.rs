@@ -1,4 +1,4 @@
-const API_SCHEMA_JSON: &str = include_str!("../../docs/next/api/herdr-api.schema.json");
+const API_SCHEMA_JSON: &str = include_str!("../../docs/next/api/h0x-api.schema.json");
 
 use crate::api::schema::{EmptyParams, Method, Request};
 
@@ -55,7 +55,7 @@ fn api_schema(args: &[String]) -> std::io::Result<i32> {
 
 fn api_snapshot(args: &[String]) -> std::io::Result<i32> {
     if !args.is_empty() {
-        eprintln!("usage: herdr api snapshot");
+        eprintln!("usage: h0x api snapshot");
         return Ok(2);
     }
 
@@ -89,7 +89,7 @@ fn schema_summary_text() -> std::io::Result<String> {
     schemas.sort();
 
     Ok(format!(
-        "Herdr API schema\nprotocol: {}\nschema_version: {}\nschemas: {}\n\nUse `herdr api schema --json` to print the full schema.\nUse `herdr api schema --output PATH` to write it to a file.\n",
+        "HyperOx API schema\nprotocol: {}\nschema_version: {}\nschemas: {}\n\nUse `h0x api schema --json` to print the full schema.\nUse `h0x api schema --output PATH` to write it to a file.\n",
         protocol,
         schema_version,
         schemas.join(", ")
@@ -97,13 +97,13 @@ fn schema_summary_text() -> std::io::Result<String> {
 }
 
 fn print_api_help() {
-    eprintln!("herdr api commands:");
-    eprintln!("  herdr api snapshot");
-    eprintln!("  herdr api schema [--json | --output PATH]");
+    eprintln!("h0x api commands:");
+    eprintln!("  h0x api snapshot");
+    eprintln!("  h0x api schema [--json | --output PATH]");
 }
 
 fn print_api_schema_help() {
-    eprintln!("usage: herdr api schema [--json | --output PATH]");
+    eprintln!("usage: h0x api schema [--json | --output PATH]");
 }
 
 #[cfg(test)]
@@ -111,8 +111,8 @@ mod tests {
     #[test]
     fn schema_summary_text_stays_human_sized() {
         let text = super::schema_summary_text().unwrap();
-        assert!(text.contains("Herdr API schema"));
-        assert!(text.contains("Use `herdr api schema --json`"));
+        assert!(text.contains("HyperOx API schema"));
+        assert!(text.contains("Use `h0x api schema --json`"));
         assert!(text.len() < 400);
     }
 }

@@ -32,7 +32,7 @@ fn rewrite_schema_refs(value: &mut serde_json::Value, schema_name: &str) {
 fn protocol_schema_document() -> serde_json::Value {
     serde_json::json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "Herdr API",
+        "title": "HyperOx API",
         "schema_version": 1,
         "protocol": crate::protocol::PROTOCOL_VERSION,
         "schemas": {
@@ -185,10 +185,10 @@ fn generated_protocol_schema_artifact_is_current() {
         "{}\n",
         serde_json::to_string_pretty(&protocol_schema_document()).unwrap()
     );
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("docs/next/api/herdr-api.schema.json");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/next/api/h0x-api.schema.json");
 
-    if std::env::var_os("HERDR_UPDATE_API_SCHEMA").is_some() {
+    if std::env::var_os("H0X_UPDATE_API_SCHEMA").is_some() {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, &actual).unwrap();
         return;
@@ -196,13 +196,13 @@ fn generated_protocol_schema_artifact_is_current() {
 
     let expected = std::fs::read_to_string(&path).unwrap_or_else(|err| {
         panic!(
-            "failed to read {}; run `HERDR_UPDATE_API_SCHEMA=1 just test-one generated_protocol_schema_artifact_is_current`: {err}",
+            "failed to read {}; run `H0X_UPDATE_API_SCHEMA=1 just test-one generated_protocol_schema_artifact_is_current`: {err}",
             path.display()
         )
     });
     assert_eq!(
         expected, actual,
-        "generated API schema artifact is stale; run `HERDR_UPDATE_API_SCHEMA=1 just test-one generated_protocol_schema_artifact_is_current`"
+        "generated API schema artifact is stale; run `H0X_UPDATE_API_SCHEMA=1 just test-one generated_protocol_schema_artifact_is_current`"
     );
 }
 
@@ -332,7 +332,7 @@ fn notification_show_request_parses() {
     assert_eq!(params.body.as_deref(), Some("api workspace"));
     assert_eq!(
         params.position,
-        Some(crate::config::ToastHerdrPosition::TopLeft)
+        Some(crate::config::ToastH0xPosition::TopLeft)
     );
     assert_eq!(params.sound, NotificationShowSound::Request);
 }
@@ -353,12 +353,12 @@ fn client_window_title_requests_round_trip() {
     let set = Request {
         id: "req_title_set".into(),
         method: Method::ClientWindowTitleSet(ClientWindowTitleSetParams {
-            title: "herdr api".into(),
+            title: "h0x api".into(),
         }),
     };
     let json = serde_json::to_value(&set).unwrap();
     assert_eq!(json["method"], "client.window_title.set");
-    assert_eq!(json["params"]["title"], "herdr api");
+    assert_eq!(json["params"]["title"], "h0x api");
     let restored: Request = serde_json::from_value(json).unwrap();
     assert_eq!(restored, set);
 
@@ -990,9 +990,9 @@ fn plugin_link_list_unlink_round_trip() {
         plugin_id: "example.worktree-bootstrap".into(),
         name: "Worktree Bootstrap".into(),
         version: "0.1.0".into(),
-        min_herdr_version: crate::build_info::BASE_VERSION.into(),
+        min_h0x_version: crate::build_info::BASE_VERSION.into(),
         description: Some("Prepare new worktrees".into()),
-        manifest_path: "/plugins/worktree-bootstrap/herdr-plugin.toml".into(),
+        manifest_path: "/plugins/worktree-bootstrap/h0x-plugin.toml".into(),
         plugin_root: "/plugins/worktree-bootstrap".into(),
         enabled: true,
         platforms: None,
@@ -1078,7 +1078,7 @@ fn layout_export_apply_round_trip() {
             pane: LayoutPane {
                 label: Some("tests".into()),
                 command: Some(vec!["sh".into(), "-c".into(), "just test".into()]),
-                env: HashMap::from([("HERDR_ROLE".into(), "tests".into())]),
+                env: HashMap::from([("H0X_ROLE".into(), "tests".into())]),
                 ..Default::default()
             },
         }),
@@ -1409,7 +1409,7 @@ fn plugin_pane_open_request_round_trips() {
             direction: None,
             cwd: Some("/tmp".into()),
             focus: true,
-            env: [("HERDR_ROLE".to_string(), "board".to_string())].into(),
+            env: [("H0X_ROLE".to_string(), "board".to_string())].into(),
         }),
     };
 
@@ -1418,7 +1418,7 @@ fn plugin_pane_open_request_round_trips() {
     assert_eq!(json["params"]["placement"], "popup");
     assert_eq!(json["params"]["width"], 90);
     assert_eq!(json["params"]["height"], "80%");
-    assert_eq!(json["params"]["env"]["HERDR_ROLE"], "board");
+    assert_eq!(json["params"]["env"]["H0X_ROLE"], "board");
     let restored: Request = serde_json::from_value(json).unwrap();
     assert_eq!(restored, request);
 }

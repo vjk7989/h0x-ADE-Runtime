@@ -61,7 +61,7 @@ def main() -> int:
         for subject in invalid:
             print(f"  {subject}")
         print(
-            "commit subjects must use conventional commits because preview notes are generated from them."
+            "commit subjects must use conventional commits because release notes are generated from them."
         )
         print("example: fix(update): install selected channel")
         print("expected: type(optional-scope): subject")

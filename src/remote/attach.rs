@@ -43,21 +43,19 @@ const NONINTERACTIVE_SSH_STDERR_LIMIT: usize = 16 * 1024;
 const BRIDGE_FAILURE_REPORT_TIMEOUT: Duration = Duration::from_secs(1);
 const REMOTE_SERVER_SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const CURRENT_PROTOCOL: u32 = crate::protocol::PROTOCOL_VERSION;
-const STABLE_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/latest.json";
-const PREVIEW_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/preview.json";
-const REMOTE_BINARY_ENV_VAR: &str = "HERDR_REMOTE_BINARY";
-const REMOTE_OUTPUT_READY_MARKER: &str = "herdr-remote-output-ready:1";
-const WINDOWS_REMOTE_PATH_MARKER: &str = "herdr-remote-path:1:";
-const WINDOWS_REMOTE_INSTALL_DIR_MARKER: &str = "herdr-remote-install-dir:1:";
-const WINDOWS_REMOTE_INSTALL_RESULT_MARKER: &str = "herdr-remote-install-result:1:";
+const UPDATE_MANIFEST_URL: &str =
+    "https://github.com/vjk7989/h0x-ADE-Runtime/releases/latest/download/latest.json";
+const REMOTE_BINARY_ENV_VAR: &str = "H0X_REMOTE_BINARY";
+const REMOTE_OUTPUT_READY_MARKER: &str = "h0x-remote-output-ready:1";
+const WINDOWS_REMOTE_PATH_MARKER: &str = "h0x-remote-path:1:";
+const WINDOWS_REMOTE_INSTALL_DIR_MARKER: &str = "h0x-remote-install-dir:1:";
+const WINDOWS_REMOTE_INSTALL_RESULT_MARKER: &str = "h0x-remote-install-result:1:";
 const SSH_CONTROL_SOCKET_NAME: &str = "ctl";
 pub(crate) fn run_remote(remote: RemoteLaunch) -> io::Result<()> {
     let session_name = crate::session::active_name()
         .unwrap_or_else(|| crate::session::DEFAULT_SESSION_NAME.to_string());
     let local_socket = local_forward_socket_path(&remote.target, &session_name);
-    let program = std::env::args()
-        .next()
-        .unwrap_or_else(|| "herdr".to_string());
+    let program = std::env::args().next().unwrap_or_else(|| "h0x".to_string());
     let reattach_command = reattach_command(
         &program,
         &remote.target,
@@ -78,10 +76,10 @@ pub(crate) fn run_remote(remote: RemoteLaunch) -> io::Result<()> {
         session_name.clone(),
     );
     let prepared_remote =
-        prepare_remote_herdr(&remote_ssh, remote.live_handoff, require_surface_interest)?;
+        prepare_remote_h0x(&remote_ssh, remote.live_handoff, require_surface_interest)?;
     ensure_remote_server_ready(
         &remote_ssh,
-        &prepared_remote.remote_herdr,
+        &prepared_remote.remote_h0x,
         prepared_remote.stop_after_install_approved,
         remote.live_handoff,
         require_surface_interest,
@@ -89,7 +87,7 @@ pub(crate) fn run_remote(remote: RemoteLaunch) -> io::Result<()> {
 
     let _bridge = SshStdioBridge::start(
         remote.target.clone(),
-        prepared_remote.remote_herdr,
+        prepared_remote.remote_h0x,
         local_socket.clone(),
         session_name.clone(),
         remote_ssh.options(),
@@ -114,7 +112,7 @@ pub(crate) fn check_saved_ssh(target: &str, session: &str) -> io::Result<()> {
     let mut ssh = RemoteSsh::new_noninteractive(target.to_owned());
     ssh.session_name = session.to_owned();
     let check = || {
-        let remote = find_installed_remote_herdr(&ssh)?;
+        let remote = find_installed_remote_h0x(&ssh)?;
         match remote_server_status(&ssh, &remote, false)? {
             RemoteServerStatus::Running {
                 endpoint_protocol_generation,
@@ -134,7 +132,7 @@ pub(crate) fn check_saved_ssh(target: &str, session: &str) -> io::Result<()> {
                 Ok(())
             }
             _ => Err(io::Error::other(format!(
-                "remote Herdr server is stopped or incompatible; run `{}`",
+                "remote HyperOx server is stopped or incompatible; run `{}`",
                 super::saved_ssh_bootstrap_command(target, session),
             ))),
         }
@@ -147,8 +145,8 @@ pub(crate) fn check_saved_ssh(target: &str, session: &str) -> io::Result<()> {
 
 pub(crate) struct SavedSshSetup {
     ssh: RemoteSsh,
-    remote_herdr: RemoteHerdr,
-    candidates: Vec<RemoteHerdr>,
+    remote_h0x: RemoteHyperOx,
+    candidates: Vec<RemoteHyperOx>,
 }
 
 impl SavedSshSetup {
@@ -164,12 +162,12 @@ impl SavedSshSetup {
             manage,
             crate::session::DEFAULT_SESSION_NAME.to_owned(),
         );
-        let remote_herdr =
-            RemoteHerdr::for_platform(detect_remote_platform(&ssh)?.into_setup_platform());
-        let candidates = remote_binary_candidates(&ssh, &remote_herdr)?;
+        let remote_h0x =
+            RemoteHyperOx::for_platform(detect_remote_platform(&ssh)?.into_setup_platform());
+        let candidates = remote_binary_candidates(&ssh, &remote_h0x)?;
         Ok(Self {
             ssh,
-            remote_herdr,
+            remote_h0x,
             candidates,
         })
     }
@@ -207,7 +205,7 @@ impl SavedSshSetup {
             }
         }
         Err(io::Error::other(format!(
-            "could not discover remote Herdr sessions: {failure}; specify --remote-session to continue"
+            "could not discover remote HyperOx sessions: {failure}; specify --remote-session to continue"
         )))
     }
 
@@ -220,14 +218,13 @@ impl SavedSshSetup {
         self.ssh.session_name = session_name.to_owned();
         let Self {
             ssh,
-            remote_herdr,
+            remote_h0x,
             candidates,
         } = self;
-        let prepared =
-            prepare_discovered_remote_herdr(&ssh, remote_herdr, &candidates, false, true)?;
+        let prepared = prepare_discovered_remote_h0x(&ssh, remote_h0x, &candidates, false, true)?;
         ensure_remote_server_ready(
             &ssh,
-            &prepared.remote_herdr,
+            &prepared.remote_h0x,
             prepared.stop_after_install_approved,
             false,
             true,
@@ -236,14 +233,14 @@ impl SavedSshSetup {
         // The bridge already owns daemon startup. EOF closes only this temporary attachment,
         // leaving the named server running even when no local TUI is open yet.
         let command = prepared
-            .remote_herdr
+            .remote_h0x
             .executable
             .saved_bridge_command(session_name);
-        let output = ssh.shell_output(&prepared.remote_herdr.platform, &command)?;
+        let output = ssh.shell_output(&prepared.remote_h0x.platform, &command)?;
         if !output.status.success() {
             return Err(command_failed("remote server startup failed", &output));
         }
-        match remote_server_status(&ssh, &prepared.remote_herdr, true)? {
+        match remote_server_status(&ssh, &prepared.remote_h0x, true)? {
             RemoteServerStatus::Running {
                 endpoint_protocol_generation,
                 surface_interest,
@@ -259,7 +256,7 @@ impl SavedSshSetup {
             )
             .is_none() =>
             {
-                Ok(prepared.remote_herdr.machine_metadata().or_else(|| {
+                Ok(prepared.remote_h0x.machine_metadata().or_else(|| {
                     discover_remote_api_metadata(&ssh, session_name)
                         .inspect_err(
                             |error| tracing::debug!(%error, "could not capture SSH setup metadata"),
@@ -472,7 +469,7 @@ impl RemoteExecutable {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct RemoteHerdr {
+pub(super) struct RemoteHyperOx {
     install_suffix: String,
     executable: RemoteExecutable,
     resolved_executable: Option<String>,
@@ -480,7 +477,7 @@ pub(super) struct RemoteHerdr {
     bridge_idle_timeout: bool,
 }
 
-impl RemoteHerdr {
+impl RemoteHyperOx {
     pub(super) fn machine_metadata(&self) -> Option<crate::client::endpoint::SshMachineMetadata> {
         let executable = self.resolved_executable.clone()?;
         let metadata = crate::client::endpoint::SshMachineMetadata {
@@ -494,10 +491,10 @@ impl RemoteHerdr {
         let (install_suffix, executable) = if platform.is_windows() {
             (
                 String::new(),
-                RemoteExecutable::WindowsPath("herdr.exe".to_string()),
+                RemoteExecutable::WindowsPath("h0x.exe".to_string()),
             )
         } else {
-            let install_suffix = ".local/bin/herdr".to_string();
+            let install_suffix = ".local/bin/h0x".to_string();
             let shell_path = format!("\"$HOME/{install_suffix}\"");
             (install_suffix, RemoteExecutable::PosixShellPath(shell_path))
         };
@@ -580,7 +577,7 @@ fn windows_powershell_encoded_script(script: &str) -> String {
     // `$ProgressPreference = 'SilentlyContinue'` stops PowerShell from
     // serializing progress records (for example module auto-loading's
     // "Preparing modules for first use.") into the stderr CLIXML stream that
-    // Herdr forwards to the terminal.
+    // HyperOx forwards to the terminal.
     let script = format!(
         "[Console]::Out.WriteLine(); [Console]::Out.WriteLine('{REMOTE_OUTPUT_READY_MARKER}'); [Console]::Out.Flush(); $ProgressPreference = 'SilentlyContinue'; {script}"
     );
@@ -634,21 +631,6 @@ struct RemoteReleaseMetadata {
     assets: BTreeMap<String, RemoteAssetRef>,
     #[serde(default)]
     sha256: BTreeMap<String, String>,
-}
-
-#[derive(Deserialize)]
-struct RemotePreviewManifest {
-    build_id: String,
-    protocol: u32,
-    assets: BTreeMap<String, RemoteAssetRef>,
-    #[serde(default)]
-    builds: BTreeMap<String, RemotePreviewBuildMetadata>,
-}
-
-#[derive(Deserialize)]
-struct RemotePreviewBuildMetadata {
-    protocol: u32,
-    assets: BTreeMap<String, RemoteAssetRef>,
 }
 
 fn deserialize_remote_manifest_releases<'de, D>(
@@ -716,8 +698,8 @@ struct RemoteReleaseAsset {
     sha256: Option<String>,
 }
 
-pub(super) struct PreparedRemoteHerdr {
-    pub(super) remote_herdr: RemoteHerdr,
+pub(super) struct PreparedRemoteHyperOx {
+    pub(super) remote_h0x: RemoteHyperOx,
     stop_after_install_approved: bool,
 }
 
@@ -774,7 +756,7 @@ pub(crate) fn ssh_authentication_command(target: &str) -> io::Result<SshAuthenti
         ));
     }
     if !crate::platform::remote_ssh_config_paths().multiplexing {
-        return Err(io::Error::new(io::ErrorKind::Unsupported, "interactive SSH recovery requires Unix OpenSSH multiplexing; authenticate outside Herdr on this platform"));
+        return Err(io::Error::new(io::ErrorKind::Unsupported, "interactive SSH recovery requires Unix OpenSSH multiplexing; authenticate outside HyperOx on this platform"));
     }
     if !crate::config::Config::load()
         .config
@@ -1095,8 +1077,8 @@ impl RemoteSsh {
         }
     }
 
-    fn install_herdr(&self, remote_herdr: &RemoteHerdr, source_path: &Path) -> io::Result<()> {
-        let output = self.sh_output(&remote_install_prepare_script(remote_herdr))?;
+    fn install_h0x(&self, remote_h0x: &RemoteHyperOx, source_path: &Path) -> io::Result<()> {
+        let output = self.sh_output(&remote_install_prepare_script(remote_h0x))?;
         if !output.status.success() {
             return Err(command_failed("remote install preparation failed", &output));
         }
@@ -1153,13 +1135,13 @@ impl RemoteSsh {
         }
     }
 
-    fn install_windows_herdr(
+    fn install_windows_h0x(
         &self,
-        remote_herdr: &RemoteHerdr,
+        remote_h0x: &RemoteHyperOx,
         source_path: &Path,
         identity: &str,
         sha256: &str,
-    ) -> io::Result<RemoteHerdr> {
+    ) -> io::Result<RemoteHyperOx> {
         let installer_dir = private_download_dir("windows-installer")?;
         let local_installer_path = installer_dir.join("install.ps1");
         if let Err(err) = fs::write(&local_installer_path, crate::update::WINDOWS_INSTALLER) {
@@ -1183,7 +1165,7 @@ impl RemoteSsh {
                 )?;
                 self.copy_windows_file(
                     source_path,
-                    &format!(r"{remote_dir}\herdr-windows-x86_64.zip"),
+                    &format!(r"{remote_dir}\h0x-windows-x86_64.zip"),
                 )?;
 
                 let output = self.framed_user_shell_output(&windows_remote_install_command(
@@ -1198,7 +1180,7 @@ impl RemoteSsh {
                     &String::from_utf8_lossy(&output.stdout),
                     WINDOWS_REMOTE_INSTALL_RESULT_MARKER,
                 )
-                .map(|path| remote_herdr.clone().with_windows_path(path))
+                .map(|path| remote_h0x.clone().with_windows_path(path))
             })();
 
             let cleanup =
@@ -1287,7 +1269,7 @@ fn normalize_remote_stdout(stdout: &mut Vec<u8>, command_succeeded: bool) -> io:
     Ok(())
 }
 
-fn remote_install_prepare_script(remote_herdr: &RemoteHerdr) -> String {
+fn remote_install_prepare_script(remote_h0x: &RemoteHyperOx) -> String {
     format!(
         r#"set -eu
 dest="$HOME/{install_suffix}"
@@ -1296,7 +1278,7 @@ mkdir -p "$dir"
 tmp="${{dest}}.tmp.$$"
 printf '%s\0%s\0' "$tmp" "$dest"
 "#,
-        install_suffix = remote_herdr.install_suffix
+        install_suffix = remote_h0x.install_suffix
     )
 }
 
@@ -1336,7 +1318,7 @@ fn remote_install_commit_script(tmp_path: &str, dest_path: &str) -> String {
 
 fn windows_remote_install_prepare_command() -> String {
     windows_powershell_script_command(&format!(
-        "$remoteInstallDir = Join-Path ([System.IO.Path]::GetTempPath()) ('herdr-remote-' + [System.Guid]::NewGuid().ToString('N')); [System.IO.Directory]::CreateDirectory($remoteInstallDir) | Out-Null; $encodedInstallDir = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($remoteInstallDir)); [Console]::Out.WriteLine('{WINDOWS_REMOTE_INSTALL_DIR_MARKER}' + $encodedInstallDir); exit 0"
+        "$remoteInstallDir = Join-Path ([System.IO.Path]::GetTempPath()) ('h0x-remote-' + [System.Guid]::NewGuid().ToString('N')); [System.IO.Directory]::CreateDirectory($remoteInstallDir) | Out-Null; $encodedInstallDir = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($remoteInstallDir)); [Console]::Out.WriteLine('{WINDOWS_REMOTE_INSTALL_DIR_MARKER}' + $encodedInstallDir); exit 0"
     ))
 }
 
@@ -1361,9 +1343,9 @@ fn windows_scp_target(target: &str, remote_path: &str) -> String {
 fn windows_remote_install_command(remote_dir: &str, identity: &str, sha256: &str) -> String {
     let installer = crate::platform::quote_powershell_arg(&format!(r"{remote_dir}\install.ps1"));
     let package =
-        crate::platform::quote_powershell_arg(&format!(r"{remote_dir}\herdr-windows-x86_64.zip"));
+        crate::platform::quote_powershell_arg(&format!(r"{remote_dir}\h0x-windows-x86_64.zip"));
     windows_powershell_script_command(&format!(
-        r#"$herdrInstaller = {installer}; $herdrPackage = {package}; & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $herdrInstaller -Channel {channel} -LocalPackagePath $herdrPackage -LocalPackageFormat zip -LocalPackageIdentity {identity} -LocalPackageSha256 {sha256}; if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}; $herdrHome = if ([string]::IsNullOrWhiteSpace($env:HERDR_HOME)) {{ Join-Path $env:USERPROFILE '.herdr' }} else {{ $env:HERDR_HOME }}; $activeJunction = Join-Path $herdrHome 'packages\standalone\current'; $activeTarget = [string](Get-Item -LiteralPath $activeJunction -Force -ErrorAction Stop).Target; if ([string]::IsNullOrWhiteSpace($activeTarget)) {{ throw 'Herdr installer did not activate a concrete release.' }}; $installedHerdr = Join-Path $activeTarget 'herdr.exe'; if (-not (Test-Path -LiteralPath $installedHerdr -PathType Leaf)) {{ throw 'Herdr installer result does not contain herdr.exe.' }}; $encodedResult = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes([System.IO.Path]::GetFullPath($installedHerdr))); [Console]::Out.WriteLine('{WINDOWS_REMOTE_INSTALL_RESULT_MARKER}' + $encodedResult); exit 0"#,
+        r#"$h0xInstaller = {installer}; $h0xPackage = {package}; & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $h0xInstaller -Channel {channel} -LocalPackagePath $h0xPackage -LocalPackageFormat zip -LocalPackageIdentity {identity} -LocalPackageSha256 {sha256}; if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}; $h0xHome = if ([string]::IsNullOrWhiteSpace($env:H0X_HOME)) {{ Join-Path $env:USERPROFILE '.h0x' }} else {{ $env:H0X_HOME }}; $activeJunction = Join-Path $h0xHome 'packages\standalone\current'; $activeTarget = [string](Get-Item -LiteralPath $activeJunction -Force -ErrorAction Stop).Target; if ([string]::IsNullOrWhiteSpace($activeTarget)) {{ throw 'HyperOx installer did not activate a concrete release.' }}; $installedHyperOx = Join-Path $activeTarget 'h0x.exe'; if (-not (Test-Path -LiteralPath $installedHyperOx -PathType Leaf)) {{ throw 'HyperOx installer result does not contain h0x.exe.' }}; $encodedResult = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes([System.IO.Path]::GetFullPath($installedHyperOx))); [Console]::Out.WriteLine('{WINDOWS_REMOTE_INSTALL_RESULT_MARKER}' + $encodedResult); exit 0"#,
         channel = crate::platform::quote_powershell_arg(current_channel()),
         identity = crate::platform::quote_powershell_arg(identity),
         sha256 = crate::platform::quote_powershell_arg(sha256),
@@ -1427,7 +1409,7 @@ fn apply_managed_ssh_options(command: &mut Command, options: Option<&ManagedSshO
 
     command.arg("-F").arg(&options.config_path);
     if let Some(control_path) = &options.control_path {
-        // User ControlPaths may be shared across isolated Herdr configs (or
+        // User ControlPaths may be shared across isolated HyperOx configs (or
         // explicitly disabled). Managed auth must use our scoped transport;
         // never stop or unlink a master belonging to the user's SSH setup.
         command
@@ -1483,34 +1465,34 @@ impl InstallSource {
     }
 }
 
-pub(super) fn prepare_remote_herdr(
+pub(super) fn prepare_remote_h0x(
     ssh: &RemoteSsh,
     live_handoff_enabled: bool,
     require_surface_interest: bool,
-) -> io::Result<PreparedRemoteHerdr> {
+) -> io::Result<PreparedRemoteHyperOx> {
     let platform = detect_remote_platform(ssh)?.into_setup_platform();
-    let remote_herdr = RemoteHerdr::for_platform(platform);
-    let candidates = remote_binary_candidates(ssh, &remote_herdr)?;
-    prepare_discovered_remote_herdr(
+    let remote_h0x = RemoteHyperOx::for_platform(platform);
+    let candidates = remote_binary_candidates(ssh, &remote_h0x)?;
+    prepare_discovered_remote_h0x(
         ssh,
-        remote_herdr,
+        remote_h0x,
         &candidates,
         live_handoff_enabled,
         require_surface_interest,
     )
 }
 
-fn prepare_discovered_remote_herdr(
+fn prepare_discovered_remote_h0x(
     ssh: &RemoteSsh,
-    remote_herdr: RemoteHerdr,
-    candidates: &[RemoteHerdr],
+    remote_h0x: RemoteHyperOx,
+    candidates: &[RemoteHyperOx],
     live_handoff_enabled: bool,
     require_surface_interest: bool,
-) -> io::Result<PreparedRemoteHerdr> {
-    if remote_herdr.platform.is_windows() {
-        return prepare_windows_remote_herdr(
+) -> io::Result<PreparedRemoteHyperOx> {
+    if remote_h0x.platform.is_windows() {
+        return prepare_windows_remote_h0x(
             ssh,
-            remote_herdr,
+            remote_h0x,
             candidates,
             live_handoff_enabled,
             require_surface_interest,
@@ -1523,33 +1505,30 @@ fn prepare_discovered_remote_herdr(
             if remote_binary_supports_endpoint_requirement(ssh, candidate, require_surface_interest)
                 .unwrap_or(false)
             {
-                return Ok(PreparedRemoteHerdr {
-                    remote_herdr: candidate.clone(),
+                return Ok(PreparedRemoteHyperOx {
+                    remote_h0x: candidate.clone(),
                     stop_after_install_approved: false,
                 });
             }
         }
-        if remote_binary_supports_endpoint_requirement(
-            ssh,
-            &remote_herdr,
-            require_surface_interest,
-        )? {
-            return Ok(PreparedRemoteHerdr {
-                remote_herdr,
+        if remote_binary_supports_endpoint_requirement(ssh, &remote_h0x, require_surface_interest)?
+        {
+            return Ok(PreparedRemoteHyperOx {
+                remote_h0x,
                 stop_after_install_approved: false,
             });
         }
     }
 
     let mut stop_after_install_approved = false;
-    if let Some(status_probe_herdr) = candidates.first().or_else(|| {
-        remote_binary_exists(ssh, &remote_herdr)
+    if let Some(status_probe_h0x) = candidates.first().or_else(|| {
+        remote_binary_exists(ssh, &remote_h0x)
             .ok()
-            .and_then(|exists| exists.then_some(&remote_herdr))
+            .and_then(|exists| exists.then_some(&remote_h0x))
     }) {
         stop_after_install_approved = confirm_remote_install_with_running_server(
             ssh,
-            status_probe_herdr,
+            status_probe_h0x,
             live_handoff_enabled,
             require_surface_interest,
         )?;
@@ -1557,33 +1536,33 @@ fn prepare_discovered_remote_herdr(
     if !stop_after_install_approved {
         confirm_remote_install(
             &ssh.destination(),
-            &remote_herdr,
-            &install_source_description(&remote_herdr.platform, override_binary.as_deref()),
+            &remote_h0x,
+            &install_source_description(&remote_h0x.platform, override_binary.as_deref()),
         )?;
     }
-    let source = resolve_install_source(&remote_herdr.platform, override_binary)?;
-    let install_result = ssh.install_herdr(&remote_herdr, &source.path);
+    let source = resolve_install_source(&remote_h0x.platform, override_binary)?;
+    let install_result = ssh.install_h0x(&remote_h0x, &source.path);
     source.cleanup();
     install_result?;
 
-    if !remote_binary_supports_endpoint_requirement(ssh, &remote_herdr, require_surface_interest)? {
+    if !remote_binary_supports_endpoint_requirement(ssh, &remote_h0x, require_surface_interest)? {
         return Err(io::Error::other(format!(
-            "installed remote herdr at {}, but it does not support saved SSH endpoint federation",
-            remote_herdr.executable.display()
+            "installed remote h0x at {}, but it does not support saved SSH endpoint federation",
+            remote_h0x.executable.display()
         )));
     }
     warn_if_remote_bin_not_on_path(ssh)?;
 
-    Ok(PreparedRemoteHerdr {
-        remote_herdr,
+    Ok(PreparedRemoteHyperOx {
+        remote_h0x,
         stop_after_install_approved,
     })
 }
 
-pub(super) fn find_installed_remote_herdr(ssh: &RemoteSsh) -> io::Result<RemoteHerdr> {
+pub(super) fn find_installed_remote_h0x(ssh: &RemoteSsh) -> io::Result<RemoteHyperOx> {
     let platform = detect_remote_platform(ssh)?.platform;
-    let remote_herdr = RemoteHerdr::for_platform(platform);
-    let candidates = remote_binary_candidates(ssh, &remote_herdr)?;
+    let remote_h0x = RemoteHyperOx::for_platform(platform);
+    let candidates = remote_binary_candidates(ssh, &remote_h0x)?;
     for mut candidate in candidates {
         if let Some(status) = remote_client_status(ssh, &candidate)? {
             if status.supports_endpoint_requirement(&candidate.platform, true) {
@@ -1595,20 +1574,20 @@ pub(super) fn find_installed_remote_herdr(ssh: &RemoteSsh) -> io::Result<RemoteH
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         format!(
-            "matching Herdr is not ready on {}; run `herdr --remote {}` interactively to install or update it",
+            "matching HyperOx is not ready on {}; run `h0x --remote {}` interactively to install or update it",
             ssh.target(),
             ssh.target()
         ),
     ))
 }
 
-fn prepare_windows_remote_herdr(
+fn prepare_windows_remote_h0x(
     ssh: &RemoteSsh,
-    remote_herdr: RemoteHerdr,
-    candidates: &[RemoteHerdr],
+    remote_h0x: RemoteHyperOx,
+    candidates: &[RemoteHyperOx],
     live_handoff_enabled: bool,
     require_surface_interest: bool,
-) -> io::Result<PreparedRemoteHerdr> {
+) -> io::Result<PreparedRemoteHyperOx> {
     let override_package = remote_binary_override_path()?;
     let custom_package = override_package.is_some();
     if !custom_package {
@@ -1618,8 +1597,8 @@ fn prepare_windows_remote_herdr(
                 candidate,
                 require_surface_interest,
             )? {
-                return Ok(PreparedRemoteHerdr {
-                    remote_herdr: candidate.clone(),
+                return Ok(PreparedRemoteHyperOx {
+                    remote_h0x: candidate.clone(),
                     stop_after_install_approved: false,
                 });
             }
@@ -1639,34 +1618,34 @@ fn prepare_windows_remote_herdr(
     if !stop_after_install_approved {
         confirm_remote_install(
             &ssh.destination(),
-            &remote_herdr,
-            &install_source_description(&remote_herdr.platform, override_package.as_deref()),
+            &remote_h0x,
+            &install_source_description(&remote_h0x.platform, override_package.as_deref()),
         )?;
     }
     // Windows needs the complete package, including its app-local ConPTY runtime.
     let source = match override_package {
         Some(path) => InstallSource::persistent(path),
-        None => download_release_asset(&remote_herdr.platform)?,
+        None => download_release_asset(&remote_h0x.platform)?,
     };
     let install_result = (|| {
         let sha256 = crate::checksum::file_sha256(&source.path)?;
-        ssh.install_windows_herdr(
-            &remote_herdr,
+        ssh.install_windows_h0x(
+            &remote_h0x,
             &source.path,
             &windows_package_identity(custom_package, &sha256),
             &sha256,
         )
     })();
     source.cleanup();
-    let remote_herdr = install_result?;
-    if !remote_binary_supports_endpoint_requirement(ssh, &remote_herdr, require_surface_interest)? {
+    let remote_h0x = install_result?;
+    if !remote_binary_supports_endpoint_requirement(ssh, &remote_h0x, require_surface_interest)? {
         return Err(io::Error::other(format!(
-            "installed remote herdr at {}, but it does not support the required remote hosting capabilities",
-            remote_herdr.executable.display()
+            "installed remote h0x at {}, but it does not support the required remote hosting capabilities",
+            remote_h0x.executable.display()
         )));
     }
-    Ok(PreparedRemoteHerdr {
-        remote_herdr,
+    Ok(PreparedRemoteHyperOx {
+        remote_h0x,
         stop_after_install_approved,
     })
 }
@@ -1693,13 +1672,13 @@ pub(super) fn discover_remote_api_metadata(
         if !metadata.is_valid() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "invalid remote Herdr executable path",
+                "invalid remote HyperOx executable path",
             ));
         }
         return Ok(metadata);
     }
-    let remote_herdr = RemoteHerdr::for_platform(platform);
-    let candidates = remote_binary_candidates(ssh, &remote_herdr)?;
+    let remote_h0x = RemoteHyperOx::for_platform(platform);
+    let candidates = remote_binary_candidates(ssh, &remote_h0x)?;
     for candidate in candidates {
         let probe =
             ssh.framed_user_shell_output(&remote_api_bridge_command(&candidate, session, true))?;
@@ -1707,7 +1686,7 @@ pub(super) fn discover_remote_api_metadata(
             return Err(command_failed("remote SSH connection failed", &probe));
         }
         if probe.status.success()
-            && String::from_utf8_lossy(&probe.stdout).trim() == "herdr-api-bridge-v1"
+            && String::from_utf8_lossy(&probe.stdout).trim() == "h0x-api-bridge-v1"
         {
             return Ok(crate::client::endpoint::SshMachineMetadata {
                 os: "windows".into(),
@@ -1717,7 +1696,7 @@ pub(super) fn discover_remote_api_metadata(
     }
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "remote Herdr does not support machine API forwarding; update Herdr on this machine",
+        "remote HyperOx does not support machine API forwarding; update HyperOx on this machine",
     ))
 }
 
@@ -1811,7 +1790,7 @@ fn looks_like_windows_uname(os: &str) -> bool {
 }
 
 fn windows_platform_probe_command(native_shell_only: bool) -> String {
-    let script = "$arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }; [Console]::Out.WriteLine('herdr-windows:' + $arch); exit 0";
+    let script = "$arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }; [Console]::Out.WriteLine('h0x-windows:' + $arch); exit 0";
     if !native_shell_only {
         return windows_powershell_script_command(script);
     }
@@ -1827,7 +1806,7 @@ fn windows_platform_probe_command(native_shell_only: bool) -> String {
 fn parse_windows_platform_probe(stdout: &str) -> Result<Option<DetectedRemotePlatform>, String> {
     let Some(arch) = stdout
         .lines()
-        .find_map(|line| line.trim().strip_prefix("herdr-windows:"))
+        .find_map(|line| line.trim().strip_prefix("h0x-windows:"))
     else {
         return Ok(None);
     };
@@ -1849,33 +1828,31 @@ fn parse_windows_platform_probe(stdout: &str) -> Result<Option<DetectedRemotePla
 
 fn remote_binary_candidates(
     ssh: &RemoteSsh,
-    remote_herdr: &RemoteHerdr,
-) -> io::Result<Vec<RemoteHerdr>> {
-    if remote_herdr.platform.is_windows() {
+    remote_h0x: &RemoteHyperOx,
+) -> io::Result<Vec<RemoteHyperOx>> {
+    if remote_h0x.platform.is_windows() {
         let output = ssh.framed_user_shell_output(&windows_remote_binary_candidate_command())?;
         if !output.status.success() {
             return Err(command_failed("remote binary discovery failed", &output));
         }
         return Ok(windows_remote_binary_candidates(
-            remote_herdr,
+            remote_h0x,
             &String::from_utf8_lossy(&output.stdout),
         ));
     }
 
     let mut candidates = Vec::new();
 
-    if let Some(path_candidate) = remote_binary_on_path_any(ssh, remote_herdr)? {
+    if let Some(path_candidate) = remote_binary_on_path_any(ssh, remote_h0x)? {
         push_if_new_remote_binary_candidate(&mut candidates, path_candidate);
     }
 
-    let output = ssh.sh_output(&known_remote_binary_candidate_script(
-        &remote_herdr.platform,
-    ))?;
+    let output = ssh.sh_output(&known_remote_binary_candidate_script(&remote_h0x.platform))?;
     if !output.status.success() {
         return Err(command_failed("remote binary discovery failed", &output));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    for candidate in remote_herdrs_from_path_discovery(remote_herdr, &stdout) {
+    for candidate in remote_h0xs_from_path_discovery(remote_h0x, &stdout) {
         push_if_new_remote_binary_candidate(&mut candidates, candidate);
     }
 
@@ -1884,11 +1861,14 @@ fn remote_binary_candidates(
 
 fn windows_remote_binary_candidate_command() -> String {
     windows_powershell_script_command(&format!(
-        r#"function Emit-HerdrPath([string]$CandidatePath) {{ if ([string]::IsNullOrWhiteSpace($CandidatePath) -or -not (Test-Path -LiteralPath $CandidatePath -PathType Leaf)) {{ return }}; $candidateFullPath = [System.IO.Path]::GetFullPath($CandidatePath); $encodedCandidate = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($candidateFullPath)); [Console]::Out.WriteLine('{WINDOWS_REMOTE_PATH_MARKER}' + $encodedCandidate) }}; $pathCommand = Get-Command herdr.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if ($null -ne $pathCommand) {{ Emit-HerdrPath $pathCommand.Source }}; $userSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; Get-CimInstance Win32_Process -Filter "Name = 'herdr.exe' OR Name = 'herdr-dev.exe'" -ErrorAction SilentlyContinue | ForEach-Object {{ $owner = Invoke-CimMethod -InputObject $_ -MethodName GetOwnerSid -ErrorAction SilentlyContinue; if ($owner.ReturnValue -eq 0 -and $owner.Sid -eq $userSid) {{ Emit-HerdrPath $_.ExecutablePath }} }}; $herdrHome = if ([string]::IsNullOrWhiteSpace($env:HERDR_HOME)) {{ Join-Path $env:USERPROFILE '.herdr' }} else {{ $env:HERDR_HOME }}; $activeJunction = Get-Item -LiteralPath (Join-Path $herdrHome 'packages\standalone\current') -Force -ErrorAction SilentlyContinue; if ($null -ne $activeJunction -and -not [string]::IsNullOrWhiteSpace([string]$activeJunction.Target)) {{ Emit-HerdrPath (Join-Path ([string]$activeJunction.Target) 'herdr.exe') }}; exit 0"#
+        r#"function Emit-HyperOxPath([string]$CandidatePath) {{ if ([string]::IsNullOrWhiteSpace($CandidatePath) -or -not (Test-Path -LiteralPath $CandidatePath -PathType Leaf)) {{ return }}; $candidateFullPath = [System.IO.Path]::GetFullPath($CandidatePath); $encodedCandidate = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($candidateFullPath)); [Console]::Out.WriteLine('{WINDOWS_REMOTE_PATH_MARKER}' + $encodedCandidate) }}; $pathCommand = Get-Command h0x.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if ($null -ne $pathCommand) {{ Emit-HyperOxPath $pathCommand.Source }}; $userSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; Get-CimInstance Win32_Process -Filter "Name = 'h0x.exe' OR Name = 'h0x-dev.exe'" -ErrorAction SilentlyContinue | ForEach-Object {{ $owner = Invoke-CimMethod -InputObject $_ -MethodName GetOwnerSid -ErrorAction SilentlyContinue; if ($owner.ReturnValue -eq 0 -and $owner.Sid -eq $userSid) {{ Emit-HyperOxPath $_.ExecutablePath }} }}; $h0xHome = if ([string]::IsNullOrWhiteSpace($env:H0X_HOME)) {{ Join-Path $env:USERPROFILE '.h0x' }} else {{ $env:H0X_HOME }}; $activeJunction = Get-Item -LiteralPath (Join-Path $h0xHome 'packages\standalone\current') -Force -ErrorAction SilentlyContinue; if ($null -ne $activeJunction -and -not [string]::IsNullOrWhiteSpace([string]$activeJunction.Target)) {{ Emit-HyperOxPath (Join-Path ([string]$activeJunction.Target) 'h0x.exe') }}; exit 0"#
     ))
 }
 
-fn windows_remote_binary_candidates(remote_herdr: &RemoteHerdr, stdout: &str) -> Vec<RemoteHerdr> {
+fn windows_remote_binary_candidates(
+    remote_h0x: &RemoteHyperOx,
+    stdout: &str,
+) -> Vec<RemoteHyperOx> {
     let mut candidates = Vec::new();
     for path in stdout.lines().filter_map(|line| {
         line.trim()
@@ -1897,13 +1877,16 @@ fn windows_remote_binary_candidates(remote_herdr: &RemoteHerdr, stdout: &str) ->
     }) {
         push_if_new_remote_binary_candidate(
             &mut candidates,
-            remote_herdr.clone().with_windows_path(path),
+            remote_h0x.clone().with_windows_path(path),
         );
     }
     candidates
 }
 
-fn push_if_new_remote_binary_candidate(candidates: &mut Vec<RemoteHerdr>, candidate: RemoteHerdr) {
+fn push_if_new_remote_binary_candidate(
+    candidates: &mut Vec<RemoteHyperOx>,
+    candidate: RemoteHyperOx,
+) {
     if !candidates
         .iter()
         .any(|existing| existing.executable == candidate.executable)
@@ -1928,34 +1911,33 @@ emit() {
     fi
 }
 if [ -n "$home" ]; then
-    emit "$home/.local/bin/herdr"
+    emit "$home/.local/bin/h0x"
 fi
 "#,
     );
     if platform.os == "macos" {
         script.push_str(
-            r#"    emit "/opt/homebrew/bin/herdr"
-    emit "/usr/local/bin/herdr"
+            r#"    emit "/opt/homebrew/bin/h0x"
+    emit "/usr/local/bin/h0x"
 "#,
         );
     } else if platform.os == "linux" {
         script.push_str(
-            r#"    emit "/home/linuxbrew/.linuxbrew/bin/herdr"
+            r#"    emit "/home/linuxbrew/.linuxbrew/bin/h0x"
 "#,
         );
     }
     script.push_str(
         r#"if [ -n "$home" ]; then
-    emit "$home/.local/share/mise/installs/herdr/$version/bin/herdr"
-    emit "$home/.local/share/mise/installs/herdr/$version/herdr"
-    emit "$home/.local/share/mise/installs/github-ogulcancelik-herdr/$version/herdr"
-    emit "$home/.nix-profile/bin/herdr"
+    emit "$home/.local/share/mise/installs/h0x/$version/bin/h0x"
+    emit "$home/.local/share/mise/installs/h0x/$version/h0x"
+    emit "$home/.nix-profile/bin/h0x"
 fi
 if [ -n "$user" ]; then
-    emit "/etc/profiles/per-user/$user/bin/herdr"
+    emit "/etc/profiles/per-user/$user/bin/h0x"
 fi
-emit "/nix/var/nix/profiles/default/bin/herdr"
-emit "/run/current-system/sw/bin/herdr"
+emit "/nix/var/nix/profiles/default/bin/h0x"
+emit "/run/current-system/sw/bin/h0x"
 "#,
     );
 
@@ -1964,44 +1946,44 @@ emit "/run/current-system/sw/bin/herdr"
 
 fn remote_binary_on_path_any(
     ssh: &RemoteSsh,
-    remote_herdr: &RemoteHerdr,
-) -> io::Result<Option<RemoteHerdr>> {
-    let output = ssh.posix_user_shell_output("command -v herdr")?;
+    remote_h0x: &RemoteHyperOx,
+) -> io::Result<Option<RemoteHyperOx>> {
+    let output = ssh.posix_user_shell_output("command -v h0x")?;
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        if let Some(candidate) = remote_herdr_from_path_discovery(remote_herdr, &stdout) {
+        if let Some(candidate) = remote_h0x_from_path_discovery(remote_h0x, &stdout) {
             return Ok(Some(candidate));
         }
     }
 
     // Non-POSIX login shells such as xonsh reject `command -v`; retry through
     // /bin/sh while retaining the login-shell probe for shell-initialized PATHs.
-    let output = ssh.sh_output("command -v herdr\n")?;
+    let output = ssh.sh_output("command -v h0x\n")?;
     if !output.status.success() {
         return Ok(None);
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(remote_herdr_from_path_discovery(remote_herdr, &stdout))
+    Ok(remote_h0x_from_path_discovery(remote_h0x, &stdout))
 }
 
-fn remote_herdrs_from_path_discovery(remote_herdr: &RemoteHerdr, stdout: &str) -> Vec<RemoteHerdr> {
+fn remote_h0xs_from_path_discovery(remote_h0x: &RemoteHyperOx, stdout: &str) -> Vec<RemoteHyperOx> {
     stdout
         .lines()
-        .filter_map(|path| remote_herdr_from_path(remote_herdr, path))
+        .filter_map(|path| remote_h0x_from_path(remote_h0x, path))
         .collect()
 }
 
-fn remote_herdr_from_path_discovery(
-    remote_herdr: &RemoteHerdr,
+fn remote_h0x_from_path_discovery(
+    remote_h0x: &RemoteHyperOx,
     stdout: &str,
-) -> Option<RemoteHerdr> {
+) -> Option<RemoteHyperOx> {
     stdout
         .lines()
-        .find_map(|path| remote_herdr_from_path(remote_herdr, path))
+        .find_map(|path| remote_h0x_from_path(remote_h0x, path))
 }
 
-fn remote_herdr_from_path(remote_herdr: &RemoteHerdr, path: &str) -> Option<RemoteHerdr> {
+fn remote_h0x_from_path(remote_h0x: &RemoteHyperOx, path: &str) -> Option<RemoteHyperOx> {
     let path = path.trim();
     if !path.starts_with('/') {
         return None;
@@ -2009,19 +1991,19 @@ fn remote_herdr_from_path(remote_herdr: &RemoteHerdr, path: &str) -> Option<Remo
     if is_mise_shim_path(path) {
         return None;
     }
-    Some(remote_herdr.clone().with_posix_path(path))
+    Some(remote_h0x.clone().with_posix_path(path))
 }
 
 fn is_mise_shim_path(path: &str) -> bool {
-    path.ends_with("/mise/shims/herdr")
+    path.ends_with("/mise/shims/h0x")
 }
 
 fn remote_client_status(
     ssh: &RemoteSsh,
-    remote_herdr: &RemoteHerdr,
+    remote_h0x: &RemoteHyperOx,
 ) -> io::Result<Option<RemoteClientStatusJson>> {
-    let command = remote_herdr.executable.status_client_command();
-    let output = ssh.shell_output(&remote_herdr.platform, &command)?;
+    let command = remote_h0x.executable.status_client_command();
+    let output = ssh.shell_output(&remote_h0x.platform, &command)?;
     if !output.status.success() {
         if output.status.code() == Some(255) {
             return Err(command_failed("remote SSH connection failed", &output));
@@ -2035,20 +2017,20 @@ fn remote_client_status(
 
 fn remote_binary_supports_endpoint_requirement(
     ssh: &RemoteSsh,
-    remote_herdr: &RemoteHerdr,
+    remote_h0x: &RemoteHyperOx,
     require_surface_interest: bool,
 ) -> io::Result<bool> {
     Ok(
-        remote_client_status(ssh, remote_herdr)?.is_some_and(|status| {
-            status.supports_endpoint_requirement(&remote_herdr.platform, require_surface_interest)
+        remote_client_status(ssh, remote_h0x)?.is_some_and(|status| {
+            status.supports_endpoint_requirement(&remote_h0x.platform, require_surface_interest)
         }),
     )
 }
 
-fn remote_binary_exists(ssh: &RemoteSsh, remote_herdr: &RemoteHerdr) -> io::Result<bool> {
-    let command = remote_herdr.executable.exists_command();
+fn remote_binary_exists(ssh: &RemoteSsh, remote_h0x: &RemoteHyperOx) -> io::Result<bool> {
+    let command = remote_h0x.executable.exists_command();
     Ok(ssh
-        .shell_output(&remote_herdr.platform, &command)?
+        .shell_output(&remote_h0x.platform, &command)?
         .status
         .success())
 }
@@ -2105,7 +2087,7 @@ fn install_source_description_for(
     }
 
     if local_binary_can_seed_remote {
-        "the current local herdr binary".to_string()
+        "the current local h0x binary".to_string()
     } else {
         format!(
             "the {} {} asset for {}",
@@ -2185,12 +2167,12 @@ impl RemoteServerStatus {
 
 fn ensure_remote_server_ready(
     ssh: &RemoteSsh,
-    remote_herdr: &RemoteHerdr,
+    remote_h0x: &RemoteHyperOx,
     stop_after_install_approved: bool,
     live_handoff_enabled: bool,
     require_surface_interest: bool,
 ) -> io::Result<()> {
-    let status = remote_server_status(ssh, remote_herdr, require_surface_interest)?;
+    let status = remote_server_status(ssh, remote_h0x, require_surface_interest)?;
     let RemoteServerStatus::Running {
         version,
         endpoint_protocol_generation,
@@ -2214,7 +2196,7 @@ fn ensure_remote_server_ready(
     };
 
     if live_handoff_enabled && live_handoff {
-        match live_handoff_remote_server(ssh, remote_herdr) {
+        match live_handoff_remote_server(ssh, remote_h0x) {
             Ok(()) => return Ok(()),
             Err(err) => {
                 eprintln!("remote live handoff failed: {err}");
@@ -2224,35 +2206,35 @@ fn ensure_remote_server_ready(
     }
 
     if stop_after_install_approved {
-        stop_remote_server(ssh, remote_herdr)?;
+        stop_remote_server(ssh, remote_h0x)?;
         return Ok(());
     }
 
     if confirm_remote_server_stop(&ssh.destination(), version.as_deref(), reason)? {
-        stop_remote_server(ssh, remote_herdr)?;
+        stop_remote_server(ssh, remote_h0x)?;
     }
     Ok(())
 }
 
 fn confirm_remote_install_with_running_server(
     ssh: &RemoteSsh,
-    remote_herdr: &RemoteHerdr,
+    remote_h0x: &RemoteHyperOx,
     live_handoff_enabled: bool,
     require_surface_interest: bool,
 ) -> io::Result<bool> {
     let target = ssh.destination();
-    let status = match remote_server_status(ssh, remote_herdr, require_surface_interest) {
+    let status = match remote_server_status(ssh, remote_h0x, require_surface_interest) {
         Ok(status) => status,
         Err(err) => {
             if !io::stdin().is_terminal() {
                 return Err(io::Error::other(format!(
-                    "could not inspect the running remote herdr server on {target} before installing: {err}; run from an interactive terminal to approve updating the remote binary"
+                    "could not inspect the running remote h0x server on {target} before installing: {err}; run from an interactive terminal to approve updating the remote binary"
                 )));
             }
             eprintln!(
-                "could not inspect the running remote herdr server on {target} before installing: {err}"
+                "could not inspect the running remote h0x server on {target} before installing: {err}"
             );
-            eprint!("continue installing the remote herdr binary? [y/N] ");
+            eprint!("continue installing the remote h0x binary? [y/N] ");
             io::stderr().flush()?;
 
             let mut answer = String::new();
@@ -2261,7 +2243,7 @@ fn confirm_remote_install_with_running_server(
             if answer != "y" && answer != "yes" {
                 return Err(io::Error::new(
                     io::ErrorKind::Interrupted,
-                    "remote herdr install cancelled",
+                    "remote h0x install cancelled",
                 ));
             }
             return Ok(false);
@@ -2290,10 +2272,10 @@ fn confirm_remote_install_with_running_server(
 
     if plan == RemoteInstallRunningServerPlan::KeepRunning {
         if io::stdin().is_terminal() {
-            eprintln!("remote herdr server on {target} is already compatible:");
+            eprintln!("remote h0x server on {target} is already compatible:");
             eprintln!("  server: v{}", version_label(version.as_deref()));
             eprintln!(
-                "Herdr will install {} without stopping the running remote server.",
+                "HyperOx will install {} without stopping the running remote server.",
                 current_version()
             );
         }
@@ -2305,7 +2287,7 @@ fn confirm_remote_install_with_running_server(
             RemoteInstallRunningServerPlan::LiveHandoff => return Ok(false),
             RemoteInstallRunningServerPlan::StopRequired(_) => {
                 return Err(io::Error::other(format!(
-                    "remote herdr server on {target} is running v{}; run from an interactive terminal to approve stopping it for the update",
+                    "remote h0x server on {target} is running v{}; run from an interactive terminal to approve stopping it for the update",
                     version_label(version.as_deref())
                 )));
             }
@@ -2314,19 +2296,19 @@ fn confirm_remote_install_with_running_server(
     }
 
     if plan == RemoteInstallRunningServerPlan::LiveHandoff {
-        eprintln!("remote herdr server on {target} is currently running:");
+        eprintln!("remote h0x server on {target} is currently running:");
         eprintln!("  server: v{}", version_label(version.as_deref()));
         eprintln!(
-            "Herdr will install {} and hand off live pane processes to the prepared server.",
+            "HyperOx will install {} and hand off live pane processes to the prepared server.",
             current_version()
         );
         return Ok(false);
     }
 
-    eprintln!("remote herdr server on {target} is currently running:");
+    eprintln!("remote h0x server on {target} is currently running:");
     eprintln!("  server: v{}", version_label(version.as_deref()));
     eprintln!(
-        "To complete the remote update, Herdr must stop the running remote server after installing."
+        "To complete the remote update, HyperOx must stop the running remote server after installing."
     );
     eprintln!("This stops active remote pane processes, including shells, agents, dev servers, and tests.");
     eprintln!();
@@ -2342,7 +2324,7 @@ fn confirm_remote_install_with_running_server(
     if answer != "y" && answer != "yes" {
         return Err(io::Error::new(
             io::ErrorKind::Interrupted,
-            "remote herdr install cancelled",
+            "remote h0x install cancelled",
         ));
     }
 
@@ -2351,13 +2333,13 @@ fn confirm_remote_install_with_running_server(
 
 fn remote_server_status(
     ssh: &RemoteSsh,
-    remote_herdr: &RemoteHerdr,
+    remote_h0x: &RemoteHyperOx,
     require_surface_interest: bool,
 ) -> io::Result<RemoteServerStatus> {
-    let command = remote_herdr
+    let command = remote_h0x
         .executable
         .session_command(&ssh.session_name, &["status", "server", "--json"]);
-    let output = ssh.shell_output(&remote_herdr.platform, &command)?;
+    let output = ssh.shell_output(&remote_h0x.platform, &command)?;
     if !output.status.success() {
         return Err(command_failed("remote server status failed", &output));
     }
@@ -2379,7 +2361,7 @@ fn remote_server_status(
     {
         // Older status helpers omit newer capabilities. Ask the live endpoint rather than
         // assuming that the installed binary and the running daemon support the same features.
-        let negotiation = probe_remote_endpoint(ssh, remote_herdr)?;
+        let negotiation = probe_remote_endpoint(ssh, remote_h0x)?;
         return Ok(status.with_endpoint_negotiation(&negotiation));
     }
     Ok(status)
@@ -2387,12 +2369,12 @@ fn remote_server_status(
 
 fn probe_remote_endpoint(
     ssh: &RemoteSsh,
-    remote_herdr: &RemoteHerdr,
+    remote_h0x: &RemoteHyperOx,
 ) -> io::Result<crate::client::endpoint::EndpointNegotiation> {
     let path = local_forward_socket_path(ssh.target(), &ssh.session_name);
     let bridge = SshStdioBridge::start(
         ssh.target.clone(),
-        remote_herdr.clone(),
+        remote_h0x.clone(),
         path.clone(),
         ssh.session_name.clone(),
         ssh.options(),
@@ -2528,19 +2510,19 @@ fn confirm_remote_server_stop(
     if !io::stdin().is_terminal() {
         if required_upgrade {
             return Err(io::Error::other(format!(
-                "remote herdr server on {target} needs one final update before this client can attach; run from an interactive terminal to approve updating it"
+                "remote h0x server on {target} needs one final update before this client can attach; run from an interactive terminal to approve updating it"
             )));
         }
 
         eprintln!(
-            "remote herdr server on {target} is still running v{}; it will use {} after it restarts.",
+            "remote h0x server on {target} is still running v{}; it will use {} after it restarts.",
             version_label(version),
             current_version()
         );
         return Ok(false);
     }
 
-    eprintln!("remote herdr server on {target} is currently running:");
+    eprintln!("remote h0x server on {target} is currently running:");
     eprintln!("  server: v{}", version_label(version));
     eprintln!("  prepared binary: {}", current_version());
     eprintln!();
@@ -2548,7 +2530,7 @@ fn confirm_remote_server_stop(
     match reason {
         RemoteServerRestartReason::EndpointProtocol => {
             eprintln!(
-                "the remote server predates Herdr's stable endpoint protocol and must update before this client can attach."
+                "the remote server predates HyperOx's stable endpoint protocol and must update before this client can attach."
             );
         }
         RemoteServerRestartReason::SurfaceInterest => {
@@ -2561,7 +2543,7 @@ fn confirm_remote_server_stop(
         }
         RemoteServerRestartReason::DaemonDetach => {
             eprintln!(
-                "the remote server was started by a herdr build that may not survive SSH connection loss. restart it so network drops disconnect only this client."
+                "the remote server was started by a h0x build that may not survive SSH connection loss. restart it so network drops disconnect only this client."
             );
         }
     }
@@ -2581,68 +2563,67 @@ fn confirm_remote_server_stop(
     if required_upgrade {
         return Err(io::Error::new(
             io::ErrorKind::Interrupted,
-            "remote herdr server stop cancelled",
+            "remote h0x server stop cancelled",
         ));
     }
 
     Ok(false)
 }
 
-fn live_handoff_remote_server(ssh: &RemoteSsh, remote_herdr: &RemoteHerdr) -> io::Result<()> {
-    let status = remote_client_status(ssh, remote_herdr)?.ok_or_else(|| {
-        io::Error::other("could not inspect the prepared remote herdr binary before live handoff")
+fn live_handoff_remote_server(ssh: &RemoteSsh, remote_h0x: &RemoteHyperOx) -> io::Result<()> {
+    let status = remote_client_status(ssh, remote_h0x)?.ok_or_else(|| {
+        io::Error::other("could not inspect the prepared remote h0x binary before live handoff")
     })?;
     let protocol = status.protocol.ok_or_else(|| {
-        io::Error::other("prepared remote herdr did not report its private protocol")
+        io::Error::other("prepared remote h0x did not report its private protocol")
     })?;
     let version = status
         .version
         .filter(|version| !version.is_empty())
-        .ok_or_else(|| io::Error::other("prepared remote herdr did not report its version"))?;
-    let command =
-        remote_herdr
-            .executable
-            .live_handoff_command(&ssh.session_name, protocol, &version);
-    let output = ssh.shell_output(&remote_herdr.platform, &command)?;
+        .ok_or_else(|| io::Error::other("prepared remote h0x did not report its version"))?;
+    let command = remote_h0x
+        .executable
+        .live_handoff_command(&ssh.session_name, protocol, &version);
+    let output = ssh.shell_output(&remote_h0x.platform, &command)?;
     if !output.status.success() {
         return Err(command_failed("remote server live handoff failed", &output));
     }
 
     eprintln!(
-        "handed off the remote herdr server on {}; reconnecting to the prepared server.",
+        "handed off the remote h0x server on {}; reconnecting to the prepared server.",
         ssh.target()
     );
     Ok(())
 }
 
-fn stop_remote_server(ssh: &RemoteSsh, remote_herdr: &RemoteHerdr) -> io::Result<()> {
-    let command = remote_herdr
+fn stop_remote_server(ssh: &RemoteSsh, remote_h0x: &RemoteHyperOx) -> io::Result<()> {
+    let command = remote_h0x
         .executable
         .session_command(&ssh.session_name, &["server", "stop"]);
-    let output = ssh.shell_output(&remote_herdr.platform, &command)?;
+    let output = ssh.shell_output(&remote_h0x.platform, &command)?;
     if !output.status.success() {
         return Err(command_failed("remote server stop failed", &output));
     }
 
-    wait_for_remote_server_shutdown(ssh, remote_herdr)?;
+    wait_for_remote_server_shutdown(ssh, remote_h0x)?;
     eprintln!(
-        "stopped the remote herdr server on {}; it will restart when the remote client bridge attaches.",
+        "stopped the remote h0x server on {}; it will restart when the remote client bridge attaches.",
         ssh.target()
     );
     Ok(())
 }
 
-fn wait_for_remote_server_shutdown(ssh: &RemoteSsh, remote_herdr: &RemoteHerdr) -> io::Result<()> {
+fn wait_for_remote_server_shutdown(ssh: &RemoteSsh, remote_h0x: &RemoteHyperOx) -> io::Result<()> {
     let deadline = Instant::now() + REMOTE_SERVER_SHUTDOWN_CONFIRM_TIMEOUT;
     loop {
-        if remote_server_status(ssh, remote_herdr, false)? == RemoteServerStatus::NotRunning {
+        if remote_server_status(ssh, remote_h0x, false)? == RemoteServerStatus::NotRunning {
             return Ok(());
         }
         if Instant::now() >= deadline {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!(
-                    "shutdown was requested, but the old remote herdr server on {target} is still responding after {} seconds",
+                    "shutdown was requested, but the old remote h0x server on {target} is still responding after {} seconds",
                     REMOTE_SERVER_SHUTDOWN_CONFIRM_TIMEOUT.as_secs(),
                     target = ssh.target()
                 ),
@@ -2657,7 +2638,7 @@ fn version_label(version: Option<&str>) -> &str {
 }
 
 fn warn_if_remote_bin_not_on_path(ssh: &RemoteSsh) -> io::Result<()> {
-    let output = ssh.posix_user_shell_output("command -v herdr")?;
+    let output = ssh.posix_user_shell_output("command -v h0x")?;
     if output.status.success()
         && remote_shell_resolves_managed_install(&String::from_utf8_lossy(&output.stdout))
     {
@@ -2665,7 +2646,7 @@ fn warn_if_remote_bin_not_on_path(ssh: &RemoteSsh) -> io::Result<()> {
     }
 
     eprintln!(
-        "herdr: installed remote binary to ~/.local/bin/herdr, but the remote shell does not resolve `herdr` to that path"
+        "h0x: installed remote binary to ~/.local/bin/h0x, but the remote shell does not resolve `h0x` to that path"
     );
     Ok(())
 }
@@ -2675,7 +2656,7 @@ fn remote_shell_resolves_managed_install(stdout: &str) -> bool {
         .lines()
         .next()
         .map(str::trim)
-        .is_some_and(|path| path.ends_with("/.local/bin/herdr"))
+        .is_some_and(|path| path.ends_with("/.local/bin/h0x"))
 }
 
 fn download_release_asset(platform: &RemotePlatform) -> io::Result<InstallSource> {
@@ -2683,7 +2664,7 @@ fn download_release_asset(platform: &RemotePlatform) -> io::Result<InstallSource
     let asset = remote_release_asset(&asset_key)?;
 
     let dir = private_download_dir(&asset_key)?;
-    let path = dir.join("herdr.tmp");
+    let path = dir.join("h0x.tmp");
     let status = crate::noninteractive_process::curl_command()
         .args(["-sfL", "--max-time", "120", "-o"])
         .arg(&path)
@@ -2734,64 +2715,27 @@ fn remote_asset_info(asset: &RemoteAssetRef) -> RemoteReleaseAsset {
     }
 }
 
-fn preview_assets_for_build<'a>(
-    manifest: &'a RemotePreviewManifest,
-    build_id: &str,
-) -> io::Result<(u32, &'a BTreeMap<String, RemoteAssetRef>)> {
-    if manifest.build_id == build_id {
-        return Ok((manifest.protocol, &manifest.assets));
-    }
-    let build = manifest.builds.get(build_id).ok_or_else(|| {
-        io::Error::other(format!(
-            "preview manifest no longer includes build {build_id}; run `herdr update` locally or set {REMOTE_BINARY_ENV_VAR}=target/release/herdr"
-        ))
-    })?;
-    Ok((build.protocol, &build.assets))
-}
-
 fn remote_release_asset(asset_key: &str) -> io::Result<RemoteReleaseAsset> {
-    if crate::build_info::is_preview() {
-        let build_id = crate::build_info::build_id().ok_or_else(|| {
-            io::Error::other("preview client has no build id; set HERDR_REMOTE_BINARY or install Herdr on the remote manually")
-        })?;
-        let manifest_bytes = fetch_remote_manifest(PREVIEW_UPDATE_MANIFEST_URL)?;
-        let manifest: RemotePreviewManifest =
-            serde_json::from_slice(&manifest_bytes).map_err(|err| {
-                io::Error::other(format!("failed to parse preview manifest JSON: {err}"))
-            })?;
-        let (protocol, assets) = preview_assets_for_build(&manifest, build_id)?;
-        if protocol != CURRENT_PROTOCOL {
-            return Err(io::Error::other(format!(
-                "preview manifest has build {build_id} protocol {protocol}, but this client needs protocol {CURRENT_PROTOCOL}; set {REMOTE_BINARY_ENV_VAR}=target/release/herdr or install a matching Herdr on the remote host manually"
-            )));
-        }
-        return assets.get(asset_key).map(remote_asset_info).ok_or_else(|| {
-            io::Error::other(format!(
-                "no {asset_key} binary in the preview manifest for build {build_id}"
-            ))
-        });
-    }
-
     let current_version = current_version();
-    let manifest_bytes = fetch_remote_manifest(STABLE_UPDATE_MANIFEST_URL)?;
+    let manifest_bytes = fetch_remote_manifest(UPDATE_MANIFEST_URL)?;
     let manifest: RemoteUpdateManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|err| io::Error::other(format!("failed to parse update manifest JSON: {err}")))?;
     let release = manifest.release_for_version(&current_version).ok_or_else(|| {
         io::Error::other(format!(
-            "release manifest does not include herdr {current_version}; build herdr for {} or install it there manually",
+            "release manifest does not include h0x {current_version}; build h0x for {} or install it there manually",
             asset_key
         ))
     })?;
     if let Some(protocol) = release.protocol {
         if protocol != CURRENT_PROTOCOL {
             return Err(io::Error::other(format!(
-                "release manifest has herdr {current_version} protocol {protocol}, but this client needs protocol {CURRENT_PROTOCOL}; set {REMOTE_BINARY_ENV_VAR}=target/release/herdr or install a matching herdr on the remote host manually"
+                "release manifest has h0x {current_version} protocol {protocol}, but this client needs protocol {CURRENT_PROTOCOL}; set {REMOTE_BINARY_ENV_VAR}=target/release/h0x or install a matching h0x on the remote host manually"
             )));
         }
     }
     let asset = release.assets.get(asset_key).ok_or_else(|| {
         io::Error::other(format!(
-            "no {asset_key} binary in the release manifest for herdr {current_version}"
+            "no {asset_key} binary in the release manifest for h0x {current_version}"
         ))
     })?;
     let mut asset = remote_asset_info(asset);
@@ -2811,7 +2755,7 @@ fn private_download_dir(asset_key: &str) -> io::Result<PathBuf> {
     fs::create_dir_all(&base)?;
     for attempt in 0..100 {
         let dir = base.join(format!(
-            "herdr-remote-{}-{}-{attempt}",
+            "h0x-remote-{}-{}-{attempt}",
             std::process::id(),
             asset_key
         ));
@@ -2824,7 +2768,7 @@ fn private_download_dir(asset_key: &str) -> io::Result<PathBuf> {
 
     Err(io::Error::new(
         io::ErrorKind::AlreadyExists,
-        "failed to create private herdr remote download directory",
+        "failed to create private h0x remote download directory",
     ))
 }
 
@@ -2849,33 +2793,33 @@ fn read_remote_confirmation(reader: &mut impl io::BufRead, default: bool) -> io:
 
 fn confirm_remote_install(
     target: &str,
-    remote_herdr: &RemoteHerdr,
+    remote_h0x: &RemoteHyperOx,
     source_description: &str,
 ) -> io::Result<()> {
     if !io::stdin().is_terminal() {
         return Err(io::Error::other(format!(
-            "matching remote herdr {} is not installed at {}; run from an interactive terminal to approve installation",
+            "matching remote h0x {} is not installed at {}; run from an interactive terminal to approve installation",
             current_version(),
-            remote_herdr.executable.display()
+            remote_h0x.executable.display()
         )));
     }
 
     eprintln!(
-        "matching herdr {} is not installed on {target} for {}.",
+        "matching h0x {} is not installed on {target} for {}.",
         current_version(),
-        remote_herdr.platform.asset_key()
+        remote_h0x.platform.asset_key()
     );
     eprint!(
         "Install {} to {}? [Y/n] ",
         source_description,
-        remote_herdr.executable.display()
+        remote_h0x.executable.display()
     );
     io::stderr().flush()?;
 
     if !read_remote_confirmation(&mut io::stdin().lock(), true)? {
         return Err(io::Error::new(
             io::ErrorKind::Interrupted,
-            "remote herdr installation cancelled",
+            "remote h0x installation cancelled",
         ));
     }
 
@@ -2886,31 +2830,31 @@ fn posix_remote_api_discovery_script(platform: &RemotePlatform, session: &str) -
     format!(
         r#"set -f
 candidates=$(
-command -v herdr
+command -v h0x
 {discovery}
 )
 IFS='
 '
 for candidate in $candidates; do
     case "$candidate" in
-        */mise/shims/herdr) continue ;;
+        */mise/shims/h0x) continue ;;
         /*) ;;
         *) continue ;;
     esac
     [ -x "$candidate" ] || continue
-    if capability=$("$candidate" --session {session} remote-api-bridge --check </dev/null 2>/dev/null) && [ "$capability" = herdr-api-bridge-v1 ]; then
+    if capability=$("$candidate" --session {session} remote-api-bridge --check </dev/null 2>/dev/null) && [ "$capability" = h0x-api-bridge-v1 ]; then
         printf '%s\n' "$candidate"
         exit 0
     fi
 done
-printf '%s\n' 'remote Herdr does not support machine API forwarding; update Herdr on this machine' >&2
+printf '%s\n' 'remote HyperOx does not support machine API forwarding; update HyperOx on this machine' >&2
 exit 2"#,
         discovery = known_remote_binary_candidate_script(platform),
         session = shell_quote(session),
     )
 }
 
-pub(super) const STALE_API_METADATA: &str = "herdr-machine-metadata-stale-v1";
+pub(super) const STALE_API_METADATA: &str = "h0x-machine-metadata-stale-v1";
 
 pub(super) fn cached_remote_api_command(
     metadata: &crate::client::endpoint::SshMachineMetadata,
@@ -2920,7 +2864,7 @@ pub(super) fn cached_remote_api_command(
         let path = crate::platform::quote_powershell_arg(&metadata.executable);
         let session_arg = crate::platform::quote_powershell_arg(session);
         let probe = format!(
-            "$capability = & {path} --session {session_arg} remote-api-bridge --check 2>$null; if ($LASTEXITCODE -ne 0 -or $capability -ne 'herdr-api-bridge-v1') {{ [Console]::Error.WriteLine('{STALE_API_METADATA}'); exit 78 }}; "
+            "$capability = & {path} --session {session_arg} remote-api-bridge --check 2>$null; if ($LASTEXITCODE -ne 0 -or $capability -ne 'h0x-api-bridge-v1') {{ [Console]::Error.WriteLine('{STALE_API_METADATA}'); exit 78 }}; "
         );
         return windows_powershell_script_command(&format!(
             "{probe}{}",
@@ -2933,7 +2877,7 @@ pub(super) fn cached_remote_api_command(
     let path = shell_quote(&metadata.executable);
     let session = shell_quote(session);
     let script = format!(
-        "if capability=$({path} --session {session} remote-api-bridge --check </dev/null 2>/dev/null) && [ \"$capability\" = herdr-api-bridge-v1 ]; then\n{}\nelse\n    printf '%s\\n' '{STALE_API_METADATA}' >&2\n    exit 78\nfi",
+        "if capability=$({path} --session {session} remote-api-bridge --check </dev/null 2>/dev/null) && [ \"$capability\" = h0x-api-bridge-v1 ]; then\n{}\nelse\n    printf '%s\\n' '{STALE_API_METADATA}' >&2\n    exit 78\nfi",
         posix_remote_output_command(&format!(
             "exec {path} --session {session} remote-api-bridge <&3"
         )),
@@ -2942,7 +2886,7 @@ pub(super) fn cached_remote_api_command(
 }
 
 pub(super) fn remote_api_bridge_command(
-    remote_herdr: &RemoteHerdr,
+    remote_h0x: &RemoteHyperOx,
     session_name: &str,
     check: bool,
 ) -> String {
@@ -2950,9 +2894,9 @@ pub(super) fn remote_api_bridge_command(
     if check {
         args.push("--check");
     }
-    match &remote_herdr.executable {
+    match &remote_h0x.executable {
         RemoteExecutable::PosixShellPath(_) => {
-            posix_remote_output_command(&format!("exec {}", remote_herdr.executable.command(&args)))
+            posix_remote_output_command(&format!("exec {}", remote_h0x.executable.command(&args)))
         }
         RemoteExecutable::WindowsPath(path) => {
             windows_powershell_streaming_application_command(path, &args)
@@ -3004,7 +2948,7 @@ pub(super) struct SshStdioBridge {
 impl SshStdioBridge {
     pub(super) fn start(
         target: String,
-        remote_herdr: RemoteHerdr,
+        remote_h0x: RemoteHyperOx,
         local_socket: PathBuf,
         session_name: String,
         ssh_options: Option<&ManagedSshOptions>,
@@ -3013,12 +2957,12 @@ impl SshStdioBridge {
     ) -> io::Result<Self> {
         Self::start_command(
             target,
-            if noninteractive && remote_herdr.bridge_idle_timeout {
-                remote_herdr
+            if noninteractive && remote_h0x.bridge_idle_timeout {
+                remote_h0x
                     .executable
                     .bridge_command_with_idle_timeout(&session_name, true)
             } else {
-                remote_herdr.executable.bridge_command(&session_name)
+                remote_h0x.executable.bridge_command(&session_name)
             },
             local_socket,
             ssh_options,
@@ -3071,7 +3015,7 @@ impl SshStdioBridge {
                             if noninteractive {
                                 tracing::warn!(error = %err, "saved SSH endpoint bridge failed");
                             } else {
-                                eprintln!("herdr: remote bridge failed: {err}");
+                                eprintln!("h0x: remote bridge failed: {err}");
                             }
                         }
                     }
@@ -3082,7 +3026,7 @@ impl SshStdioBridge {
                         if noninteractive {
                             tracing::warn!(error = %err, "saved SSH endpoint listener failed");
                         } else {
-                            eprintln!("herdr: remote bridge listener failed: {err}");
+                            eprintln!("h0x: remote bridge listener failed: {err}");
                         }
                         break;
                     }
@@ -3137,7 +3081,7 @@ fn ssh_config_include_path(path: &Path) -> String {
 ///
 /// Git for Windows' OpenSSH (MSYS) does not resolve Windows drive-letter paths
 /// inside `Include`, so an absolute `C:/.../.ssh/config` path is silently
-/// ignored when herdr runs under Git Bash and host aliases stop resolving.
+/// ignored when h0x runs under Git Bash and host aliases stop resolving.
 /// `~/.ssh/config` is expanded by both Windows OpenSSH (to the user profile)
 /// and MSYS OpenSSH (through `HOME`), so each shell's `ssh` reads the same user
 /// config it would read by default. A missing config is harmless because
@@ -3634,10 +3578,10 @@ fn local_forward_socket_path(target: &str, session_name: &str) -> PathBuf {
     let pid = std::process::id();
     let target_clean = sanitize_path_component(target);
     let session_clean = sanitize_path_component(session_name);
-    let readable_name = format!("herdr-remote-{pid}-{target_clean}-{session_clean}.sock");
+    let readable_name = format!("h0x-remote-{pid}-{target_clean}-{session_clean}.sock");
     let target_prefix: String = target_clean.chars().take(8).collect();
     let hash = short_socket_hash(target, session_name);
-    let short_name = format!("herdr-r-{pid}-{target_prefix}-{hash}.sock");
+    let short_name = format!("h0x-r-{pid}-{target_prefix}-{hash}.sock");
     crate::platform::remote_bridge_endpoint_path(&readable_name, &short_name)
 }
 
@@ -3681,9 +3625,8 @@ mod tests {
     #[test]
     #[ignore = "requires a private loopback OpenSSH fixture"]
     fn shared_transport_loopback_fixture() {
-        let config = std::env::var_os("HERDR_SSH_FIXTURE_CONFIG").expect("fixture SSH config");
-        let control =
-            std::env::var_os("HERDR_SSH_FIXTURE_CONTROL").expect("fixture control socket");
+        let config = std::env::var_os("H0X_SSH_FIXTURE_CONFIG").expect("fixture SSH config");
+        let control = std::env::var_os("H0X_SSH_FIXTURE_CONTROL").expect("fixture control socket");
         let directory = crate::platform::create_remote_ssh_config_dir("ctl").unwrap();
         let config_path = directory.join("config");
         fs::copy(config, &config_path).unwrap();
@@ -3700,13 +3643,13 @@ mod tests {
             noninteractive: true,
             cancelled: Arc::new(AtomicBool::new(false)),
         };
-        let mode = std::env::var("HERDR_SSH_FIXTURE_MODE").unwrap_or_default();
+        let mode = std::env::var("H0X_SSH_FIXTURE_MODE").unwrap_or_default();
         let outcome = if mode == "baseline" {
             Ok(false)
         } else {
             ssh.prepare_shared_transport()
         };
-        let expected = std::env::var("HERDR_SSH_FIXTURE_ERROR").unwrap_or_default();
+        let expected = std::env::var("H0X_SSH_FIXTURE_ERROR").unwrap_or_default();
         if expected.is_empty() {
             outcome.unwrap();
             if !mode.is_empty() {
@@ -3800,20 +3743,20 @@ mod tests {
     #[test]
     fn remote_client_preferences_cross_process_handoff() {
         let root =
-            std::env::temp_dir().join(format!("herdr-preference-handoff-{}", std::process::id()));
+            std::env::temp_dir().join(format!("h0x-preference-handoff-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         for bridge in ["bridge-100.sock", "bridge-200.sock"] {
             let mut command = Command::new(std::env::current_exe().unwrap());
             command.args(["--exact", "client::shell::tests::keybindings_settings::remote_client_preferences_process_child", "--nocapture"]);
             command
-                .env("HERDR_TEST_PREFERENCES_CHILD", "1")
+                .env("H0X_TEST_PREFERENCES_CHILD", "1")
                 .env("XDG_STATE_HOME", &root);
             // A stale inherited identity must be replaced by this launch's identity.
             command.env(REMOTE_PREFERENCES_ENV_VAR, r#"["wrong", "session"]"#);
             configure_remote_client_environment(
                 &mut command,
                 &root.join(bridge),
-                "herdr --remote dev",
+                "h0x --remote dev",
                 RemoteKeybindings::Local,
                 "dev",
                 "agents",
@@ -4002,16 +3945,16 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let socket = std::env::temp_dir().join(format!(
-            "herdr-bridge-permissions-test-{}.sock",
+            "h0x-bridge-permissions-test-{}.sock",
             std::process::id()
         ));
-        let remote_herdr = RemoteHerdr::for_platform(RemotePlatform {
+        let remote_h0x = RemoteHyperOx::for_platform(RemotePlatform {
             os: "linux",
             arch: "x86_64",
         });
         let bridge = SshStdioBridge::start(
             "example".to_string(),
-            remote_herdr,
+            remote_h0x,
             socket.clone(),
             "default".to_string(),
             None,
@@ -4069,7 +4012,7 @@ mod tests {
             .expect("system clock after epoch")
             .as_nanos();
         let socket = std::env::temp_dir().join(format!(
-            "herdr-bridge-large-frame-{}-{nonce}.sock",
+            "h0x-bridge-large-frame-{}-{nonce}.sock",
             std::process::id()
         ));
         let listener = crate::ipc::bind_private_local_listener(&socket).expect("bind listener");
@@ -4108,13 +4051,13 @@ mod tests {
     #[test]
     fn bridge_drop_while_waiting_for_client_is_bounded() {
         let socket = local_forward_socket_path("drop-test", "default");
-        let remote_herdr = RemoteHerdr::for_platform(RemotePlatform {
+        let remote_h0x = RemoteHyperOx::for_platform(RemotePlatform {
             os: "linux",
             arch: "x86_64",
         });
         let bridge = SshStdioBridge::start(
             "example".to_string(),
-            remote_herdr,
+            remote_h0x,
             socket.clone(),
             "default".to_string(),
             None,
@@ -4144,7 +4087,7 @@ mod tests {
             .expect("Unix managed config has a control path");
         let contents = std::fs::read_to_string(&path).expect("read keepalive config");
 
-        // herdr's fallback transport settings are present...
+        // h0x's fallback transport settings are present...
         assert!(
             contents.contains("Host *"),
             "config should add a Host * fallback block: {contents}"
@@ -4173,7 +4116,7 @@ mod tests {
                 let fallback_at = contents.find("Host *").expect("fallback present");
                 assert!(
                     include_at < fallback_at,
-                    "user config must be Included before herdr's fallback: {contents}"
+                    "user config must be Included before h0x's fallback: {contents}"
                 );
             }
         }
@@ -4378,7 +4321,7 @@ mod tests {
         let fallback_at = contents.find("Host *").expect("fallback present");
         assert!(
             include_at < fallback_at,
-            "user config must be Included before herdr's fallback: {contents}"
+            "user config must be Included before h0x's fallback: {contents}"
         );
 
         let ssh = RemoteSsh {
@@ -4462,13 +4405,13 @@ mod tests {
         )
         .expect("write isolated probe config");
         let ssh = RemoteSsh {
-            target: "herdr-probe.invalid".into(),
+            target: "h0x-probe.invalid".into(),
             session_name: "probe-options".into(),
             managed_config: Some(managed_config),
             noninteractive: false,
             cancelled: Arc::new(AtomicBool::new(false)),
         };
-        let remote = RemoteHerdr::for_platform(RemotePlatform {
+        let remote = RemoteHyperOx::for_platform(RemotePlatform {
             os: "linux",
             arch: "x86_64",
         });
@@ -4573,30 +4516,29 @@ mod tests {
 
     #[test]
     fn saved_machine_server_commands_are_scoped_to_the_explicit_session() {
-        let herdr =
-            RemoteHerdr::for_platform(RemotePlatform::from_uname("Linux", "x86_64").unwrap());
+        let h0x =
+            RemoteHyperOx::for_platform(RemotePlatform::from_uname("Linux", "x86_64").unwrap());
         for (args, command) in [
             (&["status", "server", "--json"][..], "status server --json"),
             (&["server", "stop"][..], "server stop"),
             (&["remote-client-bridge"][..], "remote-client-bridge"),
         ] {
             assert_eq!(
-                herdr.executable.session_command("agents", args),
-                format!("{} --session agents {command}", herdr.executable.display())
+                h0x.executable.session_command("agents", args),
+                format!("{} --session agents {command}", h0x.executable.display())
             );
             assert_eq!(
-                herdr
-                    .executable
+                h0x.executable
                     .session_command(crate::session::DEFAULT_SESSION_NAME, args),
-                format!("{} {command}", herdr.executable.display())
+                format!("{} {command}", h0x.executable.display())
             );
         }
-        assert!(herdr
+        assert!(h0x
             .executable
             .live_handoff_command("agents", 19, "0.7.9")
             .starts_with(&format!(
                 "{} --session agents server live-handoff",
-                herdr.executable.display()
+                h0x.executable.display()
             )));
     }
 
@@ -4622,51 +4564,51 @@ mod tests {
 
     #[test]
     fn remote_install_stream_command_avoids_shell_c_wrapper() {
-        let command = remote_install_stream_command("/home/a b/.local/bin/herdr.tmp.123");
+        let command = remote_install_stream_command("/home/a b/.local/bin/h0x.tmp.123");
 
-        assert_eq!(command, "tee '/home/a b/.local/bin/herdr.tmp.123'");
+        assert_eq!(command, "tee '/home/a b/.local/bin/h0x.tmp.123'");
     }
 
     #[test]
     fn remote_install_prepare_and_commit_scripts_quote_paths() {
-        let remote_herdr = RemoteHerdr::for_platform(RemotePlatform {
+        let remote_h0x = RemoteHyperOx::for_platform(RemotePlatform {
             os: "linux",
             arch: "x86_64",
         });
-        let prepare = remote_install_prepare_script(&remote_herdr);
+        let prepare = remote_install_prepare_script(&remote_h0x);
 
         assert!(prepare.contains("mkdir -p \"$dir\""));
         assert!(prepare.contains("printf '%s\\0%s\\0' \"$tmp\" \"$dest\""));
         assert_eq!(
-            parse_remote_install_paths(b"/home/a b/herdr.tmp.42\0/home/a b/herdr\0").unwrap(),
+            parse_remote_install_paths(b"/home/a b/h0x.tmp.42\0/home/a b/h0x\0").unwrap(),
             (
-                "/home/a b/herdr.tmp.42".to_string(),
-                "/home/a b/herdr".to_string()
+                "/home/a b/h0x.tmp.42".to_string(),
+                "/home/a b/h0x".to_string()
             )
         );
         assert_eq!(
-            parse_remote_install_paths(b"/home/a b\n/herdr.tmp.42\0/home/a b\n/herdr\0").unwrap(),
+            parse_remote_install_paths(b"/home/a b\n/h0x.tmp.42\0/home/a b\n/h0x\0").unwrap(),
             (
-                "/home/a b\n/herdr.tmp.42".to_string(),
-                "/home/a b\n/herdr".to_string()
+                "/home/a b\n/h0x.tmp.42".to_string(),
+                "/home/a b\n/h0x".to_string()
             )
         );
         assert_eq!(
-            remote_install_commit_script("/home/a b/herdr.tmp.42", "/home/a b/herdr"),
-            "set -eu\nchmod 755 '/home/a b/herdr.tmp.42'\nmv '/home/a b/herdr.tmp.42' '/home/a b/herdr'\n"
+            remote_install_commit_script("/home/a b/h0x.tmp.42", "/home/a b/h0x"),
+            "set -eu\nchmod 755 '/home/a b/h0x.tmp.42'\nmv '/home/a b/h0x.tmp.42' '/home/a b/h0x'\n"
         );
     }
 
     #[test]
     fn extract_remote_args_removes_space_form() {
         let args = vec![
-            "herdr".into(),
+            "h0x".into(),
             "--remote".into(),
             "dev".into(),
             "--help".into(),
         ];
         let (cleaned, remote) = extract_remote_args(&args).unwrap();
-        assert_eq!(cleaned, vec!["herdr", "--help"]);
+        assert_eq!(cleaned, vec!["h0x", "--help"]);
         let remote = remote.unwrap();
         assert_eq!(remote.target, "dev");
         assert_eq!(remote.keybindings, RemoteKeybindings::Local);
@@ -4674,9 +4616,9 @@ mod tests {
 
     #[test]
     fn extract_remote_args_removes_equals_form() {
-        let args = vec!["herdr".into(), "--remote=user@host".into()];
+        let args = vec!["h0x".into(), "--remote=user@host".into()];
         let (cleaned, remote) = extract_remote_args(&args).unwrap();
-        assert_eq!(cleaned, vec!["herdr"]);
+        assert_eq!(cleaned, vec!["h0x"]);
         let remote = remote.unwrap();
         assert_eq!(remote.target, "user@host");
         assert_eq!(remote.keybindings, RemoteKeybindings::Local);
@@ -4685,13 +4627,13 @@ mod tests {
     #[test]
     fn extract_remote_args_accepts_remote_keybindings_server() {
         let args = vec![
-            "herdr".into(),
+            "h0x".into(),
             "--remote".into(),
             "dev".into(),
             "--remote-keybindings=server".into(),
         ];
         let (cleaned, remote) = extract_remote_args(&args).unwrap();
-        assert_eq!(cleaned, vec!["herdr"]);
+        assert_eq!(cleaned, vec!["h0x"]);
         let remote = remote.unwrap();
         assert_eq!(remote.target, "dev");
         assert_eq!(remote.keybindings, RemoteKeybindings::Server);
@@ -4700,23 +4642,23 @@ mod tests {
     #[test]
     fn extract_remote_args_accepts_remote_keybindings_space_form() {
         let args = vec![
-            "herdr".into(),
+            "h0x".into(),
             "--remote=dev".into(),
             "--remote-keybindings".into(),
             "server".into(),
         ];
         let (cleaned, remote) = extract_remote_args(&args).unwrap();
-        assert_eq!(cleaned, vec!["herdr"]);
+        assert_eq!(cleaned, vec!["h0x"]);
         assert_eq!(remote.unwrap().keybindings, RemoteKeybindings::Server);
     }
 
     #[test]
     fn extract_remote_args_accepts_explicit_handoff() {
-        let args = vec!["herdr".into(), "--remote=dev".into(), "--handoff".into()];
+        let args = vec!["h0x".into(), "--remote=dev".into(), "--handoff".into()];
 
         let (cleaned, remote) = extract_remote_args(&args).unwrap();
 
-        assert_eq!(cleaned, vec!["herdr"]);
+        assert_eq!(cleaned, vec!["h0x"]);
         let remote = remote.unwrap();
         assert_eq!(remote.target, "dev");
         assert!(remote.live_handoff);
@@ -4725,7 +4667,7 @@ mod tests {
     #[test]
     fn extract_remote_args_preserves_child_remote_options_after_separator() {
         let args = vec![
-            "herdr".into(),
+            "h0x".into(),
             "agent".into(),
             "start".into(),
             "repro".into(),
@@ -4745,7 +4687,7 @@ mod tests {
 
     #[test]
     fn extract_remote_args_preserves_handoff_without_remote() {
-        let args = vec!["herdr".into(), "update".into(), "--handoff".into()];
+        let args = vec!["h0x".into(), "update".into(), "--handoff".into()];
 
         let (cleaned, remote) = extract_remote_args(&args).unwrap();
 
@@ -4755,7 +4697,7 @@ mod tests {
 
     #[test]
     fn extract_remote_args_rejects_remote_keybindings_without_remote() {
-        let args = vec!["herdr".into(), "--remote-keybindings=server".into()];
+        let args = vec!["h0x".into(), "--remote-keybindings=server".into()];
         let err = extract_remote_args(&args).unwrap_err();
         assert_eq!(err, "--remote-keybindings requires --remote");
     }
@@ -4763,7 +4705,7 @@ mod tests {
     #[test]
     fn extract_remote_args_rejects_duplicate_remote_keybindings() {
         let args = vec![
-            "herdr".into(),
+            "h0x".into(),
             "--remote=dev".into(),
             "--remote-keybindings=local".into(),
             "--remote-keybindings=server".into(),
@@ -4774,32 +4716,28 @@ mod tests {
 
     #[test]
     fn extract_remote_args_requires_value() {
-        let args = vec!["herdr".into(), "--remote".into()];
+        let args = vec!["h0x".into(), "--remote".into()];
         let err = extract_remote_args(&args).unwrap_err();
         assert_eq!(err, "missing value for --remote");
     }
 
     #[test]
     fn extract_remote_args_rejects_empty_value() {
-        let args = vec!["herdr".into(), "--remote=".into()];
+        let args = vec!["h0x".into(), "--remote=".into()];
         let err = extract_remote_args(&args).unwrap_err();
         assert_eq!(err, "missing value for --remote");
     }
 
     #[test]
     fn extract_remote_args_rejects_duplicate_values() {
-        let args = vec![
-            "herdr".into(),
-            "--remote=dev".into(),
-            "--remote=prod".into(),
-        ];
+        let args = vec!["h0x".into(), "--remote=dev".into(), "--remote=prod".into()];
         let err = extract_remote_args(&args).unwrap_err();
         assert_eq!(err, "--remote can only be specified once");
     }
 
     #[test]
     fn extract_remote_args_rejects_option_like_target() {
-        let args = vec!["herdr".into(), "--remote".into(), "-oProxyCommand=x".into()];
+        let args = vec!["h0x".into(), "--remote".into(), "-oProxyCommand=x".into()];
         let err = extract_remote_args(&args).unwrap_err();
         assert_eq!(err, "--remote target must not start with '-'");
     }
@@ -4830,7 +4768,7 @@ mod tests {
     fn windows_platform_probe_preserves_native_and_unsupported_architectures() {
         for arch in ["AMD64", "x86_64"] {
             assert_eq!(
-                parse_windows_platform_probe(&format!("profile noise\r\nherdr-windows:{arch}\r\n"))
+                parse_windows_platform_probe(&format!("profile noise\r\nh0x-windows:{arch}\r\n"))
                     .unwrap(),
                 Some(DetectedRemotePlatform {
                     platform: RemotePlatform {
@@ -4843,14 +4781,14 @@ mod tests {
         }
         assert_eq!(parse_windows_platform_probe("other output").unwrap(), None);
         assert_eq!(
-            parse_windows_platform_probe("herdr-windows:x86").unwrap_err(),
+            parse_windows_platform_probe("h0x-windows:x86").unwrap_err(),
             "unsupported remote platform: Windows X86"
         );
     }
 
     #[test]
     fn windows_arm64_probe_selects_x64_package() {
-        let platform = parse_windows_platform_probe("herdr-windows:ARM64")
+        let platform = parse_windows_platform_probe("h0x-windows:ARM64")
             .expect("Windows ARM64 should use the x64 build on a best-effort basis")
             .expect("the Windows platform marker should be recognized");
         assert_eq!(platform.platform.asset_key(), "windows-x86_64");
@@ -4895,7 +4833,7 @@ mod tests {
     #[test]
     fn windows_bridge_returns_application_exit_while_descendant_is_running() {
         let pid_file = std::env::temp_dir().join(format!(
-            "herdr bridge descendant {}-{}.pid",
+            "h0x bridge descendant {}-{}.pid",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -4961,21 +4899,21 @@ mod tests {
 
     #[test]
     fn machine_metadata_keeps_raw_resolved_paths_not_shell_expressions() {
-        let remote = RemoteHerdr::for_platform(RemotePlatform {
+        let remote = RemoteHyperOx::for_platform(RemotePlatform {
             os: "linux",
             arch: "x86_64",
         });
         assert!(remote.machine_metadata().is_none());
-        let path = "/home/user's files/$literal/herdr";
+        let path = "/home/user's files/$literal/h0x";
         let resolved = remote.with_posix_path(path);
         assert_eq!(resolved.machine_metadata().unwrap().executable, path);
         assert_eq!(resolved.executable.display(), shell_quote(path));
-        let remote = RemoteHerdr::for_platform(RemotePlatform {
+        let remote = RemoteHyperOx::for_platform(RemotePlatform {
             os: "windows",
             arch: "x86_64",
         });
         assert!(remote.machine_metadata().is_none());
-        let path = r"C:\Users\A B\herdr.exe";
+        let path = r"C:\Users\A B\h0x.exe";
         assert_eq!(
             remote
                 .with_windows_path(path.into())
@@ -4988,7 +4926,7 @@ mod tests {
 
     #[test]
     fn cached_windows_api_command_checks_before_starting_the_stream() {
-        let path = r"C:\Users\A'B\herdr.exe";
+        let path = r"C:\Users\A'B\h0x.exe";
         let command = cached_remote_api_command(
             &crate::client::endpoint::SshMachineMetadata {
                 os: "windows".into(),
@@ -5024,12 +4962,12 @@ mod tests {
         // can contain those characters, so the whole script travels base64
         // encoded and the command argument itself must stay free of them.
         for executable in [
-            "/opt/herdr",
-            "/home/a b/herdr",
-            "/home/o'brien/herdr",
-            "/opt/herdr-$build/herdr",
-            "/opt/herdr`id`/herdr",
-            "/opt/herdr\"quote/herdr",
+            "/opt/h0x",
+            "/home/a b/h0x",
+            "/home/o'brien/h0x",
+            "/opt/h0x-$build/h0x",
+            "/opt/h0x`id`/h0x",
+            "/opt/h0x\"quote/h0x",
         ] {
             let command = cached_remote_api_command(
                 &crate::client::endpoint::SshMachineMetadata {
@@ -5055,7 +4993,7 @@ mod tests {
             )
             .expect("UTF-8 script");
             assert!(script.contains(&shell_quote(executable)), "{script}");
-            assert!(script.contains("herdr-api-bridge-v1"), "{script}");
+            assert!(script.contains("h0x-api-bridge-v1"), "{script}");
             assert!(script.contains(STALE_API_METADATA), "{script}");
             assert!(script.contains("remote-api-bridge <&3"), "{script}");
         }
@@ -5068,15 +5006,15 @@ mod tests {
         use std::os::unix::fs::PermissionsExt as _;
 
         let directory =
-            std::env::temp_dir().join(format!("herdr-posix-bridge-{}", std::process::id()));
+            std::env::temp_dir().join(format!("h0x-posix-bridge-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).unwrap();
-        let executable = directory.join("herdr");
+        let executable = directory.join("h0x");
         fs::write(
             &executable,
             "#!/bin/sh\n\
              if [ \"$1\" = \"--session\" ] && [ \"$3\" = \"remote-api-bridge\" ]; then\n\
-             \x20 if [ \"$4\" = \"--check\" ]; then printf 'herdr-api-bridge-v1\\n'; exit 0; fi\n\
+             \x20 if [ \"$4\" = \"--check\" ]; then printf 'h0x-api-bridge-v1\\n'; exit 0; fi\n\
              \x20 cat\n\
              \x20 exit 23\n\
              fi\n\
@@ -5149,52 +5087,52 @@ mod tests {
 
     #[test]
     fn windows_remote_commands_use_one_encoded_powershell_grammar() {
-        let executable = RemoteExecutable::WindowsPath("herdr.exe".to_string());
+        let executable = RemoteExecutable::WindowsPath("h0x.exe".to_string());
         let commands = [
             (
                 "platform probe",
                 windows_platform_probe_command(false),
-                "$arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }; [Console]::Out.WriteLine('herdr-windows:' + $arch); exit 0",
+                "$arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }; [Console]::Out.WriteLine('h0x-windows:' + $arch); exit 0",
             ),
             (
                 "PATH lookup",
                 executable.exists_command(),
-                "if ($null -ne (Get-Command herdr.exe -CommandType Application -ErrorAction SilentlyContinue)) { exit 0 }; exit 1",
+                "if ($null -ne (Get-Command h0x.exe -CommandType Application -ErrorAction SilentlyContinue)) { exit 0 }; exit 1",
             ),
             (
                 "client status",
                 executable.status_client_command(),
-                "& herdr.exe status client '--json'; exit $LASTEXITCODE",
+                "& h0x.exe status client '--json'; exit $LASTEXITCODE",
             ),
             (
                 "named server status",
                 executable.session_command("agents", &["status", "server", "--json"]),
-                "& herdr.exe '--session' agents status server '--json'; exit $LASTEXITCODE",
+                "& h0x.exe '--session' agents status server '--json'; exit $LASTEXITCODE",
             ),
             (
                 "server stop",
                 executable.session_command("agents", &["server", "stop"]),
-                "& herdr.exe '--session' agents server stop; exit $LASTEXITCODE",
+                "& h0x.exe '--session' agents server stop; exit $LASTEXITCODE",
             ),
             (
                 "direct bridge",
                 executable.bridge_command("agents"),
-                "$process = Start-Process -FilePath herdr.exe -ArgumentList '--session agents remote-client-bridge' -NoNewWindow -PassThru -ErrorAction Stop; $null = $process.Handle; $process.WaitForExit(); exit $process.ExitCode",
+                "$process = Start-Process -FilePath h0x.exe -ArgumentList '--session agents remote-client-bridge' -NoNewWindow -PassThru -ErrorAction Stop; $null = $process.Handle; $process.WaitForExit(); exit $process.ExitCode",
             ),
             (
                 "API bridge with explicit default session",
-                remote_api_bridge_command(&RemoteHerdr::for_platform(RemotePlatform { os: "windows", arch: "x86_64" }), "default", false),
-                "$process = Start-Process -FilePath herdr.exe -ArgumentList '--session default remote-api-bridge' -NoNewWindow -PassThru -ErrorAction Stop; $null = $process.Handle; $process.WaitForExit(); exit $process.ExitCode",
+                remote_api_bridge_command(&RemoteHyperOx::for_platform(RemotePlatform { os: "windows", arch: "x86_64" }), "default", false),
+                "$process = Start-Process -FilePath h0x.exe -ArgumentList '--session default remote-api-bridge' -NoNewWindow -PassThru -ErrorAction Stop; $null = $process.Handle; $process.WaitForExit(); exit $process.ExitCode",
             ),
             (
                 "API bridge capability probe",
-                remote_api_bridge_command(&RemoteHerdr::for_platform(RemotePlatform { os: "windows", arch: "x86_64" }), "agents", true),
-                "$process = Start-Process -FilePath herdr.exe -ArgumentList '--session agents remote-api-bridge --check' -NoNewWindow -PassThru -ErrorAction Stop; $null = $process.Handle; $process.WaitForExit(); exit $process.ExitCode",
+                remote_api_bridge_command(&RemoteHyperOx::for_platform(RemotePlatform { os: "windows", arch: "x86_64" }), "agents", true),
+                "$process = Start-Process -FilePath h0x.exe -ArgumentList '--session agents remote-api-bridge --check' -NoNewWindow -PassThru -ErrorAction Stop; $null = $process.Handle; $process.WaitForExit(); exit $process.ExitCode",
             ),
             (
                 "saved bridge with closed stdin",
                 executable.saved_bridge_command("agents"),
-                "$process = Start-Process -FilePath herdr.exe -ArgumentList '--session agents remote-client-bridge' -NoNewWindow -PassThru -ErrorAction Stop; $null = $process.Handle; $process.WaitForExit(); exit $process.ExitCode",
+                "$process = Start-Process -FilePath h0x.exe -ArgumentList '--session agents remote-client-bridge' -NoNewWindow -PassThru -ErrorAction Stop; $null = $process.Handle; $process.WaitForExit(); exit $process.ExitCode",
             ),
         ];
 
@@ -5257,7 +5195,7 @@ mod tests {
             assert_eq!(output.status.code(), Some(1), "{env}: {output:?}");
             assert!(output.stderr.is_empty(), "{env}: {output:?}");
             assert!(
-                !String::from_utf8_lossy(&output.stdout).contains("herdr-windows:"),
+                !String::from_utf8_lossy(&output.stdout).contains("h0x-windows:"),
                 "{env}: {output:?}"
             );
         }
@@ -5267,7 +5205,7 @@ mod tests {
     fn windows_remote_commands_suppress_powershell_progress_records() {
         // PowerShell serializes progress records (such as module auto-loading's
         // "Preparing modules for first use.") to the stderr CLIXML stream when
-        // stderr is redirected under `-EncodedCommand`. Herdr forwards that
+        // stderr is redirected under `-EncodedCommand`. HyperOx forwards that
         // stderr, so the shared preamble must silence progress.
         let script = decode_windows_command(&windows_powershell_script_command("exit 0"));
         let preference = "$ProgressPreference = 'SilentlyContinue'; ";
@@ -5288,13 +5226,13 @@ mod tests {
             windows_scp_target("example", r"C:\Temp\A+B%20 C\install.ps1"),
             "example:C:/Temp/A+B%20 C/install.ps1"
         );
-        let remote_dir = r"C:\Temp\Herdr O'Brien\测试";
+        let remote_dir = r"C:\Temp\HyperOx O'Brien\测试";
         assert_eq!(
             windows_scp_target(
                 "user@example",
-                &format!(r"{remote_dir}\herdr-windows-x86_64.zip")
+                &format!(r"{remote_dir}\h0x-windows-x86_64.zip")
             ),
-            "user@example:C:/Temp/Herdr O'Brien/测试/herdr-windows-x86_64.zip"
+            "user@example:C:/Temp/HyperOx O'Brien/测试/h0x-windows-x86_64.zip"
         );
         assert_eq!(
             windows_scp_target("ssh://user@example:2222", r"C:\Temp\install.ps1"),
@@ -5311,7 +5249,7 @@ mod tests {
         assert!(command.contains(".Target"));
         assert!(command.contains(WINDOWS_REMOTE_INSTALL_RESULT_MARKER));
 
-        let installed = r"C:\Users\test\测试\.herdr\packages\standalone\releases\0.9.0\herdr.exe";
+        let installed = r"C:\Users\test\测试\.h0x\packages\standalone\releases\0.9.0\h0x.exe";
         let encoded = base64::engine::general_purpose::STANDARD.encode(installed);
         assert_eq!(
             parse_windows_remote_path(
@@ -5330,19 +5268,19 @@ mod tests {
 
     #[test]
     fn windows_candidate_discovery_prefers_path_then_active_release() {
-        let remote_herdr = RemoteHerdr::for_platform(RemotePlatform {
+        let remote_h0x = RemoteHyperOx::for_platform(RemotePlatform {
             os: "windows",
             arch: "x86_64",
         });
-        let path = r"C:\stale\herdr.exe";
-        let active = r"C:\Users\test\.herdr\packages\standalone\releases\current\herdr.exe";
+        let path = r"C:\stale\h0x.exe";
+        let active = r"C:\Users\test\.h0x\packages\standalone\releases\current\h0x.exe";
         let stdout = format!(
             "{WINDOWS_REMOTE_PATH_MARKER}{}\nnoise\n{WINDOWS_REMOTE_PATH_MARKER}{}\n{WINDOWS_REMOTE_PATH_MARKER}{}\n",
             base64::engine::general_purpose::STANDARD.encode(path),
             base64::engine::general_purpose::STANDARD.encode(active),
             base64::engine::general_purpose::STANDARD.encode(active),
         );
-        let candidates = windows_remote_binary_candidates(&remote_herdr, &stdout);
+        let candidates = windows_remote_binary_candidates(&remote_h0x, &stdout);
         assert_eq!(candidates.len(), 2);
         assert_eq!(
             candidates[0].executable,
@@ -5354,7 +5292,7 @@ mod tests {
         );
 
         let command = decode_windows_command(&windows_remote_binary_candidate_command());
-        assert!(command.contains("Get-Command herdr.exe"));
+        assert!(command.contains("Get-Command h0x.exe"));
         assert!(command.contains("$activeJunction.Target"));
     }
 
@@ -5368,7 +5306,7 @@ function Get-Command {}
 function Get-Item {}
 function Get-CimInstance {
     $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    [pscustomobject]@{ ExecutablePath=$env:HERDR_TEST_EXE; OwnerSid=$sid; OwnerResult=0 }
+    [pscustomobject]@{ ExecutablePath=$env:H0X_TEST_EXE; OwnerSid=$sid; OwnerResult=0 }
     [pscustomobject]@{ ExecutablePath="$env:SystemRoot\System32\cmd.exe"; OwnerSid='S-1-0-0'; OwnerResult=0 }
     [pscustomobject]@{ ExecutablePath="$PSHOME\powershell.exe"; OwnerSid=$sid; OwnerResult=2 }
 }
@@ -5390,7 +5328,7 @@ function Get-Process {
         command
             .args(["-NoProfile", "-NonInteractive", "-EncodedCommand"])
             .arg(encoded.split_whitespace().last().unwrap())
-            .env("HERDR_TEST_EXE", &executable);
+            .env("H0X_TEST_EXE", &executable);
         crate::platform::configure_background_command(&mut command);
         let output = command.output().unwrap();
         assert!(
@@ -5411,7 +5349,7 @@ function Get-Process {
     fn remote_output_framing_discards_any_banner_and_preserves_binary() {
         let payload = [0, 1, 2, 0xff, b'\n'];
         let mut input = vec![b'x'; 4 * 1024 * 1024];
-        input.extend_from_slice(b"\r\nherdr-remote-output-ready:1\r\n");
+        input.extend_from_slice(b"\r\nh0x-remote-output-ready:1\r\n");
         input.extend_from_slice(&payload);
         let mut reader = io::BufReader::with_capacity(17, io::Cursor::new(input));
 
@@ -5425,7 +5363,7 @@ function Get-Process {
         normalize_remote_stdout(&mut missing, false).unwrap();
         assert_eq!(missing, b"profile output without marker");
 
-        let mut platform = b"profile output\nherdr-remote-output-ready:1\nLinux\nx86_64\n".to_vec();
+        let mut platform = b"profile output\nh0x-remote-output-ready:1\nLinux\nx86_64\n".to_vec();
         normalize_remote_stdout(&mut platform, true).unwrap();
         let platform = String::from_utf8(platform).unwrap();
         let mut lines = platform.lines();
@@ -5443,43 +5381,43 @@ function Get-Process {
     fn reattach_command_includes_remote_and_session() {
         assert_eq!(
             reattach_command(
-                "target/release/herdr",
+                "target/release/h0x",
                 "user@host",
                 "work",
                 RemoteKeybindings::Local,
                 false,
             ),
-            "target/release/herdr --remote user@host --session work"
+            "target/release/h0x --remote user@host --session work"
         );
         assert_eq!(
             reattach_command(
-                "herdr",
+                "h0x",
                 "host name",
                 crate::session::DEFAULT_SESSION_NAME,
                 RemoteKeybindings::Local,
                 false,
             ),
-            "herdr --remote 'host name'"
+            "h0x --remote 'host name'"
         );
         assert_eq!(
             reattach_command(
-                "herdr",
+                "h0x",
                 "host",
                 crate::session::DEFAULT_SESSION_NAME,
                 RemoteKeybindings::Server,
                 false,
             ),
-            "herdr --remote host --remote-keybindings server"
+            "h0x --remote host --remote-keybindings server"
         );
         assert_eq!(
             reattach_command(
-                "herdr",
+                "h0x",
                 "host",
                 crate::session::DEFAULT_SESSION_NAME,
                 RemoteKeybindings::Local,
                 true,
             ),
-            "herdr --remote host --handoff"
+            "h0x --remote host --handoff"
         );
     }
 
@@ -5489,7 +5427,7 @@ function Get-Process {
         let executable = std::env::current_exe().expect("current test executable");
         assert_eq!(
             reattach_command(
-                r"C:\Program Files\Herdr\herdr.exe",
+                r"C:\Program Files\HyperOx\h0x.exe",
                 "host'name",
                 "work'name",
                 RemoteKeybindings::Local,
@@ -5504,15 +5442,15 @@ function Get-Process {
 
     #[test]
     fn remote_api_bridge_always_selects_the_saved_session() {
-        let remote_herdr = RemoteHerdr::for_platform(RemotePlatform {
+        let remote_h0x = RemoteHyperOx::for_platform(RemotePlatform {
             os: "linux",
             arch: "x86_64",
         });
         for session in ["default", "agents"] {
             assert_eq!(
-                remote_api_bridge_command(&remote_herdr, session, false),
+                remote_api_bridge_command(&remote_h0x, session, false),
                 posix_remote_output_command(&format!(
-                    "exec \"$HOME/.local/bin/herdr\" --session {session} remote-api-bridge"
+                    "exec \"$HOME/.local/bin/h0x\" --session {session} remote-api-bridge"
                 ))
             );
         }
@@ -5527,7 +5465,7 @@ function Get-Process {
         )
         .unwrap();
         assert!(current.remote_bridge_idle_timeout);
-        let remote = RemoteHerdr::for_platform(RemotePlatform {
+        let remote = RemoteHyperOx::for_platform(RemotePlatform {
             os: "linux",
             arch: "x86_64",
         });
@@ -5539,114 +5477,112 @@ function Get-Process {
 
     #[test]
     fn remote_bridge_command_uses_installed_binary() {
-        let remote_herdr = RemoteHerdr::for_platform(RemotePlatform {
+        let remote_h0x = RemoteHyperOx::for_platform(RemotePlatform {
             os: "linux",
             arch: "x86_64",
         });
         assert_eq!(
-            remote_herdr
+            remote_h0x
                 .executable
                 .bridge_command(crate::session::DEFAULT_SESSION_NAME),
-            "printf '\\n%s\\n' 'herdr-remote-output-ready:1'\nexec \"$HOME/.local/bin/herdr\" remote-client-bridge"
+            "printf '\\n%s\\n' 'h0x-remote-output-ready:1'\nexec \"$HOME/.local/bin/h0x\" remote-client-bridge"
         );
         assert_eq!(
-            remote_herdr.executable.saved_bridge_command("agents"),
-            "exec \"$HOME/.local/bin/herdr\" --session agents remote-client-bridge </dev/null"
+            remote_h0x.executable.saved_bridge_command("agents"),
+            "exec \"$HOME/.local/bin/h0x\" --session agents remote-client-bridge </dev/null"
         );
     }
 
     #[test]
     fn remote_path_discovery_uses_path_binary() {
-        let remote_herdr = RemoteHerdr::for_platform(RemotePlatform {
+        let remote_h0x = RemoteHyperOx::for_platform(RemotePlatform {
             os: "linux",
             arch: "x86_64",
         });
-        let remote_herdr = remote_herdr_from_path_discovery(&remote_herdr, "/usr/bin/herdr\n")
-            .expect("path binary");
+        let remote_h0x =
+            remote_h0x_from_path_discovery(&remote_h0x, "/usr/bin/h0x\n").expect("path binary");
 
         assert_eq!(
-            remote_herdr
+            remote_h0x
                 .executable
                 .bridge_command(crate::session::DEFAULT_SESSION_NAME),
-            "printf '\\n%s\\n' 'herdr-remote-output-ready:1'\nexec /usr/bin/herdr remote-client-bridge"
+            "printf '\\n%s\\n' 'h0x-remote-output-ready:1'\nexec /usr/bin/h0x remote-client-bridge"
         );
     }
 
     #[test]
     fn remote_path_discovery_quotes_discovered_binary() {
-        let remote_herdr = RemoteHerdr::for_platform(RemotePlatform {
+        let remote_h0x = RemoteHyperOx::for_platform(RemotePlatform {
             os: "linux",
             arch: "x86_64",
         });
-        let remote_herdr =
-            remote_herdr_from_path_discovery(&remote_herdr, "/opt/herdr bin/herdr\n")
-                .expect("path binary");
+        let remote_h0x =
+            remote_h0x_from_path_discovery(&remote_h0x, "/opt/h0x bin/h0x\n").expect("path binary");
 
         assert_eq!(
-            remote_herdr
+            remote_h0x
                 .executable
                 .bridge_command(crate::session::DEFAULT_SESSION_NAME),
-            "printf '\\n%s\\n' 'herdr-remote-output-ready:1'\nexec '/opt/herdr bin/herdr' remote-client-bridge"
+            "printf '\\n%s\\n' 'h0x-remote-output-ready:1'\nexec '/opt/h0x bin/h0x' remote-client-bridge"
         );
     }
 
     #[test]
     fn remote_path_discovery_uses_macos_path_binary() {
-        let remote_herdr = RemoteHerdr::for_platform(RemotePlatform {
+        let remote_h0x = RemoteHyperOx::for_platform(RemotePlatform {
             os: "macos",
             arch: "aarch64",
         });
-        let remote_herdr =
-            remote_herdr_from_path_discovery(&remote_herdr, "/opt/homebrew/bin/herdr\n")
-                .expect("path binary");
+        let remote_h0x = remote_h0x_from_path_discovery(&remote_h0x, "/opt/homebrew/bin/h0x\n")
+            .expect("path binary");
 
         assert_eq!(
-            remote_herdr
+            remote_h0x
                 .executable
                 .bridge_command(crate::session::DEFAULT_SESSION_NAME),
-            "printf '\\n%s\\n' 'herdr-remote-output-ready:1'\nexec /opt/homebrew/bin/herdr remote-client-bridge"
+            "printf '\\n%s\\n' 'h0x-remote-output-ready:1'\nexec /opt/homebrew/bin/h0x remote-client-bridge"
         );
-        assert_eq!(remote_herdr.platform.asset_key(), "macos-aarch64");
+        assert_eq!(remote_h0x.platform.asset_key(), "macos-aarch64");
     }
 
     #[test]
     fn remote_path_discovery_reads_multiple_absolute_paths() {
-        let remote_herdr = RemoteHerdr::for_platform(RemotePlatform {
+        let remote_h0x = RemoteHyperOx::for_platform(RemotePlatform {
             os: "linux",
             arch: "x86_64",
         });
-        let candidates = remote_herdrs_from_path_discovery(
-            &remote_herdr,
-            "/usr/bin/herdr\nbin/herdr\n /opt/herdr bin/herdr\n",
+        let candidates = remote_h0xs_from_path_discovery(
+            &remote_h0x,
+            "/usr/bin/h0x\nbin/h0x\n /opt/h0x bin/h0x\n",
         );
 
         assert_eq!(candidates.len(), 2);
         assert_eq!(
             candidates[0].executable,
-            RemoteExecutable::PosixShellPath("/usr/bin/herdr".to_string())
+            RemoteExecutable::PosixShellPath("/usr/bin/h0x".to_string())
         );
         assert_eq!(
             candidates[1].executable,
-            RemoteExecutable::PosixShellPath("'/opt/herdr bin/herdr'".to_string())
+            RemoteExecutable::PosixShellPath("'/opt/h0x bin/h0x'".to_string())
         );
     }
 
     #[test]
     fn remote_path_discovery_ignores_mise_shims() {
-        let remote_herdr = RemoteHerdr::for_platform(RemotePlatform {
+        let remote_h0x = RemoteHyperOx::for_platform(RemotePlatform {
             os: "linux",
             arch: "x86_64",
         });
-        let candidates = remote_herdrs_from_path_discovery(
-            &remote_herdr,
-            "/home/can/.local/share/mise/shims/herdr\n/home/can/.local/share/mise/installs/herdr/0.7.1/bin/herdr\n",
+        let candidates = remote_h0xs_from_path_discovery(
+            &remote_h0x,
+            "/home/can/.local/share/mise/shims/h0x\n/home/can/.local/share/mise/installs/h0x/0.7.1/bin/h0x\n",
         );
 
         assert_eq!(candidates.len(), 1);
         assert_eq!(
             candidates[0].executable,
             RemoteExecutable::PosixShellPath(
-                "/home/can/.local/share/mise/installs/herdr/0.7.1/bin/herdr".to_string()
+                "/home/can/.local/share/mise/installs/h0x/0.7.1/bin/h0x".to_string()
             )
         );
     }
@@ -5658,21 +5594,16 @@ function Get-Process {
             arch: "x86_64",
         });
 
-        assert!(script.contains("emit \"$home/.local/bin/herdr\""));
-        assert!(!script.contains("mise/shims/herdr"));
+        assert!(script.contains("emit \"$home/.local/bin/h0x\""));
+        assert!(!script.contains("mise/shims/h0x"));
         assert!(script.contains(&format!("version={}", shell_quote(&current_version()))));
-        assert!(
-            script.contains("emit \"$home/.local/share/mise/installs/herdr/$version/bin/herdr\"")
-        );
-        assert!(script.contains("emit \"$home/.local/share/mise/installs/herdr/$version/herdr\""));
-        assert!(script.contains(
-            "emit \"$home/.local/share/mise/installs/github-ogulcancelik-herdr/$version/herdr\""
-        ));
-        assert!(script.contains("emit \"$home/.nix-profile/bin/herdr\""));
-        assert!(script.contains("emit \"/etc/profiles/per-user/$user/bin/herdr\""));
-        assert!(script.contains("emit \"/run/current-system/sw/bin/herdr\""));
-        assert!(script.contains("emit \"/home/linuxbrew/.linuxbrew/bin/herdr\""));
-        assert!(!script.contains("emit \"/opt/homebrew/bin/herdr\""));
+        assert!(script.contains("emit \"$home/.local/share/mise/installs/h0x/$version/bin/h0x\""));
+        assert!(script.contains("emit \"$home/.local/share/mise/installs/h0x/$version/h0x\""));
+        assert!(script.contains("emit \"$home/.nix-profile/bin/h0x\""));
+        assert!(script.contains("emit \"/etc/profiles/per-user/$user/bin/h0x\""));
+        assert!(script.contains("emit \"/run/current-system/sw/bin/h0x\""));
+        assert!(script.contains("emit \"/home/linuxbrew/.linuxbrew/bin/h0x\""));
+        assert!(!script.contains("emit \"/opt/homebrew/bin/h0x\""));
     }
 
     #[test]
@@ -5682,61 +5613,60 @@ function Get-Process {
             arch: "aarch64",
         });
 
-        assert!(script.contains("emit \"/opt/homebrew/bin/herdr\""));
-        assert!(script.contains("emit \"/usr/local/bin/herdr\""));
-        assert!(!script.contains("emit \"/home/linuxbrew/.linuxbrew/bin/herdr\""));
+        assert!(script.contains("emit \"/opt/homebrew/bin/h0x\""));
+        assert!(script.contains("emit \"/usr/local/bin/h0x\""));
+        assert!(!script.contains("emit \"/home/linuxbrew/.linuxbrew/bin/h0x\""));
     }
 
     #[test]
     fn remote_path_discovery_quotes_single_quotes_in_discovered_binary() {
-        let remote_herdr = RemoteHerdr::for_platform(RemotePlatform {
+        let remote_h0x = RemoteHyperOx::for_platform(RemotePlatform {
             os: "linux",
             arch: "x86_64",
         });
-        let remote_herdr =
-            remote_herdr_from_path_discovery(&remote_herdr, "/opt/herdr's/bin/herdr\n")
-                .expect("path binary");
+        let remote_h0x = remote_h0x_from_path_discovery(&remote_h0x, "/opt/h0x's/bin/h0x\n")
+            .expect("path binary");
 
         assert_eq!(
-            remote_herdr
+            remote_h0x
                 .executable
                 .bridge_command(crate::session::DEFAULT_SESSION_NAME),
-            "printf '\\n%s\\n' 'herdr-remote-output-ready:1'\nexec '/opt/herdr'\\''s/bin/herdr' remote-client-bridge"
+            "printf '\\n%s\\n' 'h0x-remote-output-ready:1'\nexec '/opt/h0x'\\''s/bin/h0x' remote-client-bridge"
         );
     }
 
     #[test]
     fn remote_path_discovery_ignores_relative_paths() {
-        let remote_herdr = RemoteHerdr::for_platform(RemotePlatform {
+        let remote_h0x = RemoteHyperOx::for_platform(RemotePlatform {
             os: "linux",
             arch: "x86_64",
         });
-        let remote_herdr = remote_herdr_from_path_discovery(&remote_herdr, "bin/herdr\n");
+        let remote_h0x = remote_h0x_from_path_discovery(&remote_h0x, "bin/h0x\n");
 
-        assert!(remote_herdr.is_none());
+        assert!(remote_h0x.is_none());
     }
 
     #[test]
     fn remote_path_discovery_ignores_empty_output() {
-        let remote_herdr = RemoteHerdr::for_platform(RemotePlatform {
+        let remote_h0x = RemoteHyperOx::for_platform(RemotePlatform {
             os: "linux",
             arch: "x86_64",
         });
-        let remote_herdr = remote_herdr_from_path_discovery(&remote_herdr, "\n");
+        let remote_h0x = remote_h0x_from_path_discovery(&remote_h0x, "\n");
 
-        assert!(remote_herdr.is_none());
+        assert!(remote_h0x.is_none());
     }
 
     #[test]
     fn remote_shell_path_warning_accepts_managed_install() {
         assert!(remote_shell_resolves_managed_install(
-            "/home/can/.local/bin/herdr\n"
+            "/home/can/.local/bin/h0x\n"
         ));
         assert!(remote_shell_resolves_managed_install(
-            "/Users/can/.local/bin/herdr\n"
+            "/Users/can/.local/bin/h0x\n"
         ));
         assert!(!remote_shell_resolves_managed_install(
-            "/usr/local/bin/herdr\n"
+            "/usr/local/bin/h0x\n"
         ));
         assert!(!remote_shell_resolves_managed_install(""));
     }
@@ -6022,47 +5952,12 @@ function Get-Process {
     }
 
     #[test]
-    fn remote_preview_manifest_falls_back_to_archived_exact_build_assets() {
-        let manifest: RemotePreviewManifest = serde_json::from_str(
-            r#"{
-                "build_id": "2026-06-06-new",
-                "protocol": 12,
-                "assets": {
-                    "linux-x86_64": {
-                        "url": "https://example.com/new",
-                        "sha256": "new"
-                    }
-                },
-                "builds": {
-                    "2026-06-02-old": {
-                        "protocol": 11,
-                        "assets": {
-                            "linux-x86_64": {
-                                "url": "https://example.com/old",
-                                "sha256": "old"
-                            }
-                        }
-                    }
-                }
-            }"#,
-        )
-        .unwrap();
-
-        let (protocol, assets) =
-            preview_assets_for_build(&manifest, "2026-06-02-old").expect("archived build");
-        let asset = assets.get("linux-x86_64").expect("asset");
-        assert_eq!(protocol, 11);
-        assert_eq!(asset.url(), "https://example.com/old");
-        assert_eq!(asset.sha256(), Some("old"));
-    }
-
-    #[test]
     fn remote_live_handoff_uses_prepared_binary_identity() {
-        let remote_herdr = RemoteHerdr::for_platform(RemotePlatform {
+        let remote_h0x = RemoteHyperOx::for_platform(RemotePlatform {
             os: "linux",
             arch: "x86_64",
         });
-        let command = remote_herdr.executable.live_handoff_command(
+        let command = remote_h0x.executable.live_handoff_command(
             crate::session::DEFAULT_SESSION_NAME,
             19,
             "0.7.9",
@@ -6082,8 +5977,8 @@ function Get-Process {
             arch: "aarch64",
         };
         assert_eq!(
-            install_source_description_for(&platform, Some(Path::new("/tmp/herdr-aarch64")), false),
-            "HERDR_REMOTE_BINARY (/tmp/herdr-aarch64)"
+            install_source_description_for(&platform, Some(Path::new("/tmp/h0x-aarch64")), false),
+            "H0X_REMOTE_BINARY (/tmp/h0x-aarch64)"
         );
     }
 
@@ -6093,7 +5988,7 @@ function Get-Process {
 
         assert_eq!(
             install_source_description_for(&platform, None, true),
-            "the current local herdr binary"
+            "the current local h0x binary"
         );
     }
 
@@ -6118,9 +6013,9 @@ function Get-Process {
             os: "linux",
             arch: "aarch64",
         };
-        let source = resolve_install_source(&platform, Some(PathBuf::from("/tmp/herdr-aarch64")))
+        let source = resolve_install_source(&platform, Some(PathBuf::from("/tmp/h0x-aarch64")))
             .expect("override source");
-        assert_eq!(source.path, PathBuf::from("/tmp/herdr-aarch64"));
+        assert_eq!(source.path, PathBuf::from("/tmp/h0x-aarch64"));
         assert!(source.temporary_dir.is_none());
     }
 
@@ -6131,7 +6026,7 @@ function Get-Process {
         assert!(path.starts_with(crate::platform::remote_private_temp_base()));
         assert!(path
             .file_name()
-            .is_some_and(|name| name.to_string_lossy().starts_with("herdr-r-")));
+            .is_some_and(|name| name.to_string_lossy().starts_with("h0x-r-")));
     }
 
     #[cfg(unix)]
@@ -6159,7 +6054,7 @@ function Get-Process {
             .unwrap_or("")
             .to_string();
         assert!(
-            filename.starts_with("herdr-remote-"),
+            filename.starts_with("h0x-remote-"),
             "expected readable name, got {filename}"
         );
         assert!(filename.contains("-dev-default."), "got {filename}");
@@ -6218,7 +6113,7 @@ function Get-Process {
         assert!(fits, "fallback path still overflows: {}", path.display());
         assert_eq!(parent.as_deref(), Some(Path::new("/tmp")));
         assert!(
-            filename.starts_with("herdr-r-"),
+            filename.starts_with("h0x-r-"),
             "expected hashed fallback, got {filename}"
         );
     }
@@ -6226,12 +6121,12 @@ function Get-Process {
     #[test]
     fn install_source_cleanup_removes_temporary_directory() {
         let dir = std::env::temp_dir().join(format!(
-            "herdr-install-source-cleanup-test-{}",
+            "h0x-install-source-cleanup-test-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir(&dir).expect("create temp dir");
-        let path = dir.join("herdr.tmp");
+        let path = dir.join("h0x.tmp");
         fs::write(&path, b"test").expect("write temp file");
 
         InstallSource::temporary(path, dir.clone()).cleanup();

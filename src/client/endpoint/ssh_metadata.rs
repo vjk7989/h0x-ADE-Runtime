@@ -20,7 +20,7 @@ impl SshMachineMetadata {
             return false;
         }
         match self.os.as_str() {
-            "linux" | "macos" => path.starts_with('/') && !path.ends_with("/mise/shims/herdr"),
+            "linux" | "macos" => path.starts_with('/') && !path.ends_with("/mise/shims/h0x"),
             "windows" => {
                 let bytes = path.as_bytes();
                 path.starts_with(r"\\")
@@ -124,14 +124,14 @@ mod tests {
     fn metadata_accepts_only_supported_platforms_and_absolute_paths() {
         for (os, path, valid) in [
             ("linux", "/home/a b/herdr", true),
-            ("macos", "/opt/homebrew/bin/herdr", true),
-            ("windows", r"C:\Program Files\herdr.exe", true),
-            ("windows", r"\\server\share\herdr.exe", true),
-            ("windows", "herdr.exe", false),
-            ("linux", "$HOME/.local/bin/herdr", false),
-            ("linux", "/home/user/.local/share/mise/shims/herdr", false),
-            ("linux", "/bin/herdr\nmalformed", false),
-            ("unknown", "/bin/herdr", false),
+            ("macos", "/opt/homebrew/bin/h0x", true),
+            ("windows", r"C:\Program Files\h0x.exe", true),
+            ("windows", r"\\server\share\h0x.exe", true),
+            ("windows", "h0x.exe", false),
+            ("linux", "$HOME/.local/bin/h0x", false),
+            ("linux", "/home/user/.local/share/mise/shims/h0x", false),
+            ("linux", "/bin/h0x\nmalformed", false),
+            ("unknown", "/bin/h0x", false),
         ] {
             assert_eq!(
                 SshMachineMetadata {
@@ -213,7 +213,7 @@ mod tests {
         assert!(cache.load().is_none());
         cache.store(&SshMachineMetadata {
             os: "macos".into(),
-            executable: "/bin/herdr".into(),
+            executable: "/bin/h0x".into(),
         });
         assert_eq!(std::fs::read_to_string(&other).unwrap(), "untouched");
         std::fs::remove_dir_all(root).unwrap();

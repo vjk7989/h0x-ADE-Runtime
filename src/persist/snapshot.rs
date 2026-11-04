@@ -11,7 +11,7 @@ use crate::workspace::Workspace;
 /// Current snapshot format version.
 pub(super) const SNAPSHOT_VERSION: u32 = 3;
 
-/// Serializable snapshot of the entire herdr session.
+/// Serializable snapshot of the entire h0x session.
 #[derive(Serialize, Deserialize)]
 pub struct SessionSnapshot {
     /// Format version — used to detect incompatible changes.
@@ -528,11 +528,11 @@ mod tests {
 
     fn session_fixture(name: &str) -> &'static str {
         match name {
-            "current-herdr" => {
-                include_str!("../../tests/fixtures/session/current-herdr-session.json")
+            "current-h0x" => {
+                include_str!("../../tests/fixtures/session/current-h0x-session.json")
             }
-            "current-herdr-dev" => {
-                include_str!("../../tests/fixtures/session/current-herdr-dev-session.json")
+            "current-h0x-dev" => {
+                include_str!("../../tests/fixtures/session/current-h0x-dev-session.json")
             }
             "legacy-pre-tabs-v2" => {
                 include_str!("../../tests/fixtures/session/legacy-pre-tabs-v2.json")
@@ -634,7 +634,7 @@ mod tests {
     #[test]
     fn layout_fingerprint_survives_json_round_trip() {
         let mut snapshot = parse_snapshot(include_str!(
-            "../../tests/fixtures/session/current-herdr-session.json"
+            "../../tests/fixtures/session/current-h0x-session.json"
         ))
         .unwrap();
         snapshot.collapsed_space_keys = ["z", "a", "m"].map(String::from).into();
@@ -780,7 +780,7 @@ mod tests {
 
     #[test]
     fn current_session_fixture_parses() {
-        let snap = parse_snapshot(session_fixture("current-herdr")).unwrap();
+        let snap = parse_snapshot(session_fixture("current-h0x")).unwrap();
 
         assert_eq!(snap.version, 3);
         assert_eq!(snap.workspaces.len(), 2);
@@ -797,7 +797,7 @@ mod tests {
 
     #[test]
     fn current_dev_session_fixture_parses_additive_fields() {
-        let snap = parse_snapshot(session_fixture("current-herdr-dev")).unwrap();
+        let snap = parse_snapshot(session_fixture("current-h0x-dev")).unwrap();
 
         assert_eq!(snap.version, 3);
         assert_eq!(snap.workspaces.len(), 2);
@@ -1277,12 +1277,12 @@ mod tests {
             crate::detect::AgentState::Idle,
         );
         terminal.set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
-            source: "herdr:pi".into(),
+            source: "h0x:pi".into(),
             agent: "pi".into(),
             session_ref: crate::agent_resume::AgentSessionRef::path(session_path.clone()).unwrap(),
         });
         terminal.set_hook_authority_with_session_ref(
-            "herdr:pi".into(),
+            "h0x:pi".into(),
             "pi".into(),
             crate::detect::AgentState::Working,
             None,
@@ -1296,7 +1296,7 @@ mod tests {
             .as_ref()
             .expect("agent session should be captured");
 
-        assert_eq!(agent_session.source, "herdr:pi");
+        assert_eq!(agent_session.source, "h0x:pi");
         assert_eq!(agent_session.agent, "pi");
         assert_eq!(
             agent_session.kind,
@@ -1352,7 +1352,7 @@ mod tests {
             .get_mut(&terminal_id)
             .unwrap()
             .set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
-                source: "herdr:opencode".into(),
+                source: "h0x:opencode".into(),
                 agent: "opencode".into(),
                 session_ref: crate::agent_resume::AgentSessionRef::id("opencode-session").unwrap(),
             });
@@ -1363,7 +1363,7 @@ mod tests {
             .as_ref()
             .expect("persisted agent session should be captured");
 
-        assert_eq!(agent_session.source, "herdr:opencode");
+        assert_eq!(agent_session.source, "h0x:opencode");
         assert_eq!(agent_session.agent, "opencode");
         assert_eq!(
             agent_session.kind,

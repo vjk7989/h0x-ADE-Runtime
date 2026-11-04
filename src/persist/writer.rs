@@ -290,7 +290,7 @@ mod tests {
 
     fn snapshot() -> SessionSnapshot {
         serde_json::from_str(include_str!(
-            "../../tests/fixtures/session/current-herdr-session.json"
+            "../../tests/fixtures/session/current-h0x-session.json"
         ))
         .unwrap()
     }

@@ -442,7 +442,7 @@ impl App {
     ) {
         if !matches!(
             self.state.toast_config.delivery,
-            crate::config::ToastDelivery::Herdr
+            crate::config::ToastDelivery::H0x
         ) || self.state.toast == *previous_toast
         {
             return;
@@ -1288,7 +1288,7 @@ impl App {
 
         let reason = match self.state.toast_config.delivery {
             crate::config::ToastDelivery::Off => NotificationShowReason::Disabled,
-            crate::config::ToastDelivery::Herdr => {
+            crate::config::ToastDelivery::H0x => {
                 if self.state.toast.is_some() {
                     NotificationShowReason::Busy
                 } else if self.api_notification_rate_limited(Instant::now()) {
@@ -1740,7 +1740,7 @@ mod tests {
             .get_mut(&terminal_id)
             .unwrap()
             .set_hook_authority(
-                "herdr:omp".to_string(),
+                "h0x:omp".to_string(),
                 "omp".to_string(),
                 AgentState::Working,
                 None,
@@ -1868,7 +1868,7 @@ mod tests {
         app.state.active = None;
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
-        app.state.toast_config.delivery = crate::config::ToastDelivery::Herdr;
+        app.state.toast_config.delivery = crate::config::ToastDelivery::H0x;
         app.state.toast_config.delay_seconds = 0;
 
         let (events, _) = tokio::sync::mpsc::channel(4);
@@ -1961,7 +1961,7 @@ mod tests {
         app.state.active = None;
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
-        app.state.toast_config.delivery = crate::config::ToastDelivery::Herdr;
+        app.state.toast_config.delivery = crate::config::ToastDelivery::H0x;
         app.state.toast_config.delay_seconds = 1;
 
         let (events, _) = tokio::sync::mpsc::channel(4);
@@ -2160,7 +2160,7 @@ mod tests {
         terminal.set_detected_state(Some(Agent::Codex), AgentState::Working);
         terminal
             .set_hook_authority_at(
-                "herdr:codex".into(),
+                "h0x:codex".into(),
                 "codex".into(),
                 AgentState::Working,
                 None,
@@ -2306,7 +2306,7 @@ mod tests {
         terminal.respawn_shell_on_exit = true;
         terminal.set_agent_name("codex".into());
         terminal.set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
-            source: "herdr:codex".into(),
+            source: "h0x:codex".into(),
             agent: "codex".into(),
             session_ref: crate::agent_resume::AgentSessionRef::id("codex-session")
                 .expect("test session id should be valid"),

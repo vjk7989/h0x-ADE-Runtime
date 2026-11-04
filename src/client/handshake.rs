@@ -24,7 +24,7 @@ use super::{shell, ClientError};
 /// Time to wait for the server's Welcome reply during the handshake.
 ///
 /// A local client talks to an already-connected server, so 5s is plenty. The
-/// remote bridge client (`herdr --remote`) sits behind a fresh per-attach ssh
+/// remote bridge client (`h0x --remote`) sits behind a fresh per-attach ssh
 /// connection whose cold-connect (TCP + key exchange + auth) happens inside this
 /// window; on a high-latency link that easily exceeds 5s, so it gets a far
 /// larger budget. See issue #753.
@@ -243,7 +243,7 @@ pub(super) fn do_handshake(
             return Err(ClientError::Protocol(protocol::FramingError::Io(
                 io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "server does not support the stable Herdr endpoint protocol; update this machine",
+                    "server does not support the stable HyperOx endpoint protocol; update this machine",
                 ),
             )));
         };

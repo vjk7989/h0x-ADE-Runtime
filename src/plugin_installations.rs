@@ -268,9 +268,9 @@ mod tests {
         let checkout = root.join("checkout");
         std::fs::create_dir(&checkout).unwrap();
         std::fs::write(
-            checkout.join("herdr-plugin.toml"),
+            checkout.join("h0x-plugin.toml"),
             format!(
-                "id = {id:?}\nname = 'Cleanup'\nversion = '0.1.0'\nmin_herdr_version = '0.6.10'\n"
+                "id = {id:?}\nname = 'Cleanup'\nversion = '0.1.0'\nmin_h0x_version = '0.6.10'\n"
             ),
         )
         .unwrap();

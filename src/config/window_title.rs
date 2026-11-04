@@ -178,8 +178,8 @@ mod tests {
     #[test]
     fn sanitizes_and_bounds_rendered_titles() {
         assert_eq!(
-            sanitize_window_title_text("  herdr\u{1b} api\u{7}\n  ").as_deref(),
-            Some("herdr api")
+            sanitize_window_title_text("  h0x\u{1b} api\u{7}\n  ").as_deref(),
+            Some("h0x api")
         );
         assert_eq!(sanitize_window_title_text("\u{7}\n"), None);
         assert_eq!(

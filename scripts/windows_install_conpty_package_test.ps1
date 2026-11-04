@@ -55,43 +55,43 @@ foreach ($functionName in @("Prepend-PathEntry", "Update-PathRegistryEntry")) {
     Invoke-Expression $definition.Extent.Text
 }
 
-$pathTestVariable = "HERDR_INSTALLER_PATH_TEST"
+$pathTestVariable = "H0X_INSTALLER_PATH_TEST"
 $oldPathTestVariable = [Environment]::GetEnvironmentVariable($pathTestVariable, "Process")
-$ownedPathTestVariable = "HERDR_INSTALLER_OWNED_PATH_TEST"
+$ownedPathTestVariable = "H0X_INSTALLER_OWNED_PATH_TEST"
 $oldOwnedPathTestVariable = [Environment]::GetEnvironmentVariable($ownedPathTestVariable, "Process")
-$testRegistryPath = "Software\HerdrInstallerTests-$([Guid]::NewGuid().ToString('N'))"
+$testRegistryPath = "Software\H0xInstallerTests-$([Guid]::NewGuid().ToString('N'))"
 $testEnvironmentKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($testRegistryPath)
 if ($null -eq $testEnvironmentKey) {
     throw "unable to create temporary installer test registry key"
 }
 try {
     [Environment]::SetEnvironmentVariable($pathTestVariable, "C:\expanded", "Process")
-    [Environment]::SetEnvironmentVariable($ownedPathTestVariable, "C:\Herdr", "Process")
+    [Environment]::SetEnvironmentVariable($ownedPathTestVariable, "C:\HyperOx", "Process")
     $testEnvironmentKey.SetValue(
         "Path",
-        "C:\Herdr\releases\deleted;%$ownedPathTestVariable%\bin;C:\Herdr\bin;%$pathTestVariable%\bin;`"C:\Program Files\Tool`";C:\existing;C:\Herdr\releases\old\nested;C:\Herdr\releases-old\old;C:\Herdr\releases\deleted",
+        "C:\HyperOx\releases\deleted;%$ownedPathTestVariable%\bin;C:\HyperOx\bin;%$pathTestVariable%\bin;`"C:\Program Files\Tool`";C:\existing;C:\HyperOx\releases\old\nested;C:\HyperOx\releases-old\old;C:\HyperOx\releases\deleted",
         [Microsoft.Win32.RegistryValueKind]::ExpandString
     )
-    $ownedEntries = @("C:\Herdr\bin", "C:\Herdr\current")
+    $ownedEntries = @("C:\HyperOx\bin", "C:\HyperOx\current")
     $pathChanged = Update-PathRegistryEntry `
         -EnvironmentKey $testEnvironmentKey `
-        -Entry "C:\Herdr\releases\new" `
+        -Entry "C:\HyperOx\releases\new" `
         -OwnedEntriesToRemove $ownedEntries `
-        -OwnedEntryParentToRemove "C:\Herdr\releases"
+        -OwnedEntryParentToRemove "C:\HyperOx\releases"
     if (-not $pathChanged) {
         throw "installer PATH update reported no change"
     }
     if (Update-PathRegistryEntry `
         -EnvironmentKey $testEnvironmentKey `
-        -Entry "C:\Herdr\releases\new" `
+        -Entry "C:\HyperOx\releases\new" `
         -OwnedEntriesToRemove $ownedEntries `
-        -OwnedEntryParentToRemove "C:\Herdr\releases") {
+        -OwnedEntryParentToRemove "C:\HyperOx\releases") {
         throw "installer PATH update was not idempotent"
     }
 
     $options = [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
     $rawPath = $testEnvironmentKey.GetValue("Path", $null, $options)
-    $expectedPath = "C:\Herdr\releases\new;%$pathTestVariable%\bin;`"C:\Program Files\Tool`";C:\existing;C:\Herdr\releases\old\nested;C:\Herdr\releases-old\old"
+    $expectedPath = "C:\HyperOx\releases\new;%$pathTestVariable%\bin;`"C:\Program Files\Tool`";C:\existing;C:\HyperOx\releases\old\nested;C:\HyperOx\releases-old\old"
     if ($rawPath -cne $expectedPath) {
         throw "installer changed raw PATH: expected '$expectedPath', got '$rawPath'"
     }
@@ -106,12 +106,12 @@ try {
 }
 
 $archive = (Resolve-Path -LiteralPath $ArchivePath).Path
-$root = Join-Path $env:RUNNER_TEMP ("herdr-installer-test-" + [Guid]::NewGuid().ToString("N"))
+$root = Join-Path $env:RUNNER_TEMP ("h0x-installer-test-" + [Guid]::NewGuid().ToString("N"))
 $webRoot = Join-Path $root "web"
-$herdrHome = Join-Path $root "home"
+$h0xHome = Join-Path $root "home"
 $installDir = Join-Path $root "bin"
 New-Item -ItemType Directory -Force -Path $webRoot | Out-Null
-Copy-Item -LiteralPath $archive -Destination (Join-Path $webRoot "herdr-windows-x86_64.zip")
+Copy-Item -LiteralPath $archive -Destination (Join-Path $webRoot "h0x-windows-x86_64.zip")
 Copy-Item -LiteralPath $installerPath -Destination (Join-Path $webRoot "install.ps1")
 $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
 
@@ -119,43 +119,26 @@ $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopba
 $listener.Start()
 $port = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
 $listener.Stop()
-$previewManifest = @{
-    channel = "preview"
-    base_version = "0.0.0"
-    build_id = "installer-test"
-    assets = @{
-        "windows-x86_64" = @{
-            url = "http://127.0.0.1:$port/herdr-windows-x86_64.zip"
-            sha256 = $hash
-            format = "zip"
+function New-StableManifest {
+    param([string]$Version)
+    return @{
+        version = $Version
+        assets = @{
+            "windows-x86_64" = "http://127.0.0.1:$port/h0x-windows-x86_64.zip"
         }
-    }
-} | ConvertTo-Json -Depth 5
-$legacyStableManifest = @{
-    version = "0.0.0"
-    assets = @{}
-} | ConvertTo-Json -Depth 5
-$stableManifest = @{
-    version = "0.0.1"
-    assets = @{
-        "windows-x86_64" = "http://127.0.0.1:$port/herdr-windows-x86_64.zip"
-    }
-    sha256 = @{
-        "windows-x86_64" = $hash
-    }
-} | ConvertTo-Json -Depth 5
-$previewManifestPath = Join-Path $webRoot "preview.json"
+        sha256 = @{
+            "windows-x86_64" = $hash
+        }
+    } | ConvertTo-Json -Depth 5
+}
+$stableManifest = New-StableManifest -Version "0.0.1"
+$updatedManifest = New-StableManifest -Version "0.0.2"
 $stableManifestPath = Join-Path $webRoot "latest.json"
-$customPreviewManifestPath = Join-Path $webRoot "candidate.json"
-$customPreviewManifest = $previewManifest | ConvertFrom-Json
-$customPreviewManifest.PSObject.Properties.Remove("channel")
-$previewManifest | Out-File -LiteralPath $previewManifestPath -Encoding utf8
-$legacyStableManifest | Out-File -LiteralPath $stableManifestPath -Encoding utf8
-$customPreviewManifest | ConvertTo-Json -Depth 5 | Out-File -LiteralPath $customPreviewManifestPath -Encoding utf8
+$stableManifest | Out-File -LiteralPath $stableManifestPath -Encoding utf8
 
 $server = $null
-$oldHerdrHome = $env:HERDR_HOME
-$oldInstallerUrl = $env:HERDR_INSTALLER_URL
+$oldH0xHome = $env:H0X_HOME
+$oldInstallerUrl = $env:H0X_INSTALLER_URL
 $oldProcessPath = $env:Path
 $registryOptions = [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
 $realUserEnvironmentKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Environment")
@@ -176,8 +159,7 @@ $realUserPathKind = if ($realUserPathExisted) {
 $realUserEnvironmentKey.Dispose()
 try {
     $server = Start-Process python -ArgumentList @("-m", "http.server", "$port", "--bind", "127.0.0.1", "--directory", $webRoot) -PassThru -WindowStyle Hidden
-    $env:HERDR_HOME = Join-Path $root "unused\..\home"
-    $previewManifestUrl = "http://127.0.0.1:$port/preview.json"
+    $env:H0X_HOME = Join-Path $root "unused\..\home"
     $stableManifestUrl = "http://127.0.0.1:$port/latest.json"
     for ($attempt = 0; $attempt -lt 20; $attempt++) {
         try {
@@ -192,8 +174,8 @@ try {
     $freshStableHome = Join-Path $root "fresh-stable-home"
     $freshStableBin = Join-Path $root "fresh-stable-bin"
     $stableManifest | Out-File -LiteralPath $stableManifestPath -Encoding utf8
-    $env:HERDR_HOME = $freshStableHome
-    $env:HERDR_INSTALLER_URL = "http://127.0.0.1:$port/install.ps1"
+    $env:H0X_HOME = $freshStableHome
+    $env:H0X_INSTALLER_URL = "http://127.0.0.1:$port/install.ps1"
     $env:Path = $oldProcessPath
     & $bootstrapPath `
         -ManifestUrl $stableManifestUrl `
@@ -201,7 +183,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "CMD bootstrap failed with exit code $LASTEXITCODE"
     }
-    $env:HERDR_INSTALLER_URL = $oldInstallerUrl
+    $env:H0X_INSTALLER_URL = $oldInstallerUrl
     $freshStableRelease = Get-ChildItem -LiteralPath (Join-Path $freshStableHome "packages\standalone\releases") -Directory |
         Where-Object { $_.Name.StartsWith("0.0.1-") } |
         Select-Object -First 1
@@ -209,19 +191,17 @@ try {
         throw "fresh installer did not default to the stable Windows package"
     }
 
-    $legacyStableManifest | Out-File -LiteralPath $stableManifestPath -Encoding utf8
-    $env:HERDR_HOME = Join-Path $root "unused\..\home"
+    $env:H0X_HOME = Join-Path $root "unused\..\home"
     $env:Path = $oldProcessPath
     & $installerPath `
         -ManifestUrl $stableManifestUrl `
-        -InstallDir $installDir `
-        -ExpectedBuildId "installer-test"
+        -InstallDir $installDir
 
-    # Keep the existing positional web-installer contract, including Retain in slot five.
-    & $installerPath "preview" $previewManifestUrl $installDir "installer-test" 3
+    # Keep the existing positional web-installer contract, including Retain in slot four.
+    & $installerPath "stable" $stableManifestUrl $installDir 3
 
     $localInstallDir = Join-Path $root "local-bin"
-    $env:HERDR_HOME = Join-Path $root "local-home"
+    $env:H0X_HOME = Join-Path $root "local-home"
     $partialLocalModeRejected = $false
     try {
         & $installerPath `
@@ -240,14 +220,14 @@ try {
     $badLocalChecksumRejected = $false
     try {
         & $installerPath `
-            -ManifestUrl "$previewManifestUrl/unused" `
+            -ManifestUrl "$stableManifestUrl/unused" `
             -InstallDir $localInstallDir `
             -LocalPackagePath $archive `
             -LocalPackageFormat "zip" `
-            -LocalPackageIdentity "0.0.0-preview.local-package" `
+            -LocalPackageIdentity "0.0.0-local-package" `
             -LocalPackageSha256 ("0" * 64)
     } catch {
-        if ($_.Exception.Message -notlike "Downloaded Herdr checksum did not match.*") {
+        if ($_.Exception.Message -notlike "Downloaded HyperOx checksum did not match.*") {
             throw
         }
         $badLocalChecksumRejected = $true
@@ -257,19 +237,19 @@ try {
     }
 
     & $installerPath `
-        -ManifestUrl "$previewManifestUrl/unused" `
+        -ManifestUrl "$stableManifestUrl/unused" `
         -InstallDir $localInstallDir `
         -LocalPackagePath $archive `
         -LocalPackageFormat "zip" `
-        -LocalPackageIdentity "0.0.0-preview.local-package" `
+        -LocalPackageIdentity "0.0.0-local-package" `
         -LocalPackageSha256 $hash
-    if (-not (Test-Path -LiteralPath (Join-Path $localInstallDir "herdr.exe") -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $localInstallDir "h0x.exe") -PathType Leaf)) {
         throw "installer did not activate the verified local package"
     }
-    $env:HERDR_HOME = $herdrHome
+    $env:H0X_HOME = $h0xHome
 
     $required = @(
-        "herdr.exe",
+        "h0x.exe",
         "conpty\herdr-conpty.json",
         "conpty\conpty.dll",
         "conpty\x64\OpenConsole.exe",
@@ -283,7 +263,7 @@ try {
         }
     }
 
-    $releasesDir = Join-Path $herdrHome "packages\standalone\releases"
+    $releasesDir = Join-Path $h0xHome "packages\standalone\releases"
     $releaseDir = Get-ChildItem -LiteralPath $releasesDir -Directory |
         Where-Object { -not $_.Name.StartsWith(".staging.") } |
         Select-Object -First 1
@@ -291,50 +271,27 @@ try {
         throw "installer did not create a versioned release"
     }
 
-    $pathWithoutHerdr = @(
+    $pathWithoutH0x = @(
         $env:Path.Split(";", [System.StringSplitOptions]::RemoveEmptyEntries) |
             Where-Object {
-                -not (Test-Path -LiteralPath (Join-Path $_ "herdr.exe") -PathType Leaf) -and
-                -not (Test-Path -LiteralPath (Join-Path $_ "herdr.cmd") -PathType Leaf)
+                -not (Test-Path -LiteralPath (Join-Path $_ "h0x.exe") -PathType Leaf) -and
+                -not (Test-Path -LiteralPath (Join-Path $_ "h0x.cmd") -PathType Leaf)
             }
     ) -join ";"
-    $env:Path = $pathWithoutHerdr
-    if ($null -ne (Get-Command herdr -ErrorAction SilentlyContinue)) {
-        throw "test PATH still resolves Herdr before current-junction migration discovery"
+    $env:Path = $pathWithoutH0x
+    if ($null -ne (Get-Command h0x -ErrorAction SilentlyContinue)) {
+        throw "test PATH still resolves HyperOx before current-junction migration discovery"
     }
-    $oldConfigPath = $env:HERDR_CONFIG_PATH
-    try {
-        $env:HERDR_CONFIG_PATH = Join-Path $root "preview-config.toml"
-        "[update]`nchannel = `"preview`"" | Out-File -LiteralPath $env:HERDR_CONFIG_PATH -Encoding ascii
-        & $installerPath `
-            -ManifestUrl "http://127.0.0.1:$port/candidate.json" `
-            -InstallDir $installDir `
-            -ExpectedBuildId "installer-test"
-    } finally {
-        if ($null -eq $oldConfigPath) {
-            Remove-Item Env:HERDR_CONFIG_PATH -ErrorAction SilentlyContinue
-        } else {
-            $env:HERDR_CONFIG_PATH = $oldConfigPath
-        }
-    }
-    if ($null -eq (Get-ChildItem -LiteralPath $releasesDir -Directory |
-        Where-Object { $_.Name.StartsWith("0.0.0-preview.installer-test-") } |
-        Select-Object -First 1)) {
-        throw "installer did not discover the preview channel through the current junction"
-    }
-
     Remove-Item -LiteralPath (Join-Path $releaseDir.FullName "conpty\conpty.dll") -Force
 
-    $badManifest = $previewManifest | ConvertFrom-Json
-    $badManifest.assets."windows-x86_64".url = "http://127.0.0.1:$port/missing.zip"
-    $badManifest | ConvertTo-Json -Depth 5 | Out-File -LiteralPath $previewManifestPath -Encoding utf8
+    $badManifest = $stableManifest | ConvertFrom-Json
+    $badManifest.assets."windows-x86_64" = "http://127.0.0.1:$port/missing.zip"
+    $badManifest | ConvertTo-Json -Depth 5 | Out-File -LiteralPath $stableManifestPath -Encoding utf8
     $downloadFailed = $false
     try {
         & "$PSScriptRoot\..\distribution\install.ps1" `
-            -Channel preview `
-            -ManifestUrl $previewManifestUrl `
-            -InstallDir $installDir `
-            -ExpectedBuildId "installer-test"
+            -ManifestUrl $stableManifestUrl `
+            -InstallDir $installDir
     } catch {
         if ($_.Exception.Message -notmatch "(?i)(404|not found)") {
             throw
@@ -344,18 +301,18 @@ try {
     if (-not $downloadFailed) {
         throw "installer repair unexpectedly accepted a missing archive"
     }
-    if (-not (Test-Path -LiteralPath (Join-Path $releaseDir.FullName "herdr.exe") -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $releaseDir.FullName "h0x.exe") -PathType Leaf)) {
         throw "failed repair removed the existing release"
     }
 
-    $previewManifest | Out-File -LiteralPath $previewManifestPath -Encoding utf8
+    $stableManifest | Out-File -LiteralPath $stableManifestPath -Encoding utf8
     $stagedConpty = Join-Path $releasesDir ".staging.$($releaseDir.Name).$PID\conpty\conpty.dll"
 
     $transientLockState = @{ Handle = $null; Acquired = $false; Released = $false }
     $transientLockTimer = New-Object System.Timers.Timer
     $transientLockTimer.Interval = 300
     $transientLockTimer.AutoReset = $false
-    $transientLockSource = "HerdrTransientInstallerLock-$PID"
+    $transientLockSource = "H0xTransientInstallerLock-$PID"
     $transientLockRelease = Register-ObjectEvent `
         -InputObject $transientLockTimer `
         -EventName Elapsed `
@@ -384,10 +341,8 @@ try {
     $transientLockBreakpoint = Set-PSBreakpoint -Script $installerPath -Variable "backupDir" -Mode Write -Action $lockStagedFileTransiently
     try {
         & $installerPath `
-            -Channel preview `
-            -ManifestUrl $previewManifestUrl `
-            -InstallDir $installDir `
-            -ExpectedBuildId "installer-test"
+            -ManifestUrl $stableManifestUrl `
+            -InstallDir $installDir
         if (-not $transientLockState.Acquired) {
             throw "installer did not acquire the transient staged-file lock"
         }
@@ -425,10 +380,8 @@ try {
         $swapFailed = $false
         try {
             & $installerPath `
-                -Channel preview `
-                -ManifestUrl $previewManifestUrl `
-                -InstallDir $installDir `
-                -ExpectedBuildId "installer-test"
+                -ManifestUrl $stableManifestUrl `
+                -InstallDir $installDir
         } catch {
             $swapFailed = $true
         }
@@ -438,14 +391,14 @@ try {
         if (-not $swapFailed) {
             throw "installer unexpectedly activated a release with a locked staged file"
         }
-        if (-not (Test-Path -LiteralPath (Join-Path $releaseDir.FullName "herdr.exe") -PathType Leaf)) {
+        if (-not (Test-Path -LiteralPath (Join-Path $releaseDir.FullName "h0x.exe") -PathType Leaf)) {
             throw "failed activation did not restore the prior release"
         }
         if (@(Get-ChildItem -LiteralPath $releasesDir -Force -Directory -Filter ".backup.$($releaseDir.Name).*").Count -ne 0) {
             throw "failed activation stranded a release backup"
         }
-        foreach ($junction in @($installDir, (Join-Path $herdrHome "packages\standalone\current"))) {
-            if (-not (Test-Path -LiteralPath (Join-Path $junction "herdr.exe") -PathType Leaf)) {
+        foreach ($junction in @($installDir, (Join-Path $h0xHome "packages\standalone\current"))) {
+            if (-not (Test-Path -LiteralPath (Join-Path $junction "h0x.exe") -PathType Leaf)) {
                 throw "failed activation left an invalid installer junction at $junction"
             }
         }
@@ -457,10 +410,8 @@ try {
     }
 
     & "$PSScriptRoot\..\distribution\install.ps1" `
-        -Channel preview `
-        -ManifestUrl $previewManifestUrl `
-        -InstallDir $installDir `
-        -ExpectedBuildId "installer-test"
+        -ManifestUrl $stableManifestUrl `
+        -InstallDir $installDir
     if (-not (Test-Path -LiteralPath (Join-Path $installDir "conpty\conpty.dll") -PathType Leaf)) {
         throw "installer did not repair an incomplete release"
     }
@@ -470,33 +421,14 @@ try {
     Move-Item -LiteralPath $x64HostDir -Destination $junctionTarget
     New-Item -ItemType Junction -Path $x64HostDir -Target $junctionTarget | Out-Null
     & "$PSScriptRoot\..\distribution\install.ps1" `
-        -Channel preview `
-        -ManifestUrl $previewManifestUrl `
-        -InstallDir $installDir `
-        -ExpectedBuildId "installer-test"
+        -ManifestUrl $stableManifestUrl `
+        -InstallDir $installDir
     $repairedHostDir = Get-Item -LiteralPath (Join-Path $installDir "conpty\x64") -Force
     if ($repairedHostDir.Attributes -band [IO.FileAttributes]::ReparsePoint) {
         throw "installer accepted a reparse-point ConPTY directory"
     }
 
-    $rejected = $false
-    try {
-        & "$PSScriptRoot\..\distribution\install.ps1" `
-            -Channel preview `
-            -ManifestUrl $previewManifestUrl `
-            -InstallDir $installDir `
-            -ExpectedBuildId "different-build"
-    } catch {
-        if ($_.Exception.Message -notlike "Preview manifest changed while updating.*") {
-            throw
-        }
-        $rejected = $true
-    }
-    if (-not $rejected) {
-        throw "installer accepted a manifest that did not match the updater-selected build"
-    }
-
-    $currentDir = Join-Path $herdrHome "packages\standalone\current"
+    $currentDir = Join-Path $h0xHome "packages\standalone\current"
     $unrelatedPathOne = Join-Path $env:SystemRoot "System32"
     $unrelatedPathTwo = Join-Path $root "unrelated-two"
     New-Item -ItemType Directory -Force -Path $unrelatedPathTwo | Out-Null
@@ -512,20 +444,20 @@ try {
     }
     $env:Path = $pathBeforeStable
 
-    $stableManifest | Out-File -LiteralPath $stableManifestPath -Encoding utf8
+    $updatedManifest | Out-File -LiteralPath $stableManifestPath -Encoding utf8
     & "$PSScriptRoot\..\distribution\install.ps1" `
         -Channel stable `
         -ManifestUrl $stableManifestUrl `
         -InstallDir $installDir `
         -Retain 1
-    $stableReleaseDir = Get-ChildItem -LiteralPath (Join-Path $herdrHome "packages\standalone\releases") -Directory |
-        Where-Object { $_.Name.StartsWith("0.0.1-") } |
+    $stableReleaseDir = Get-ChildItem -LiteralPath (Join-Path $h0xHome "packages\standalone\releases") -Directory |
+        Where-Object { $_.Name.StartsWith("0.0.2-") } |
         Select-Object -First 1
     if ($null -eq $stableReleaseDir) {
-        throw "installer did not install the stable Windows package"
+        throw "installer did not install the updated stable Windows package"
     }
     if (Test-Path -LiteralPath $releaseDir.FullName) {
-        throw "installer did not prune the old concrete preview release"
+        throw "installer did not prune the old concrete release"
     }
     $expectedPath = "$($stableReleaseDir.FullName);$unrelatedPathOne;$nestedReleasePath;$similarReleasePath;$unrelatedPathTwo"
     $realUserEnvironmentKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment")
@@ -545,14 +477,14 @@ try {
         -not $pathDirectory.FullName.Equals($stableReleaseDir.FullName, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "installer PATH does not start with the active concrete release directory"
     }
-    $resolvedHerdr = Get-Command herdr -CommandType Application -ErrorAction Stop
-    if (-not $resolvedHerdr.Source.Equals(
-        (Join-Path $stableReleaseDir.FullName "herdr.exe"),
+    $resolvedH0x = Get-Command h0x -CommandType Application -ErrorAction Stop
+    if (-not $resolvedH0x.Source.Equals(
+        (Join-Path $stableReleaseDir.FullName "h0x.exe"),
         [System.StringComparison]::OrdinalIgnoreCase
     )) {
         throw "installed command does not resolve through the active concrete release"
     }
-    & herdr --version *> $null
+    & h0x --version *> $null
     if ($LASTEXITCODE -ne 0) {
         throw "installed command failed from the concrete release PATH entry"
     }
@@ -568,59 +500,9 @@ try {
             throw "stable installer did not activate required file $relative"
         }
     }
-
-    $fakeBin = Join-Path $root "fake-existing"
-    $fakeInvocationMarker = Join-Path $root "fake-existing-invoked"
-    New-Item -ItemType Directory -Force -Path $fakeBin | Out-Null
-    @"
-@echo off
-echo invoked>"$fakeInvocationMarker"
-if "%1"=="channel" if "%2"=="show" (
-  echo preview
-  exit /b 0
-)
-exit /b 1
-"@ | Out-File -LiteralPath (Join-Path $fakeBin "herdr.cmd") -Encoding ascii
-
-    $preserveHome = Join-Path $root "preserve-home"
-    $preserveBin = Join-Path $root "preserve-bin"
-    $env:HERDR_HOME = $preserveHome
-    $env:Path = "$fakeBin;$oldProcessPath"
-    $unrecognizedCommandRejected = $false
-    try {
-        & "$PSScriptRoot\..\distribution\install.ps1" `
-            -ManifestUrl "http://127.0.0.1:$port/candidate.json" `
-            -InstallDir $preserveBin `
-            -ExpectedBuildId "installer-test"
-    } catch {
-        if ($_.Exception.Message -notlike "Refusing to run unrecognized Herdr command*") {
-            throw
-        }
-        $unrecognizedCommandRejected = $true
-    }
-    if (-not $unrecognizedCommandRejected) {
-        throw "installer accepted implicit channel detection through an unrecognized command"
-    }
-    if (Test-Path -LiteralPath $fakeInvocationMarker) {
-        throw "installer invoked an unrecognized command during implicit channel detection"
-    }
-
-    & "$PSScriptRoot\..\distribution\install.ps1" `
-        -Channel stable `
-        -ManifestUrl $stableManifestUrl `
-        -InstallDir $preserveBin
-    $explicitStable = Get-ChildItem -LiteralPath (Join-Path $preserveHome "packages\standalone\releases") -Directory |
-        Where-Object { $_.Name.StartsWith("0.0.1-") } |
-        Select-Object -First 1
-    if ($null -eq $explicitStable) {
-        throw "explicit stable channel did not install past the unrecognized command"
-    }
-    if (Test-Path -LiteralPath $fakeInvocationMarker) {
-        throw "installer invoked an unrecognized command despite an explicit channel"
-    }
 } finally {
-    $env:HERDR_HOME = $oldHerdrHome
-    $env:HERDR_INSTALLER_URL = $oldInstallerUrl
+    $env:H0X_HOME = $oldH0xHome
+    $env:H0X_INSTALLER_URL = $oldInstallerUrl
     $env:Path = $oldProcessPath
     if ($null -ne $server -and -not $server.HasExited) {
         Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue

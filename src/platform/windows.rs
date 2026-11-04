@@ -275,7 +275,7 @@ pub(crate) fn local_server_connection_error(error: std::io::Error) -> std::io::E
         error.kind(),
         format!(
             "For an elevated server, use an administrator terminal. Sharing with ordinary \
-             clients requires stopping it there and restarting its `herdr server` command \
+             clients requires stopping it there and restarting its `h0x server` command \
              with --allow-unelevated-clients (closes panes). {error}"
         ),
     )
@@ -658,7 +658,7 @@ const FOREGROUND_PROCESS_SNAPSHOT_CACHE_TTL: Duration = Duration::from_millis(25
 const FOREGROUND_SELECTION_RECHECK: Duration = Duration::from_secs(5);
 const FOREGROUND_SELECTION_CACHE_CAPACITY: usize = 1_024;
 const FOREGROUND_SELECTION_CACHE_RETENTION: Duration = Duration::from_secs(60);
-const PANE_RUNTIME_MARKER_ENV_VAR: &str = "HERDR_PANE_RUNTIME_ID";
+const PANE_RUNTIME_MARKER_ENV_VAR: &str = "H0X_PANE_RUNTIME_ID";
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -866,7 +866,7 @@ pub(crate) fn create_remote_ssh_config_dir(_control_socket_name: &str) -> std::i
     }
     Err(std::io::Error::new(
         std::io::ErrorKind::AlreadyExists,
-        "failed to create private herdr ssh config directory",
+        "failed to create private h0x ssh config directory",
     ))
 }
 
@@ -3940,7 +3940,7 @@ mod tests {
         let helper = base.join("pi.cmd");
         fs::write(
             &helper,
-            "@echo off\r\n>\"%HERDR_ARGV_CAPTURE%\" (\r\necho(%~1\r\necho(%~2\r\necho(%~3\r\necho(%~4\r\necho(%~5\r\necho(%~6\r\necho(%~7\r\n)\r\n",
+            "@echo off\r\n>\"%H0X_ARGV_CAPTURE%\" (\r\necho(%~1\r\necho(%~2\r\necho(%~3\r\necho(%~4\r\necho(%~5\r\necho(%~6\r\necho(%~7\r\n)\r\n",
         )
         .unwrap();
         let argv = vec![
@@ -3967,7 +3967,7 @@ mod tests {
             };
             process
                 .env("PATH", &path)
-                .env("HERDR_ARGV_CAPTURE", capture)
+                .env("H0X_ARGV_CAPTURE", capture)
                 .env("PSExecutionPolicyPreference", "Bypass")
                 .status()
                 .unwrap()
@@ -3998,7 +3998,7 @@ mod tests {
         fs::remove_file(helper).unwrap();
         fs::write(
             base.join("pi.ps1"),
-            "Set-Content -LiteralPath $env:HERDR_ARGV_CAPTURE -Value @(\"$($args[0])\", \"$($args[1])\", \"$($args[2])\", \"$($args[3])\", \"$($args[4])\", \"$($args[5])\", \"$($args[6])\")\r\n",
+            "Set-Content -LiteralPath $env:H0X_ARGV_CAPTURE -Value @(\"$($args[0])\", \"$($args[1])\", \"$($args[2])\", \"$($args[3])\", \"$($args[4])\", \"$($args[5])\", \"$($args[6])\")\r\n",
         )
         .unwrap();
         for shell in ["powershell.exe", "cmd.exe"] {
@@ -4015,13 +4015,13 @@ mod tests {
         let _ = fs::remove_dir_all(base);
     }
 
-    const CONSOLE_TEST_CHILD_ENV: &str = "HERDR_TEST_CONSOLE_CHILD_MODE";
-    const CONSOLE_TEST_PARENT_PID_ENV: &str = "HERDR_TEST_CONSOLE_PARENT_PID";
-    const WMI_DAEMON_TEST_CHILD_ENV: &str = "HERDR_TEST_WMI_DAEMON_CHILD";
+    const CONSOLE_TEST_CHILD_ENV: &str = "H0X_TEST_CONSOLE_CHILD_MODE";
+    const CONSOLE_TEST_PARENT_PID_ENV: &str = "H0X_TEST_CONSOLE_PARENT_PID";
+    const WMI_DAEMON_TEST_CHILD_ENV: &str = "H0X_TEST_WMI_DAEMON_CHILD";
 
     #[test]
     fn windows_daemon_readiness_checks_job_limits_and_console() {
-        const CHILD_ENV: &str = "HERDR_TEST_DAEMON_READINESS_CHILD";
+        const CHILD_ENV: &str = "H0X_TEST_DAEMON_READINESS_CHILD";
         if std::env::var_os(CHILD_ENV).is_some() {
             use super::*;
 
@@ -5516,7 +5516,7 @@ mod tests {
 
     #[test]
     fn process_environment_variable_parser_reads_case_insensitive_marker() {
-        let environment: Vec<u16> = "PATH=C:\\Windows\0herdr_pane_runtime_id=pane-a\0\0"
+        let environment: Vec<u16> = "PATH=C:\\Windows\0h0x_pane_runtime_id=pane-a\0\0"
             .encode_utf16()
             .collect();
 
