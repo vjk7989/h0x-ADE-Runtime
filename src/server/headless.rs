@@ -516,6 +516,11 @@ impl HeadlessServer {
             }
 
             self.poll_pending_alt_screen_reads(now);
+            if self.app.expire_api_confirmations(now) {
+                needs_render = true;
+                needs_full_render = true;
+                needs_graphics_render = false;
+            }
             if self.process_deferred_alt_screen_reads() {
                 needs_render = true;
                 needs_full_render = true;
@@ -2336,6 +2341,20 @@ impl HeadlessServer {
                 client.host_mouse_capture_active = None;
                 true
             }
+            ServerEvent::ClientShellApiConfirmation { client_id, answer } => {
+                if !self
+                    .clients
+                    .get(&client_id)
+                    .is_some_and(ClientConnection::is_active_shell_client)
+                {
+                    return false;
+                }
+                // Allowed requests run as the user's own client request.
+                if let Some(msg) = self.app.answer_api_confirmation(answer.id, answer.allow) {
+                    self.handle_api_request_with_shutdown_check_inner(msg, false, true);
+                }
+                true
+            }
             ServerEvent::ClientShellPresentationSync { client_id, token } => {
                 let Some(client) = self.clients.get_mut(&client_id) else {
                     return false;
@@ -2917,6 +2936,27 @@ impl HeadlessServer {
             // During shutdown, respond with server_unavailable.
             Self::reject_api_request_for_shutdown(msg);
             return false;
+        }
+
+        // Socket callers include every program running in a pane, so installs of hooks or
+        // plugin code wait for the user's answer in an attached client (ADR-049).
+        if !client_local {
+            if let Some(prompt) = self.app.api_confirmation_prompt(&msg.request) {
+                let response = match prompt {
+                    Ok(prompt) if latest_shell_client(&self.clients).is_some() => {
+                        self.app.queue_api_confirmation(prompt, msg, Instant::now());
+                        return true;
+                    }
+                    Ok(_) => crate::server::client_commands::error_response(
+                        msg.request.id.clone(),
+                        "needs_confirmation",
+                        "needs confirmation in an attached h0x client",
+                    ),
+                    Err(response) => response,
+                };
+                let _ = msg.respond_to.send(response);
+                return false;
+            }
         }
 
         let frozen_alt_screen_read = match self.alt_screen_read_conflict(&msg.request) {

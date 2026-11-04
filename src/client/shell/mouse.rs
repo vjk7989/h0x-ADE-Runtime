@@ -1718,6 +1718,13 @@ impl ClientShellState {
             if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
                 return;
             }
+            if let Some(ClientShellOverlay::ApiConfirmation(_)) = self.overlay {
+                let allow = super::contains(self.hits.overlay_primary, point);
+                if allow || super::contains(self.hits.overlay_cancel, point) {
+                    self.answer_api_confirmation(allow, outcome);
+                }
+                return;
+            }
             if super::contains(self.hits.overlay_primary, point) {
                 match self.overlay.as_ref() {
                     Some(ClientShellOverlay::Rename(_)) => self.save_rename_overlay(outcome),

@@ -43,10 +43,22 @@ pub(super) fn run_plugin_command(args: &[String]) -> std::io::Result<i32> {
         Err(ParseError::Clap(error)) => return super::print_clap_error(&error),
     };
     match method {
+        Method::PluginLink(params) if runs_in_process() => {
+            super::print_response(&offline_plugin_link_response(&params)?)
+        }
+        Method::PluginEnable(params) if runs_in_process() => {
+            super::print_response(&offline_plugin_enable_response(&params.plugin_id)?)
+        }
         Method::PluginLink(params) => plugin_link(params),
         Method::PluginList(params) => plugin_list(params, json),
         method => print_plugin_response(method),
     }
+}
+
+/// Link and enable run here, without the API confirmation (ADR-049), when the user runs the
+/// CLI outside any pane against the local machine. Inside a pane they go through the API.
+fn runs_in_process() -> bool {
+    !super::target::is_remote() && super::target::caller_pane_id().is_none()
 }
 
 fn plugin_link(params: PluginLinkParams) -> std::io::Result<i32> {
@@ -859,6 +871,25 @@ fn offline_plugin_link_response(params: &PluginLinkParams) -> std::io::Result<se
     .map_err(std::io::Error::other)
 }
 
+fn offline_plugin_enable_response(plugin_id: &str) -> std::io::Result<serde_json::Value> {
+    let plugin_id = plugin_id.trim();
+    let (plugin, _) = crate::persist::plugin_registry::update(|plugins| {
+        let plugin = plugins
+            .iter_mut()
+            .find(|plugin| plugin.plugin_id == plugin_id)?;
+        plugin.enabled = true;
+        Some(plugin.clone())
+    })?;
+    let Some(plugin) = plugin else {
+        return Err(io::Error::other(format!("plugin {plugin_id} not found")));
+    };
+    serde_json::to_value(SuccessResponse {
+        id: "cli:plugin".into(),
+        result: ResponseResult::PluginEnabled { plugin },
+    })
+    .map_err(std::io::Error::other)
+}
+
 fn offline_plugin_list_response(params: &PluginListParams) -> std::io::Result<serde_json::Value> {
     let entries = crate::persist::plugin_registry::load();
     let mut plugins =
@@ -1626,6 +1657,57 @@ mod tests {
         current.manifest_path.push_str(".reinstalled");
         assert!(ensure_update_target_unchanged(&expected, Some(&current)).is_err());
         assert!(ensure_update_target_unchanged(&expected, None).is_err());
+    }
+
+    #[test]
+    fn in_process_link_and_enable_update_the_registry_without_the_api() {
+        let plugin_id = unique_plugin_id("in-process");
+        let root = std::env::temp_dir().join(&plugin_id);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("h0x-plugin.toml"),
+            format!(
+                "id = \"{plugin_id}\"
+name = \"In Process\"
+version = \"0.1.0\"
+min_h0x_version = \"0.6.10\"
+platforms = [\"linux\", \"macos\", \"windows\"]
+"
+            ),
+        )
+        .unwrap();
+
+        let linked = offline_plugin_link_response(&PluginLinkParams {
+            path: root.display().to_string(),
+            enabled: false,
+            source: None,
+        })
+        .unwrap();
+        assert_eq!(linked["result"]["type"], "plugin_linked");
+        assert_eq!(
+            registry_plugin_info(&plugin_id).map(|p| p.enabled),
+            Some(false)
+        );
+
+        let enabled = offline_plugin_enable_response(&format!(" {plugin_id} ")).unwrap();
+        assert_eq!(enabled["result"]["type"], "plugin_enabled");
+        assert_eq!(enabled["result"]["plugin"]["plugin_id"], plugin_id.as_str());
+        assert_eq!(
+            registry_plugin_info(&plugin_id).map(|p| p.enabled),
+            Some(true)
+        );
+
+        let missing = offline_plugin_enable_response(&format!("{plugin_id}.missing")).unwrap_err();
+        assert!(missing.to_string().contains("not found"), "{missing}");
+        assert!(offline_plugin_enable_response("").is_err());
+
+        crate::persist::plugin_registry::update(|plugins| {
+            plugins.retain(|plugin| plugin.plugin_id != plugin_id)
+        })
+        .unwrap();
+        let _ = std::fs::remove_dir_all(crate::plugin_paths::plugin_config_dir(&plugin_id));
+        let _ = std::fs::remove_dir_all(crate::plugin_paths::plugin_state_dir(&plugin_id));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
