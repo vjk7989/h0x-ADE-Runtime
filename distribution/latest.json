@@ -1,0 +1,42 @@
+{
+  "note": "template: checksums are written by .github/workflows/release.yml at release time",
+  "version": "0.9.5",
+  "protocol": 22,
+  "endpoint_generation": 1,
+  "notes": "HyperOx v0.9.5: first release of the h0x runtime (rebranded fork of the upstream multiplexer at v0.9.5).\n\nSee https://github.com/vjk7989/h0x-ADE-Runtime/releases/tag/v0.9.5",
+  "assets": {
+    "linux-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.5/h0x-linux-x86_64",
+    "linux-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.5/h0x-linux-aarch64",
+    "macos-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.5/h0x-macos-x86_64",
+    "macos-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.5/h0x-macos-aarch64",
+    "windows-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.5/h0x-windows-x86_64.zip"
+  },
+  "sha256": {
+    "linux-x86_64": "0000000000000000000000000000000000000000000000000000000000000000",
+    "linux-aarch64": "0000000000000000000000000000000000000000000000000000000000000000",
+    "macos-x86_64": "0000000000000000000000000000000000000000000000000000000000000000",
+    "macos-aarch64": "0000000000000000000000000000000000000000000000000000000000000000",
+    "windows-x86_64": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "releases": {
+    "0.9.5": {
+      "notes": "HyperOx v0.9.5: first release of the h0x runtime (rebranded fork of the upstream multiplexer at v0.9.5).\n\nSee https://github.com/vjk7989/h0x-ADE-Runtime/releases/tag/v0.9.5",
+      "protocol": 22,
+      "endpoint_generation": 1,
+      "assets": {
+        "linux-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.5/h0x-linux-x86_64",
+        "linux-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.5/h0x-linux-aarch64",
+        "macos-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.5/h0x-macos-x86_64",
+        "macos-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.5/h0x-macos-aarch64",
+        "windows-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.5/h0x-windows-x86_64.zip"
+      },
+      "sha256": {
+        "linux-x86_64": "0000000000000000000000000000000000000000000000000000000000000000",
+        "linux-aarch64": "0000000000000000000000000000000000000000000000000000000000000000",
+        "macos-x86_64": "0000000000000000000000000000000000000000000000000000000000000000",
+        "macos-aarch64": "0000000000000000000000000000000000000000000000000000000000000000",
+        "windows-x86_64": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  }
+}

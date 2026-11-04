@@ -1,0 +1,130 @@
+---
+title: Integrations
+description: Install HyperOx integrations for Pi, Claude Code, Codex, OpenCode, and Hermes Agent.
+---
+
+HyperOx detects supported agents automatically. Integrations make that detection more precise by reporting semantic state directly to HyperOx.
+
+Use integrations when you want reliable `working`, `blocked`, `idle`, and `done` state from agent hooks or plugins.
+
+## Install integrations
+
+```bash
+h0x integration install pi
+h0x integration install claude
+h0x integration install codex
+h0x integration install opencode
+h0x integration install hermes
+```
+
+## Uninstall integrations
+
+```bash
+h0x integration uninstall pi
+h0x integration uninstall claude
+h0x integration uninstall codex
+h0x integration uninstall opencode
+h0x integration uninstall hermes
+```
+
+## How HyperOx uses integrations
+
+HyperOx combines three signals:
+
+| Signal | Purpose |
+| --- | --- |
+| Process detection | Identifies which pane owns which running process. |
+| Agent integration events | Reports semantic state such as `working` or `blocked`. |
+| Screen heuristics | Fills gaps when hooks are unavailable or incomplete. |
+
+Integrations enrich state reporting. They do not replace process detection.
+
+## Pi
+
+Install the Pi integration:
+
+```bash
+h0x integration install pi
+```
+
+HyperOx writes the bundled extension to:
+
+```text
+~/.pi/agent/extensions/h0x-agent-state.ts
+```
+
+If `PI_CODING_AGENT_DIR` is set, HyperOx writes to that agent directory instead.
+
+## Claude Code
+
+Install the Claude Code hook:
+
+```bash
+h0x integration install claude
+```
+
+The hook reports agent state to the local HyperOx socket when Claude Code exposes hook events.
+
+## Codex
+
+Install the Codex hook:
+
+```bash
+h0x integration install codex
+```
+
+Codex state is reported through the same local socket API used by other integrations.
+
+## OpenCode
+
+Install the OpenCode plugin:
+
+```bash
+h0x integration install opencode
+```
+
+The plugin reports semantic state while OpenCode runs inside a HyperOx pane.
+
+## Hermes Agent
+
+Install the Hermes Agent plugin:
+
+```bash
+h0x integration install hermes
+```
+
+HyperOx writes `~/.hermes/plugins/h0x-agent-state/` and enables `h0x-agent-state` in `~/.hermes/config.yaml`. Restart Hermes after installing so the plugin loads.
+
+The plugin reports lifecycle, tool, and approval state while Hermes runs inside a HyperOx pane. Native screen heuristics remain available when the plugin is not installed.
+
+## Custom status labels
+
+Integrations can report a short visual label without changing the semantic state.
+
+For example, an agent can remain semantically `working` while showing `indexing` in the UI.
+
+```bash
+h0x pane report-agent 1-1 \
+  --source custom:docs \
+  --agent docs-bot \
+  --state working \
+  --custom-status indexing
+```
+
+Custom status is visual-only. Waits, notifications, and workspace rollups still use the semantic state.
+
+## Debug integration state
+
+List known agents:
+
+```bash
+h0x agent list
+```
+
+Read a pane when you need to verify what HyperOx can see:
+
+```bash
+h0x pane read 1-1 --source recent --lines 50
+```
+
+If integration state looks wrong, first confirm the agent is running inside HyperOx and that the relevant hook or plugin was installed for the same user account.

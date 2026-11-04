@@ -1,0 +1,58 @@
+---
+title: Install HyperOx
+description: Install, update, and verify HyperOx on Linux and macOS.
+---
+
+HyperOx ships as a single binary for Linux and macOS.
+
+## Install
+
+Run the installer:
+
+```bash
+curl -fsSL https://github.com/vjk7989/h0x-ADE-Runtime/releases/latest/download/install.sh | sh
+```
+
+The installer downloads the right release binary for your platform and places it on your PATH.
+
+## Verify
+
+Start HyperOx:
+
+```bash
+h0x
+```
+
+If your shell cannot find `h0x`, restart the terminal or check that the install directory is on your PATH.
+
+## Update
+
+HyperOx checks for new releases and notifies you in the app. You can update manually:
+
+```bash
+h0x update
+```
+
+## Download manually
+
+You can also download a binary from [GitHub releases](https://github.com/vjk7989/h0x-ADE-Runtime/releases).
+
+Choose the asset that matches your system:
+
+| System | Asset |
+| --- | --- |
+| Linux x86_64 | `h0x-linux-x86_64` |
+| Linux aarch64 | `h0x-linux-aarch64` |
+| macOS Intel | `h0x-macos-x86_64` |
+| macOS Apple silicon | `h0x-macos-aarch64` |
+
+Make it executable and move it somewhere on your PATH.
+
+```bash
+chmod +x h0x-linux-x86_64
+mv h0x-linux-x86_64 ~/.local/bin/h0x
+```
+
+## Requirements
+
+HyperOx supports Linux and macOS. Native Windows support is not available yet; use HyperOx inside WSL for now.
