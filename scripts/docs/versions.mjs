@@ -119,9 +119,9 @@ export async function backfillVersions() {
   });
 }
 
-function tagExists(tag) {
+function refExists(ref) {
   try {
-    git(['rev-parse', '--verify', '--quiet', `refs/tags/${tag}`]);
+    git(['rev-parse', '--verify', '--quiet', ref]);
     return true;
   } catch {
     return false;
@@ -165,9 +165,10 @@ export async function checkVersions() {
       if (!/^[0-9a-f]{40}$/.test(entry.commit)) {
         throw new Error(`docs version ${entry.version} has invalid commit ${entry.commit}`);
       }
-      if (!tagExists(entry.tag)) {
+      if (!refExists(`refs/tags/${entry.tag}`) || !refExists(`${entry.commit}^{commit}`)) {
+        // Snapshots taken before this repository's history began record commits it does not contain.
         process.stdout.write(
-          `docs version ${entry.version}: tag ${entry.tag} is not in this repository; skipping its commit provenance check\n`,
+          `docs version ${entry.version}: tag ${entry.tag} or commit ${entry.commit} is not in this repository; skipping its commit provenance check\n`,
         );
       } else {
         const taggedCommit = resolveCommit(git, entry.tag);
