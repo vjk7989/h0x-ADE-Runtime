@@ -1,0 +1,211 @@
+---
+title: CLI reference
+description: HyperOx commands for sessions, workspaces, tabs, panes, agents, waits, integrations, and status.
+---
+
+HyperOx’s CLI talks to the running server over the same local socket API used by integrations and agents.
+
+Most commands print JSON responses. Use them from scripts when you want deterministic automation.
+
+## Launch and status
+
+```bash
+h0x                         # launch or attach to the default session
+h0x --session work          # launch or attach to a named session
+h0x --remote workbox        # attach through SSH, using local keybindings
+h0x --remote workbox --remote-keybindings server
+h0x --no-session            # single-process escape hatch
+h0x --default-config        # print default config
+h0x update                  # download and install the latest version
+h0x --version               # print version
+```
+
+Status commands:
+
+```bash
+h0x status
+h0x status server
+h0x status client
+```
+
+## Server
+
+```bash
+h0x server
+h0x server stop
+h0x server reload-config
+```
+
+`h0x server` runs the headless server explicitly. Use it for supervised or service-style setups. `reload-config` applies reloadable settings without restarting panes.
+
+## Sessions
+
+```bash
+h0x session list [--json]
+h0x session attach <name>
+h0x session stop <name> [--json]
+h0x session delete <name> [--json]
+```
+
+Use `default` as the session name when you need to stop the default session explicitly.
+
+## Workspaces
+
+```bash
+h0x workspace list
+h0x workspace create [--cwd PATH] [--label TEXT] [--focus] [--no-focus]
+h0x workspace get <workspace_id>
+h0x workspace focus <workspace_id>
+h0x workspace rename <workspace_id> <label>
+h0x workspace close <workspace_id>
+```
+
+Create a workspace without stealing focus:
+
+```bash
+h0x workspace create --cwd ~/project --label api --no-focus
+```
+
+## Worktrees
+
+```bash
+h0x worktree list [--workspace ID | --cwd PATH] [--json]
+h0x worktree create [--workspace ID | --cwd PATH] [--branch NAME] [--base REF] [--path PATH] [--label TEXT] [--focus] [--no-focus] [--json]
+h0x worktree open [--workspace ID | --cwd PATH] (--path PATH | --branch NAME) [--label TEXT] [--focus] [--no-focus] [--json]
+h0x worktree remove --workspace ID [--force] [--json]
+```
+
+Worktrees are normal HyperOx workspaces with Git checkout provenance. `worktree create` creates a Git worktree checkout, opens it as a workspace, and groups it with the parent repo workspace. Without `--path`, HyperOx creates the checkout under `<worktrees.directory>/<repo>/<branch-slug>`.
+
+`workspace close` closes HyperOx state only. `worktree remove` is the explicit checkout deletion path; it runs `git worktree remove`, never deletes the branch, and requires `--force` when Git refuses a dirty checkout.
+
+## Tabs
+
+```bash
+h0x tab list [--workspace <workspace_id>]
+h0x tab create [--workspace <workspace_id>] [--cwd PATH] [--label TEXT] [--focus] [--no-focus]
+h0x tab get <tab_id>
+h0x tab focus <tab_id>
+h0x tab rename <tab_id> <label>
+h0x tab close <tab_id>
+```
+
+## Panes
+
+```bash
+h0x pane list [--workspace <workspace_id>]
+h0x pane get <pane_id>
+h0x pane rename <pane_id> <label>|--clear
+h0x pane split <pane_id> --direction right|down [--cwd PATH] [--focus] [--no-focus]
+h0x pane close <pane_id>
+```
+
+Read output:
+
+```bash
+h0x pane read <pane_id> [--source visible|recent|recent-unwrapped] [--lines N]
+h0x pane read <pane_id> --source visible --ansi
+h0x pane read <pane_id> --source recent-unwrapped --lines 120
+```
+
+Send input:
+
+```bash
+h0x pane send-text <pane_id> <text>
+h0x pane send-keys <pane_id> <key> [key ...]
+h0x pane run <pane_id> <command>
+```
+
+`pane run` submits text plus Enter atomically. Prefer it over `send-text` plus `send-keys Enter` for commands.
+
+Report agent state from custom hooks:
+
+```bash
+h0x pane report-agent <pane_id> \
+  --source ID \
+  --agent LABEL \
+  --state idle|working|blocked|unknown \
+  [--message TEXT] \
+  [--custom-status TEXT] \
+  [--seq N]
+```
+
+## Agents
+
+```bash
+h0x agent list
+h0x agent get <target>
+h0x agent read <target> [--source visible|recent|recent-unwrapped] [--lines N] [--format text|ansi] [--ansi]
+h0x agent send <target> <text>
+h0x agent rename <target> <name>|--clear
+h0x agent focus <target>
+h0x agent wait <target> --status <idle|working|blocked|unknown> [--timeout MS]
+h0x agent attach <target> [--takeover]
+h0x agent start <name> [--cwd PATH] [--workspace ID] [--tab ID] [--split right|down] [--focus|--no-focus] -- <argv...>
+```
+
+Agent targets can be terminal IDs, unique agent names, detected or reported agent labels, or legacy pane IDs. Names and labels are agent identities. Terminal IDs and legacy pane IDs are low-level escape hatches.
+
+`agent read` reads the resolved terminal stream. `agent send` writes literal text to that stream. `agent get`, `agent focus`, `agent wait`, and `agent attach` require the resolved terminal to have agent identity. `agent rename` can assign that identity.
+
+Use `pane send-text`, `pane send-keys`, `pane run`, and `terminal attach` for ordinary terminals, servers, tests, shells, or low-level terminal control. Use `pane run` when you want to submit a command with Enter.
+
+## Direct terminal attach
+
+```bash
+h0x terminal attach <terminal_id> [--takeover]
+```
+
+Detach from direct attach with `ctrl+b q`. Send literal `ctrl+b` with `ctrl+b ctrl+b`.
+
+## Waits
+
+Wait for output in a pane:
+
+```bash
+h0x wait output <pane_id> --match <text> [--source visible|recent|recent-unwrapped] [--lines N] [--timeout MS] [--regex] [--raw]
+```
+
+Wait for pane agent state:
+
+```bash
+h0x wait agent-status <pane_id> --status <idle|working|blocked|done|unknown> [--timeout MS]
+```
+
+Use `wait output` for normal commands and servers. Use `wait agent-status` for coding agents.
+
+## Integrations
+
+```bash
+h0x integration install pi
+h0x integration install omp
+h0x integration install claude
+h0x integration install codex
+h0x integration install opencode
+h0x integration install hermes
+h0x integration uninstall pi
+h0x integration uninstall omp
+h0x integration uninstall claude
+h0x integration uninstall codex
+h0x integration uninstall opencode
+h0x integration uninstall hermes
+h0x integration status [--outdated-only]
+```
+
+## Read sources
+
+| Source | Meaning |
+| --- | --- |
+| `visible` | Current rendered screen. Best for UI feedback loops. |
+| `recent` | Recent scrollback with terminal wrapping. |
+| `recent-unwrapped` | Recent scrollback without soft wrapping. Best for logs. |
+
+## Environment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `H0X_CONFIG_PATH` | Override the config file path. |
+| `H0X_SESSION` | Select a named session for CLI commands. |
+| `H0X_SOCKET_PATH` | Low-level socket path override. |
+| `H0X_LOG` | Set log filter, for example `H0X_LOG=h0x=debug`. |
+| `H0X_DISABLE_SOUND` | Disable sound playback even when sound notifications are enabled. |
