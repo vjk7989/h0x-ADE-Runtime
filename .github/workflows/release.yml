@@ -217,6 +217,24 @@ jobs:
           Path("dist").mkdir(exist_ok=True)
           Path("dist/latest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
+      # Every uploaded asset gets `<asset>.minisig`; `h0x update` refuses the
+      # manifest and the binary without the release key's signature.
+      - name: Sign assets
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y minisign
+          [ -n "$MINISIGN_SECRET_KEY" ] || { echo "MINISIGN_SECRET_KEY is not set" >&2; exit 1; }
+          (umask 077 && printf '%s\n' "$MINISIGN_SECRET_KEY" > "$RUNNER_TEMP/minisign.key")
+          # The key has no password; an empty line answers a prompt if one comes.
+          for f in h0x-*/h0x-* distribution/install.sh distribution/install.ps1 distribution/install.cmd dist/latest.json; do
+            printf '\n' | minisign -S -s "$RUNNER_TEMP/minisign.key" -m "$f"
+          done
+
+      - name: Delete the signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/minisign.key"
+
       - name: Create release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
@@ -230,5 +248,8 @@ jobs:
             h0x-windows-x86_64.zip/h0x-windows-x86_64.zip
             distribution/install.sh
             distribution/install.ps1
+            h0x-*/*.minisig
+            distribution/*.minisig
+            dist/*.minisig
             distribution/install.cmd
             dist/latest.json
