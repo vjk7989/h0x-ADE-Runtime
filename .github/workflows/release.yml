@@ -189,33 +189,19 @@ jobs:
             printf '%s\n' "$GITHUB_REF_NAME" > RELEASE_NOTES.md
           fi
 
-      # distribution/latest.json is committed with empty sha256 fields; fill them
-      # from the artifacts built above so the manifest is published with the release.
+      # distribution/latest.json is committed at the previous release (docs/versions
+      # must match it until the docs are published after the tag). Build this
+      # release's manifest from it: the tag's version, notes and asset URLs, the
+      # digests of the artifacts built above, and the older releases kept.
       - name: Generate latest.json with asset digests
-        shell: python
         run: |
-          import hashlib
-          import json
-          import os
-          from pathlib import Path
-
-          tag = os.environ["GITHUB_REF_NAME"]
-          version = tag.removeprefix("v")
-          repository = os.environ["GITHUB_REPOSITORY"]
-          manifest = json.loads(Path("distribution/latest.json").read_text(encoding="utf-8"))
-          if manifest["version"] != version:
-              raise SystemExit(f"error: distribution/latest.json is at v{manifest['version']}, expected v{version}")
-          digests = {}
-          for target, url in manifest["assets"].items():
-              name = url.rsplit("/", 1)[1]
-              expected = f"https://github.com/{repository}/releases/download/{tag}/{name}"
-              if url != expected:
-                  raise SystemExit(f"error: asset {target} points at {url}, expected {expected}")
-              digests[target] = hashlib.sha256(Path(name, name).read_bytes()).hexdigest()
-          manifest["sha256"] = digests
-          manifest["releases"][version]["sha256"] = digests
-          Path("dist").mkdir(exist_ok=True)
-          Path("dist/latest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+          mkdir -p dist
+          python3 scripts/changelog.py release-latest-json \
+            --version "${GITHUB_REF_NAME#v}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --notes RELEASE_NOTES.md \
+            --artifacts . \
+            --output dist/latest.json
 
       # Every uploaded asset gets `<asset>.minisig`; `h0x update` refuses the
       # manifest and the binary without the release key's signature.
