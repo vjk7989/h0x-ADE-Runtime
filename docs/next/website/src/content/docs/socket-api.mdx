@@ -111,6 +111,18 @@ Raw socket method names use dot notation:
 | Integrations | `integration.install`, `integration.uninstall` |
 | Plugins | `plugin.link`, `plugin.list`, `plugin.unlink`, `plugin.enable`, `plugin.disable`, `plugin.action.list`, `plugin.action.invoke`, `plugin.log.list`, `plugin.pane.open`, `plugin.pane.focus`, `plugin.pane.close` |
 
+### User confirmation for installs
+
+Any program that can reach the socket, including one running inside a pane, could otherwise install agent hooks or plugin code silently. So `integration.install`, `plugin.link` and `plugin.enable` sent through the socket API need the user's confirmation in an attached HyperOx client:
+
+1. The request stays pending; the response arrives only after the user answers. The attached client shows a modal naming the action ("Install the claude integration hooks", "Link plugin `<id>` from `<path>`", "Enable plugin `<id>`") with **Allow** and **Deny**.
+2. **Allow** runs the request and returns its normal result (or its normal error).
+3. **Deny** returns the error `denied_by_user` ("denied by user").
+4. No answer within 120 seconds returns the error `not_confirmed` ("not confirmed").
+5. With no attached client, for example a headless server, the request fails right away with `needs_confirmation` ("needs confirmation in an attached h0x client").
+
+A `plugin.link` whose manifest cannot be read fails with its normal error without asking. Requests from the client itself (settings, onboarding) are not asked again. The `h0x integration install`, `h0x plugin link` and `h0x plugin enable` CLI commands run without a prompt when you run them outside any pane against the local machine. Inside a pane, or with `--machine`, they go through the socket API and ask. Scripts that installed silently through the API should run the CLI outside HyperOx instead.
+
 `agent.wait` is server-owned and event-driven. It pins the resolved pane occupant so a replacement cannot satisfy the wait. `agent.prompt` accepts an optional `wait` object with `until` and `timeout_ms`; this submits the prompt and starts the wait in one request, avoiding a race between separate calls. If the resolved agent is already `blocked`, `agent.prompt` returns `agent_blocked` without sending input or starting the wait.
 
 `workspace.move_block` atomically moves the ordered `workspace_ids` before `before_workspace_id`; omit the anchor to move the block to the end. The ids must be unique and the anchor cannot be part of the block. The response contains the authoritative ordered workspace list.
