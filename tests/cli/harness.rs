@@ -312,16 +312,42 @@ pub(super) fn spawn_h0x_with_config(
 
     let child = pair.slave.spawn_command(cmd).unwrap();
     register_spawned_h0x_pid(child.process_id());
+    spawned_server_dirs().lock().unwrap().insert(
+        socket_path.to_path_buf(),
+        (config_home.to_path_buf(), runtime_dir.to_path_buf()),
+    );
     SpawnedH0x {
         _master: pair.master,
         child,
     }
 }
 
-pub(super) fn run_cli(socket_path: &Path, args: &[&str]) -> std::process::Output {
+/// Config and runtime dirs of each server spawned by `spawn_h0x_with_config`, by socket path.
+fn spawned_server_dirs(
+) -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, (PathBuf, PathBuf)>> {
+    static DIRS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, (PathBuf, PathBuf)>>,
+    > = std::sync::OnceLock::new();
+    DIRS.get_or_init(Default::default)
+}
+
+/// A CLI command for the server on `socket_path`. It runs with that server's config and runtime
+/// dirs, as a user's own CLI would, so in-process writes (plugin link/enable outside a pane,
+/// ADR-049) land in the server's registry instead of the runner's home (ADR-052).
+fn cli_command(socket_path: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_h0x"));
-    command.args(args);
     command.env("H0X_SOCKET_PATH", socket_path);
+    if let Some((config_home, runtime_dir)) = spawned_server_dirs().lock().unwrap().get(socket_path)
+    {
+        command.env("XDG_CONFIG_HOME", config_home);
+        command.env("XDG_RUNTIME_DIR", runtime_dir);
+    }
+    command
+}
+
+pub(super) fn run_cli(socket_path: &Path, args: &[&str]) -> std::process::Output {
+    let mut command = cli_command(socket_path);
+    command.args(args);
     command.output().unwrap()
 }
 
@@ -330,10 +356,9 @@ pub(super) fn run_cli_in_dir(
     args: &[&str],
     current_dir: &Path,
 ) -> std::process::Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_h0x"));
+    let mut command = cli_command(socket_path);
     command.args(args);
     command.current_dir(current_dir);
-    command.env("H0X_SOCKET_PATH", socket_path);
     command.output().unwrap()
 }
 
