@@ -1,23 +1,42 @@
 {
-  "version": "0.9.8",
+  "version": "0.9.9",
   "protocol": 22,
   "endpoint_generation": 1,
-  "notes": "### Changed\n- New logo: the HyperOx mark on a white rounded tile, so it shows on dark backgrounds.\n- On Windows the ConPTY override is now `H0X_WINDOWS_CONPTY=system` (was `HERDR_WINDOWS_CONPTY`), and the bundle marker is `h0x-conpty.json`.\n- Troubleshooting links now say \"upstream issue\" for issues from the original project.",
+  "notes": "### Changed\n- The sidebar shows rotating HyperOx busy words while an agent works.\n- Docs: plugin examples use a neutral `owner/h0x-plugin`, and troubleshooting links point to our issues.\n- Tests keep plugin state in a temporary home.",
   "assets": {
-    "linux-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.8/h0x-linux-x86_64",
-    "linux-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.8/h0x-linux-aarch64",
-    "macos-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.8/h0x-macos-x86_64",
-    "macos-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.8/h0x-macos-aarch64",
-    "windows-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.8/h0x-windows-x86_64.zip"
+    "linux-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.9/h0x-linux-x86_64",
+    "linux-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.9/h0x-linux-aarch64",
+    "macos-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.9/h0x-macos-x86_64",
+    "macos-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.9/h0x-macos-aarch64",
+    "windows-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.9/h0x-windows-x86_64.zip"
   },
   "sha256": {
-    "linux-x86_64": "5cc637d864c415877d217bf16e1fdfa34f9bb8b75a2e35bdc6d85060a5928ec1",
-    "linux-aarch64": "a850efa563335b187a959bfbcdad2bb2d204f6a7db8e73cff1a329fb126c9903",
-    "macos-x86_64": "7df099df7c09acc178c4a48778f290824e051f8ee2bc1be3791ef95fb7035382",
-    "macos-aarch64": "a7a062d3cc9491e9fdc1c1c64ffe3c1453814c0503e8ae7ed3b93fbe2772d82b",
-    "windows-x86_64": "8e20d9568329e0d15b3a455ff3f37247939842db5da47cfc845fb0cae9fb2ba1"
+    "linux-x86_64": "a43beea75f7bdb902c7ac094db5183e2d5e5b056d54bcf377304e34358b4d366",
+    "linux-aarch64": "c5f6f82d6503469b197a302ab202ecab5794423d1ed46f3c0a60feb7b25a2594",
+    "macos-x86_64": "cd0bcc2dfc7c7e25ff7e57c6e9b6db9833f3f63926996da318968db3de38f5cc",
+    "macos-aarch64": "235ca0d3d60d572b11afec212af9db19767a89501ef06400eb1d5e66496204da",
+    "windows-x86_64": "db7af12341378c6d56650fb1bda081d7e4df1a05287988b613ac64a049b590fb"
   },
   "releases": {
+    "0.9.9": {
+      "notes": "### Changed\n- The sidebar shows rotating HyperOx busy words while an agent works.\n- Docs: plugin examples use a neutral `owner/h0x-plugin`, and troubleshooting links point to our issues.\n- Tests keep plugin state in a temporary home.",
+      "protocol": 22,
+      "endpoint_generation": 1,
+      "assets": {
+        "linux-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.9/h0x-linux-x86_64",
+        "linux-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.9/h0x-linux-aarch64",
+        "macos-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.9/h0x-macos-x86_64",
+        "macos-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.9/h0x-macos-aarch64",
+        "windows-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.9/h0x-windows-x86_64.zip"
+      },
+      "sha256": {
+        "linux-x86_64": "a43beea75f7bdb902c7ac094db5183e2d5e5b056d54bcf377304e34358b4d366",
+        "linux-aarch64": "c5f6f82d6503469b197a302ab202ecab5794423d1ed46f3c0a60feb7b25a2594",
+        "macos-x86_64": "cd0bcc2dfc7c7e25ff7e57c6e9b6db9833f3f63926996da318968db3de38f5cc",
+        "macos-aarch64": "235ca0d3d60d572b11afec212af9db19767a89501ef06400eb1d5e66496204da",
+        "windows-x86_64": "db7af12341378c6d56650fb1bda081d7e4df1a05287988b613ac64a049b590fb"
+      }
+    },
     "0.9.8": {
       "notes": "### Changed\n- New logo: the HyperOx mark on a white rounded tile, so it shows on dark backgrounds.\n- On Windows the ConPTY override is now `H0X_WINDOWS_CONPTY=system` (was `HERDR_WINDOWS_CONPTY`), and the bundle marker is `h0x-conpty.json`.\n- Troubleshooting links now say \"upstream issue\" for issues from the original project.",
       "protocol": 22,
