@@ -232,7 +232,23 @@ fn git_symbolic_head_short(repo_root: &Path) -> Option<String> {
 }
 
 pub(super) fn git_rev_parse_verify(repo_root: &Path, revision: &str) -> Option<String> {
-    git_trimmed_stdout(repo_root, &["rev-parse", "--verify", revision])
+    if revision.starts_with('-') {
+        return None;
+    }
+    git_trimmed_stdout(
+        repo_root,
+        &["rev-parse", "--verify", "--end-of-options", revision],
+    )
+    .filter(|oid| is_git_oid(oid))
+}
+
+/// A full SHA-1 (40) or SHA-256 (64) object id in git's lowercase hex form.
+/// Ref text from a repository is untrusted: anything else is not an oid.
+pub(super) fn is_git_oid(value: &str) -> bool {
+    matches!(value.len(), 40 | 64)
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 pub(super) fn git_ref_storage_is_reftable(git_common_dir: &Path) -> bool {
@@ -332,13 +348,10 @@ pub(super) fn read_ref_oid(common_dir: &Path, full_ref: &str) -> Option<String> 
     let loose_ref = common_dir.join(full_ref);
     match read_git_ref_file_state(&loose_ref) {
         RefFileRead::Content(contents) => {
+            // An empty or non-oid loose ref is present but unusable. Git does
+            // not fall back to an older same-name packed ref in this case.
             let oid = contents.trim();
-            if oid.is_empty() {
-                // An empty loose ref is present but broken. Git does not fall
-                // back to an older same-name packed ref in this case.
-                return None;
-            }
-            return Some(oid.to_string());
+            return is_git_oid(oid).then(|| oid.to_string());
         }
         // A loose ref that exists — or whose existence cannot be ruled out
         // because of a metadata or I/O error — must not fall back to
@@ -358,7 +371,7 @@ pub(super) fn read_ref_oid(common_dir: &Path, full_ref: &str) -> Option<String> 
         let oid = parts.next()?;
         let name = parts.next()?;
         if name == full_ref {
-            return Some(oid.to_string());
+            return is_git_oid(oid).then(|| oid.to_string());
         }
     }
     None
@@ -825,5 +838,86 @@ mod tests {
         );
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn is_git_oid_accepts_only_full_lowercase_hex() {
+        assert!(is_git_oid(&"a".repeat(40)));
+        assert!(is_git_oid(&"0123456789abcdef".repeat(4)));
+        assert!(is_git_oid(&"f".repeat(64)));
+        for bad in [
+            String::new(),
+            "a".repeat(39),
+            "a".repeat(41),
+            "a".repeat(63),
+            "a".repeat(65),
+            "A".repeat(40),
+            "g".repeat(40),
+            format!("{} ", "a".repeat(39)),
+            "--output=probe".to_string(),
+        ] {
+            assert!(!is_git_oid(&bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn non_oid_loose_ref_is_unavailable_not_absent() {
+        let root = temp_test_dir("non-oid-loose-ref");
+        let refs_dir = root.join("refs/heads");
+        std::fs::create_dir_all(&refs_dir).unwrap();
+        std::fs::write(
+            root.join("packed-refs"),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/heads/main\n",
+        )
+        .unwrap();
+        let loose = refs_dir.join("main");
+
+        for contents in [
+            "--output=probe\n",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n",
+            "aaaaaaa\n",
+        ] {
+            std::fs::write(&loose, contents).unwrap();
+            assert_eq!(read_ref_oid(&root, "refs/heads/main"), None, "{contents:?}");
+        }
+
+        std::fs::write(&loose, format!("{}\n", "c".repeat(64))).unwrap();
+        assert_eq!(read_ref_oid(&root, "refs/heads/main"), Some("c".repeat(64)));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn non_oid_packed_ref_is_unavailable() {
+        let root = temp_test_dir("non-oid-packed-ref");
+        std::fs::create_dir_all(root.join("refs/heads")).unwrap();
+        std::fs::write(root.join("packed-refs"), "--output=probe refs/heads/main\n").unwrap();
+
+        let oid = read_ref_oid(&root, "refs/heads/main");
+        std::fs::remove_dir_all(root).unwrap();
+        assert_eq!(oid, None);
+    }
+
+    #[test]
+    fn git_rev_parse_verify_refuses_option_shaped_revisions() {
+        let root = temp_test_dir("rev-parse-option-revision");
+        let output = std::process::Command::new("git")
+            .args(["init", "-b", "main"])
+            .arg(&root)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        run_git(&root, &["config", "user.email", "h0x@example.invalid"]);
+        run_git(&root, &["config", "user.name", "HyperOx Test"]);
+        run_git(&root, &["commit", "--allow-empty", "-m", "initial"]);
+
+        let head = git_rev_parse_verify(&root, "HEAD");
+        let option = git_rev_parse_verify(&root, "--output=probe");
+        let probe_written = root.join("probe").exists();
+        std::fs::remove_dir_all(root).unwrap();
+
+        assert!(head.as_deref().is_some_and(is_git_oid), "{head:?}");
+        assert_eq!(option, None);
+        assert!(!probe_written);
     }
 }
