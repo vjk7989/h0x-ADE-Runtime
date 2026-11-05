@@ -292,6 +292,7 @@ where
     }
     verify_release_signature(
         "the update manifest",
+        url.rsplit('/').next().unwrap_or(url),
         &output.stdout,
         fetch_release_signature(url).as_deref(),
         RELEASE_PUBLIC_KEY,
@@ -322,9 +323,12 @@ pub(crate) fn fetch_release_signature(url: &str) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Checks `bytes` against its minisign `signature` by `key`.
+/// Checks `bytes` against its minisign `signature` by `key`, made for the
+/// release asset `file` (its trusted comment's `file:`, so one signed file
+/// cannot stand in for another).
 pub(crate) fn verify_release_signature(
     name: &str,
+    file: &str,
     bytes: &[u8],
     signature: Option<&str>,
     key: &str,
@@ -335,7 +339,17 @@ pub(crate) fn verify_release_signature(
         let signature = minisign_verify::Signature::decode(text)
             .map_err(|e| format!("its signature is unreadable: {e}"))?;
         key.verify(bytes, &signature, false)
-            .map_err(|e| format!("its signature does not match: {e}"))
+            .map_err(|e| format!("its signature does not match: {e}"))?;
+        let file_field = format!("file:{file}");
+        if signature
+            .trusted_comment()
+            .split('\t')
+            .any(|f| f == file_field)
+        {
+            Ok(())
+        } else {
+            Err(format!("its signature is for another file, not {file}"))
+        }
     })();
     checked.map_err(|why| format!("{name} is not signed by the h0x release key: {why}"))
 }
@@ -345,6 +359,7 @@ pub(crate) fn verify_downloaded_release(path: &Path, url: &str) -> Result<(), St
     let bytes = fs::read(path).map_err(|e| format!("failed to read downloaded update: {e}"))?;
     verify_release_signature(
         "the downloaded update",
+        url.rsplit('/').next().unwrap_or(url),
         &bytes,
         fetch_release_signature(url).as_deref(),
         RELEASE_PUBLIC_KEY,
@@ -3283,23 +3298,36 @@ mod tests {
 pub(crate) mod signature_tests {
     /// A throwaway test key pair (not the release key), its signature of
     /// `PAYLOAD`, and the same payload signed by a second throwaway key; made
-    /// with rsign2 (`generate -W`, `sign -W`).
-    const TEST_KEY: &str = "RWRwAuiTWRHKFc9nVniDNoa4b+UqLBXWC7QunJ05dZw+XkvYJ6aaoXoK";
+    /// with rsign2 (`generate -W`, `sign -W -t`), trusted comments the way
+    /// `minisign -S` writes them.
+    const TEST_KEY: &str = "RWQg8JMq/a7b0cXNBjracYsdl02bL7ePY3Qg1EAI7j9a+b3CQPOUifiu";
     pub(crate) const PAYLOAD: &str = "h0x-core test release\n";
+    const NAME: &str = "latest.json";
     pub(crate) const SIG: &str = "untrusted comment: signature from rsign secret key
-RURwAuiTWRHKFeiB7A2s5PXfB39odODFiAf+77MxJqllRsihUgeswBruN+SLEaLI6zFdPAqRO+o0muW+5/ISjwzOHIVMxfYZUws=
-trusted comment: test
-FbefAmnfeDeGxboZTkIU3PcVBdecdQ85mQjQTOCf3nUiq0yiND8kte8+Ymv7UmzvNNb7BgVZLCS+McLnbN9oDg==
+RUQg8JMq/a7b0Rk0bjAwk2F1MEVYFZFPTQh9qNd+wu+vxjoxK3h1r4RZ5+Kty1Gtetx2YiX1E+2pfVtkuU9aLYC1+udqcIy74Qk=
+trusted comment: timestamp:1\tfile:latest.json\thashed
+HLH1Pl9N5jkc4WRv/TKiWtdjNzyDYZct2jGkpz5FYlCe7lfzdh1+LT1hktNbIcvnP85I8G/ciDFWyXAJQuUdDQ==
+";
+    /// The same payload and key, signed as `h0x-linux-x86_64`.
+    const OTHER_FILE_SIG: &str = "untrusted comment: signature from rsign secret key
+RUQg8JMq/a7b0U67rWMwnF2Y8+IxkSeMAXtsgD6vvvicnUea5hf33EEFepzUytqo6OcUrIqgQ4rO2NzJTksN7hAeydVP8LvVQQ8=
+trusted comment: timestamp:1\tfile:h0x-linux-x86_64\thashed
+waC8ZJj4p8b/EoewWAMLIdYI/LFiE3WmVAHocuqn4iUdlbInggcf6xhNejivbeGjwcvm/YLQYc0xR2NbhpDyCg==
 ";
     const OTHER_KEY_SIG: &str = "untrusted comment: signature from rsign secret key
-RURaRIrUmDKGf+VfuMRCB6G+7YmOZuDtq2kGvfhr9JFuy2kWFMZ6J+L3UogLdr/J7fvVdNbKYfGvxVj6sSbZQmp4hSeTA28H6g8=
-trusted comment: test
-ZJhj3MtbsDPyt278bwB0BcVRB5ZoKqA6VCCZ5s51lq49BobYTBUuzlJqofyqGhaBwWB6iLyCd1cVXXQhXnGlBg==
+RUQMafIHFSezApbRzy1qte1724jZzT1jjxIzvVCZw07svPubCexu/TvPcfhZB2QLQlXHhCC0uuaPN0wJmrweJDezPR0KIy4HQwM=
+trusted comment: timestamp:1\tfile:latest.json\thashed
+IFqphZJnxMfop/njTTwRD6j1P5ikDAd9OZSS9uMjHwZWa7JEZ4vY4zYXfUQYiLlvVXPeyZC8ySf+Vx166CpFAA==
 ";
 
     fn refused(payload: &str, signature: Option<&str>, key: &str, why: &str) {
+        refused_as(NAME, payload, signature, key, why);
+    }
+
+    fn refused_as(file: &str, payload: &str, signature: Option<&str>, key: &str, why: &str) {
         let err = super::verify_release_signature(
             "the update manifest",
+            file,
             payload.as_bytes(),
             signature,
             key,
@@ -3316,11 +3344,37 @@ ZJhj3MtbsDPyt278bwB0BcVRB5ZoKqA6VCCZ5s51lq49BobYTBUuzlJqofyqGhaBwWB6iLyCd1cVXXQh
     fn update_signed_by_the_key_is_accepted() {
         super::verify_release_signature(
             "the update manifest",
+            NAME,
             PAYLOAD.as_bytes(),
             Some(SIG),
             TEST_KEY,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn update_signature_made_for_another_file_is_refused() {
+        refused(
+            PAYLOAD,
+            Some(OTHER_FILE_SIG),
+            TEST_KEY,
+            "its signature is for another file, not latest.json",
+        );
+        // `file:` must name the asset whole, not just begin with its name.
+        refused_as(
+            "latest.js",
+            PAYLOAD,
+            Some(SIG),
+            TEST_KEY,
+            "its signature is for another file, not latest.js",
+        );
+        refused_as(
+            "",
+            PAYLOAD,
+            Some(SIG),
+            TEST_KEY,
+            "its signature is for another file, not ",
+        );
     }
 
     #[test]

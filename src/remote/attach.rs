@@ -2710,6 +2710,7 @@ fn fetch_remote_manifest(url: &str) -> io::Result<Vec<u8>> {
     }
     crate::update::verify_release_signature(
         "the update manifest",
+        url.rsplit('/').next().unwrap_or(url),
         &output.stdout,
         crate::update::fetch_release_signature(url).as_deref(),
         crate::update::RELEASE_PUBLIC_KEY,
