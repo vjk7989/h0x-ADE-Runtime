@@ -1,23 +1,42 @@
 {
-  "version": "0.9.7",
+  "version": "0.9.8",
   "protocol": 22,
   "endpoint_generation": 1,
-  "notes": "### Fixed\n- On Windows, h0x refuses to talk to a pipe run by another account.\n- Folders reported by pane output on network shares or device paths are ignored, so terminal output can't make Windows contact a network share.\n- Git status ignores malformed refs, so repository files can't inject git options.\n- Release files must be signed for that exact file.",
+  "notes": "### Changed\n- New logo: the HyperOx mark on a white rounded tile, so it shows on dark backgrounds.\n- On Windows the ConPTY override is now `H0X_WINDOWS_CONPTY=system` (was `HERDR_WINDOWS_CONPTY`), and the bundle marker is `h0x-conpty.json`.\n- Troubleshooting links now say \"upstream issue\" for issues from the original project.",
   "assets": {
-    "linux-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.7/h0x-linux-x86_64",
-    "linux-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.7/h0x-linux-aarch64",
-    "macos-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.7/h0x-macos-x86_64",
-    "macos-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.7/h0x-macos-aarch64",
-    "windows-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.7/h0x-windows-x86_64.zip"
+    "linux-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.8/h0x-linux-x86_64",
+    "linux-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.8/h0x-linux-aarch64",
+    "macos-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.8/h0x-macos-x86_64",
+    "macos-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.8/h0x-macos-aarch64",
+    "windows-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.8/h0x-windows-x86_64.zip"
   },
   "sha256": {
-    "linux-x86_64": "80086d37ed6c0aba535fe9482a831d2707830e10f92e2f5329cd37a3444be602",
-    "linux-aarch64": "8751c0e038f1531c213868445dfd687080d836a510b80326c1948b4b61bc51be",
-    "macos-x86_64": "f96b60047d9ac0b14362fd7451847f26b28ddb36a706379bb6de4a4e5fe38895",
-    "macos-aarch64": "c73f22acbd71837f9474bb4f236c6f568966e7155989a7facc9a9b9259d60a8c",
-    "windows-x86_64": "203919f35d3e36a483726a69291a018b668b8df2dfd46994931420cf928b9fda"
+    "linux-x86_64": "5cc637d864c415877d217bf16e1fdfa34f9bb8b75a2e35bdc6d85060a5928ec1",
+    "linux-aarch64": "a850efa563335b187a959bfbcdad2bb2d204f6a7db8e73cff1a329fb126c9903",
+    "macos-x86_64": "7df099df7c09acc178c4a48778f290824e051f8ee2bc1be3791ef95fb7035382",
+    "macos-aarch64": "a7a062d3cc9491e9fdc1c1c64ffe3c1453814c0503e8ae7ed3b93fbe2772d82b",
+    "windows-x86_64": "8e20d9568329e0d15b3a455ff3f37247939842db5da47cfc845fb0cae9fb2ba1"
   },
   "releases": {
+    "0.9.8": {
+      "notes": "### Changed\n- New logo: the HyperOx mark on a white rounded tile, so it shows on dark backgrounds.\n- On Windows the ConPTY override is now `H0X_WINDOWS_CONPTY=system` (was `HERDR_WINDOWS_CONPTY`), and the bundle marker is `h0x-conpty.json`.\n- Troubleshooting links now say \"upstream issue\" for issues from the original project.",
+      "protocol": 22,
+      "endpoint_generation": 1,
+      "assets": {
+        "linux-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.8/h0x-linux-x86_64",
+        "linux-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.8/h0x-linux-aarch64",
+        "macos-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.8/h0x-macos-x86_64",
+        "macos-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.8/h0x-macos-aarch64",
+        "windows-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.8/h0x-windows-x86_64.zip"
+      },
+      "sha256": {
+        "linux-x86_64": "5cc637d864c415877d217bf16e1fdfa34f9bb8b75a2e35bdc6d85060a5928ec1",
+        "linux-aarch64": "a850efa563335b187a959bfbcdad2bb2d204f6a7db8e73cff1a329fb126c9903",
+        "macos-x86_64": "7df099df7c09acc178c4a48778f290824e051f8ee2bc1be3791ef95fb7035382",
+        "macos-aarch64": "a7a062d3cc9491e9fdc1c1c64ffe3c1453814c0503e8ae7ed3b93fbe2772d82b",
+        "windows-x86_64": "8e20d9568329e0d15b3a455ff3f37247939842db5da47cfc845fb0cae9fb2ba1"
+      }
+    },
     "0.9.7": {
       "notes": "### Fixed\n- On Windows, h0x refuses to talk to a pipe run by another account.\n- Folders reported by pane output on network shares or device paths are ignored, so terminal output can't make Windows contact a network share.\n- Git status ignores malformed refs, so repository files can't inject git options.\n- Release files must be signed for that exact file.",
       "protocol": 22,
