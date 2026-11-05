@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## [0.9.8] - 2026-11-05
+
+### Changed
+- New logo: the HyperOx mark on a white rounded tile, so it shows on dark backgrounds.
+- On Windows the ConPTY override is now `H0X_WINDOWS_CONPTY=system` (was `HERDR_WINDOWS_CONPTY`), and the bundle marker is `h0x-conpty.json`.
+- Troubleshooting links now say "upstream issue" for issues from the original project.
+
 ## [0.9.7] - 2026-11-05
 
 ### Fixed
