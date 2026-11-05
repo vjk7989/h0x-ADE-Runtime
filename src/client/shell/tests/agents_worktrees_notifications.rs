@@ -582,6 +582,7 @@ fn pane_cycle_last_and_agent_actions_resolve_to_stable_pane_ids() {
             state_labels: Vec::new(),
             tokens: Vec::new(),
             focused: true,
+            working_since_ms: None,
         },
         ClientShellAgent {
             pane_id: "pane_2".into(),
@@ -598,6 +599,7 @@ fn pane_cycle_last_and_agent_actions_resolve_to_stable_pane_ids() {
             state_labels: Vec::new(),
             tokens: Vec::new(),
             focused: false,
+            working_since_ms: None,
         },
     ];
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
@@ -672,6 +674,7 @@ fn agent_sidebar_honors_priority_symbols_tokens_and_stable_hits() {
             state_labels: Vec::new(),
             tokens: vec![("summary".into(), "review complete".into())],
             focused: true,
+            working_since_ms: None,
         },
         ClientShellAgent {
             pane_id: "pane_2".into(),
@@ -688,6 +691,7 @@ fn agent_sidebar_honors_priority_symbols_tokens_and_stable_hits() {
             state_labels: vec![("blocked".into(), "needs input".into())],
             tokens: vec![("summary".into(), "waiting for Can".into())],
             focused: false,
+            working_since_ms: None,
         },
     ];
     let mut config = Config::default();
@@ -792,6 +796,95 @@ fn agent_sidebar_honors_priority_symbols_tokens_and_stable_hits() {
 }
 
 #[test]
+fn agent_sidebar_shows_a_busy_verb_for_working_agents_unless_labelled() {
+    let mut projected = snapshot();
+    let mut second_pane = projected.panes[0].clone();
+    second_pane.pane_id = "pane_2".into();
+    second_pane.focused = false;
+    projected.panes.push(second_pane);
+    let agent = |pane_id: &str, state_labels: Vec<(String, String)>| ClientShellAgent {
+        pane_id: pane_id.into(),
+        workspace_id: "ws_1".into(),
+        tab_id: "tab_1".into(),
+        name: None,
+        display_agent: None,
+        agent: Some("pi".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status: AgentStatus::Working,
+        state_change_seq: 1,
+        state_labels,
+        tokens: Vec::new(),
+        focused: false,
+        working_since_ms: None,
+    };
+    projected.agents = vec![
+        agent("pane_1", Vec::new()),
+        agent("pane_2", vec![("working".into(), "thinking hard".into())]),
+    ];
+    let mut config = Config::default();
+    config.ui.sidebar.agents.rows = vec![vec![crate::config::AgentSidebarToken::StateText]];
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+
+    let frame = state.compose(106, 30).expect("agent sidebar frame");
+    let text = frame
+        .cells
+        .chunks(frame.width as usize)
+        .map(|row| {
+            row.iter()
+                .map(|cell| cell.symbol.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    // "pane_1" just started working, so it shows its hash's verb (the 19th); the label
+    // override wins for pane_2.
+    assert!(text.contains("Brewing\u{2026}"), "frame: {text}");
+    assert!(text.contains("thinking hard"), "frame: {text}");
+    assert!(!text.contains("Sparking"), "frame: {text}");
+    assert!(!text.contains("working"), "frame: {text}");
+}
+
+#[test]
+fn busy_verbs_repaint_once_a_second_only_while_an_agent_works() {
+    let mut projected = snapshot();
+    projected.agents = vec![ClientShellAgent {
+        pane_id: "pane_1".into(),
+        workspace_id: "ws_1".into(),
+        tab_id: "tab_1".into(),
+        name: None,
+        display_agent: None,
+        agent: Some("pi".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status: AgentStatus::Working,
+        state_change_seq: 1,
+        state_labels: Vec::new(),
+        tokens: Vec::new(),
+        focused: false,
+        working_since_ms: None,
+    }];
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    let now = std::time::Instant::now();
+    assert!(!state.tick_busy_verbs(now), "no snapshot, nothing works");
+
+    state.set_snapshot(Box::new(projected.clone()));
+    assert!(state.tick_busy_verbs(now));
+    assert!(!state.tick_busy_verbs(now + std::time::Duration::from_millis(500)));
+    assert!(state.tick_busy_verbs(now + std::time::Duration::from_secs(1)));
+
+    projected.revision += 1;
+    projected.agents[0].agent_status = AgentStatus::Idle;
+    projected.agents[0].state_change_seq = 2;
+    state.set_snapshot(Box::new(projected));
+    assert!(!state.tick_busy_verbs(now + std::time::Duration::from_secs(5)));
+}
+
+#[test]
 fn muted_agent_sidebar_rows_do_not_stack_terminal_faint() {
     let mut projected = snapshot();
     projected.tabs[0].label = "second".into();
@@ -811,6 +904,7 @@ fn muted_agent_sidebar_rows_do_not_stack_terminal_faint() {
         state_labels: Vec::new(),
         tokens: Vec::new(),
         focused: true,
+        working_since_ms: None,
     }];
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(projected));
@@ -878,6 +972,7 @@ fn active_agent_view_controls_sidebar_order_and_focus_indices() {
             state_labels: Vec::new(),
             tokens: Vec::new(),
             focused: true,
+            working_since_ms: None,
         },
         ClientShellAgent {
             pane_id: "pane_2".into(),
@@ -894,6 +989,7 @@ fn active_agent_view_controls_sidebar_order_and_focus_indices() {
             state_labels: Vec::new(),
             tokens: Vec::new(),
             focused: false,
+            working_since_ms: None,
         },
         ClientShellAgent {
             pane_id: "pane_3".into(),
@@ -910,6 +1006,7 @@ fn active_agent_view_controls_sidebar_order_and_focus_indices() {
             state_labels: Vec::new(),
             tokens: Vec::new(),
             focused: false,
+            working_since_ms: None,
         },
     ];
     projected.agent_view_label = Some("review".into());
@@ -984,6 +1081,7 @@ fn agent_sort_toggle_is_client_local_and_persists_per_endpoint() {
         state_labels: Vec::new(),
         tokens: Vec::new(),
         focused: true,
+        working_since_ms: None,
     });
     let config =
         ClientShellConfig::from_config(&Config::default()).with_preferences_path(path.clone());
@@ -1549,6 +1647,7 @@ fn semantic_notifications_use_client_policy_and_stable_navigation_targets() {
         state_labels: Vec::new(),
         tokens: Vec::new(),
         focused: false,
+        working_since_ms: None,
     });
     state.set_snapshot(Box::new(projected));
     state.set_pane_surface(surface());

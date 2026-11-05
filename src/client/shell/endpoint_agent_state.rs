@@ -9,6 +9,8 @@ pub(super) struct EndpointAgentPresentation {
     acknowledged: HashMap<String, u64>,
     completed: HashMap<String, u64>,
     working: HashSet<String>,
+    /// Unix ms when this client first saw each pane working; dropped on any other status.
+    working_since: HashMap<String, u64>,
     pending_completions: Option<(
         Option<u64>,
         crate::protocol::endpoint::EndpointAgentCompletions,
@@ -50,6 +52,7 @@ impl EndpointAgentPresentation {
             self.acknowledged.clear();
             self.completed.clear();
             self.working.clear();
+            self.working_since.clear();
             self.acknowledged.extend(
                 snapshot
                     .agents
@@ -68,6 +71,11 @@ impl EndpointAgentPresentation {
             .retain(|pane_id, _| pane_ids.contains(pane_id.as_str()));
         self.working
             .retain(|pane_id| pane_ids.contains(pane_id.as_str()));
+        self.working_since
+            .retain(|pane_id, _| pane_ids.contains(pane_id.as_str()));
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since_epoch| since_epoch.as_millis() as u64);
         let completions = self
             .pending_completions
             .take()
@@ -78,6 +86,17 @@ impl EndpointAgentPresentation {
             })
             .map(|(_, projection)| projection.completions);
         for agent in &mut snapshot.agents {
+            agent.working_since_ms = if agent.agent_status == AgentStatus::Working {
+                Some(
+                    *self
+                        .working_since
+                        .entry(agent.pane_id.clone())
+                        .or_insert(now_ms),
+                )
+            } else {
+                self.working_since.remove(&agent.pane_id);
+                None
+            };
             match agent.agent_status {
                 AgentStatus::Working => {
                     self.working.insert(agent.pane_id.clone());
@@ -223,6 +242,7 @@ mod tests {
             state_labels: Vec::new(),
             tokens: Vec::new(),
             focused: true,
+            working_since_ms: None,
         }
     }
 
@@ -408,6 +428,32 @@ mod tests {
         presentation.project_snapshot(&mut restored);
 
         assert_eq!(restored.agents[0].agent_status, AgentStatus::Idle);
+    }
+
+    #[test]
+    fn working_since_is_set_once_and_cleared_when_work_stops() {
+        let mut presentation = EndpointAgentPresentation::default();
+        let mut working = snapshot(AgentStatus::Working, 4, 1);
+        presentation.project_snapshot(&mut working);
+        let since = working.agents[0].working_since_ms;
+        assert!(since.is_some_and(|ms| ms > 0));
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let mut still_working = snapshot(AgentStatus::Working, 5, 2);
+        presentation.project_snapshot(&mut still_working);
+        assert_eq!(still_working.agents[0].working_since_ms, since);
+
+        let mut blocked = snapshot(AgentStatus::Blocked, 6, 3);
+        presentation.project_snapshot(&mut blocked);
+        assert_eq!(blocked.agents[0].working_since_ms, None);
+        let mut idle = snapshot(AgentStatus::Idle, 7, 4);
+        presentation.project_snapshot(&mut idle);
+        assert_eq!(idle.agents[0].working_since_ms, None);
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let mut working_again = snapshot(AgentStatus::Working, 8, 5);
+        presentation.project_snapshot(&mut working_again);
+        assert!(working_again.agents[0].working_since_ms > since);
     }
 
     #[test]
