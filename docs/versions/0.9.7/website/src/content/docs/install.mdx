@@ -1,0 +1,160 @@
+---
+title: Install HyperOx
+description: Install, update, and verify HyperOx on Linux, macOS, and Windows.
+---
+
+HyperOx publishes stable-channel binaries for Linux, macOS, and Windows. Windows is generally available, with documented platform-specific limitations and ongoing fixes.
+
+## Install
+
+On Linux or macOS, run:
+
+```bash
+curl -fsSL https://github.com/vjk7989/h0x-ADE-Runtime/releases/latest/download/install.sh | sh
+```
+
+On Windows, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/vjk7989/h0x-ADE-Runtime/releases/latest/download/install.ps1 | iex"
+```
+
+If endpoint security blocks that fileless PowerShell command, open Command Prompt and run:
+
+```cmd
+curl.exe -fsSLo install.cmd https://github.com/vjk7989/h0x-ADE-Runtime/releases/latest/download/install.cmd && install.cmd && del install.cmd
+```
+
+The installer downloads the release binary for your platform and places it on your PATH. New direct installs use the stable update channel. Existing Windows preview installs stay on preview until you switch them with `h0x channel set stable`. On Windows, PATH points to the active versioned release directory; the installer also updates the `current` and stable `bin` compatibility aliases, so updates do not need to overwrite a running `h0x.exe`.
+
+## Install with Homebrew
+
+If you already use Homebrew:
+
+```bash
+brew install h0x
+```
+
+## Install with mise
+
+If you already use mise:
+
+```bash
+mise use -g h0x
+```
+
+If mise reports `h0x not found in mise tool registry`, update mise and retry. Older mise versions predate the HyperOx registry entry; `mise use -g github:vjk7989/h0x-ADE-Runtime` works as a temporary fallback.
+
+## Install with Nix
+
+If you already use Nix, HyperOx provides a flake that builds HyperOx from source:
+
+```bash
+nix run github:vjk7989/h0x-ADE-Runtime/v0.x.y
+nix build github:vjk7989/h0x-ADE-Runtime/v0.x.y
+nix profile install github:vjk7989/h0x-ADE-Runtime/v0.x.y
+```
+
+Replace `v0.x.y` with the latest release tag. You can omit the tag to track `master`, but release tags are recommended for normal installs.
+
+The flake also exposes a development shell:
+
+```bash
+nix develop github:vjk7989/h0x-ADE-Runtime
+```
+
+Use the same Nix workflow to update HyperOx. For a profile install, list your profile entries and upgrade the HyperOx entry:
+
+```bash
+nix profile list
+nix profile upgrade <index-or-name>
+```
+
+If HyperOx is an input in your own flake, update that input and rebuild your system, Home Manager, or development environment:
+
+```bash
+nix flake update h0x
+```
+
+## Download manually
+
+You can also download a binary from [GitHub releases](https://github.com/vjk7989/h0x-ADE-Runtime/releases).
+
+Choose the asset that matches your system:
+
+| System | Asset |
+| --- | --- |
+| Linux x86_64 | `h0x-linux-x86_64` |
+| Linux aarch64 | `h0x-linux-aarch64` |
+| macOS Intel | `h0x-macos-x86_64` |
+| macOS Apple silicon | `h0x-macos-aarch64` |
+| Windows x86_64 | `h0x-windows-x86_64.zip` |
+
+On Linux or macOS, make it executable and move it somewhere on your PATH.
+
+```bash
+chmod +x h0x-linux-x86_64
+mv h0x-linux-x86_64 ~/.local/bin/h0x
+```
+
+### Windows archive
+
+Stable releases and preview prereleases both include `h0x-windows-x86_64.zip`. The archive contains `h0x.exe` and its app-local ConPTY runtime. Keep the extracted directory together; do not copy only `h0x.exe`.
+
+## Verify
+
+Start HyperOx:
+
+```bash
+h0x
+```
+
+If your shell cannot find `h0x`, restart the terminal or check that the install directory is on your PATH.
+
+## Update
+
+HyperOx checks for new releases and notifies you in the app. You can update manually:
+
+```bash
+h0x update
+```
+
+Use `h0x update` only for installs managed by HyperOx's own installer. Update Homebrew, mise, and Nix installs through those package managers instead.
+
+Direct installs on Linux, macOS, and Windows use the stable update channel by default. To opt into preview builds from `master`, set the channel:
+
+```bash
+h0x channel set preview
+```
+
+Switch a direct install back to stable the same way:
+
+```bash
+h0x channel set stable
+```
+
+For direct installs, changing channels checks the selected channel and installs its latest binary. If that update fails, run `h0x update` to retry from the configured channel.
+
+Preview builds are regularly published GitHub prereleases from the current development branch. They are useful when you want fixes before the next stable release, but they can regress. Homebrew, mise, and Nix installs do not use the preview channel.
+
+The preview channel also installs stable releases when their version is higher than the latest preview's base version. It stays configured for preview, so a later preview based on that stable release becomes available automatically. Update checks do not offer releases based on an older version than the installed binary.
+
+Stable is the recommended channel for normal Windows use. Preview receives fixes sooner but can regress, so opt in only when you want that tradeoff. Existing Windows preview installs remain on preview until you switch them explicitly. If an older preview build rejects `h0x channel set stable`, run `h0x update` once on preview, then retry the channel switch.
+
+By default, `h0x update` installs the new binary and leaves endpoint-generation-1 servers and their pane processes running. Start HyperOx again to reconnect with the updated client. Client-only changes work immediately. A new server-side action stays unavailable until that server is updated and restarted; the client shows a notice instead of disconnecting. Servers from before endpoint generation 1 need one final stop during update.
+
+When it finishes, `h0x update` lists any running server still on the old version with the command that restarts it, and your saved SSH machines, which run their own HyperOx. Run `h0x update` on each machine to update it too.
+
+To opt into experimental live server handoff for supported running sessions, run:
+
+```bash
+h0x update --handoff
+```
+
+When both servers support agent-status transfer, live handoff preserves hook-reported agent status until the next report arrives. Handoff from an older server can temporarily show a running agent as idle.
+
+Live handoff does not apply to Homebrew, mise, or Nix package-manager updates. For those installs, update with the package manager, then run HyperOx again to reconnect with the updated client. The compatible old server keeps running. Restart it later with `h0x server stop` or `h0x session stop <name>` only when you want server-side changes from the new release.
+
+## Requirements
+
+Stable-channel binaries are available for Linux, macOS, and Windows x86_64. See [Windows support](/docs/windows-beta/) for supported workflows and known limitations. Windows ARM64 runs the x86_64 build under Windows emulation.

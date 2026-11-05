@@ -1,23 +1,42 @@
 {
-  "version": "0.9.6",
+  "version": "0.9.7",
   "protocol": 22,
   "endpoint_generation": 1,
-  "notes": "### Changed\n- Updates are signed. `h0x update` checks the release's minisign signature on the manifest and on the downloaded binary, and refuses an update that is unsigned or does not match the release key.\n- Installing h0x on a remote machine checks the same signature before the binary is used.\n- Agent hook installs and plugin links or enables requested through the socket API ask in the attached client first. The request waits for Allow or Deny, gives up after 120 seconds, and fails with `needs_confirmation` when no client is attached. The `h0x integration install`, `h0x plugin link` and `h0x plugin enable` commands still run without a prompt outside any pane on the local machine; inside a pane or with `--machine` they ask.\n- Downloads use HTTPS only. The installers accept plain http only for loopback addresses.\n\n### Fixed\n- Release notes and product announcements no longer pass terminal control characters through to your terminal.\n- Session files are private to your user (files 0600, folders 0700).\n- Git refs and branch names that start with `-` are refused, so they cannot be read as git options.",
+  "notes": "### Fixed\n- On Windows, h0x refuses to talk to a pipe run by another account.\n- Folders reported by pane output on network shares or device paths are ignored, so terminal output can't make Windows contact a network share.\n- Git status ignores malformed refs, so repository files can't inject git options.\n- Release files must be signed for that exact file.",
   "assets": {
-    "linux-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.6/h0x-linux-x86_64",
-    "linux-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.6/h0x-linux-aarch64",
-    "macos-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.6/h0x-macos-x86_64",
-    "macos-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.6/h0x-macos-aarch64",
-    "windows-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.6/h0x-windows-x86_64.zip"
+    "linux-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.7/h0x-linux-x86_64",
+    "linux-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.7/h0x-linux-aarch64",
+    "macos-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.7/h0x-macos-x86_64",
+    "macos-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.7/h0x-macos-aarch64",
+    "windows-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.7/h0x-windows-x86_64.zip"
   },
   "sha256": {
-    "linux-x86_64": "a5213a56dec76c67123c0ace4a971487112235b372afc443d871bff0e7b62e90",
-    "linux-aarch64": "a74f7fb1e6904edd489d790e5bd3f92f062f5b06eb0036266cb74a99e5ee35df",
-    "macos-x86_64": "86530e5d5db8766e2ae4f605252404ae59e6a7b54d76e8095984c1b6e43a85b2",
-    "macos-aarch64": "69730baebc3a1ae0197f8d2c13f6f88e8a3b380d5a91c15007061386a7b6ff0a",
-    "windows-x86_64": "911eb42dbf7a22308e2e36e624311130c09d52ca04fdb28ced93509ee3345d2b"
+    "linux-x86_64": "80086d37ed6c0aba535fe9482a831d2707830e10f92e2f5329cd37a3444be602",
+    "linux-aarch64": "8751c0e038f1531c213868445dfd687080d836a510b80326c1948b4b61bc51be",
+    "macos-x86_64": "f96b60047d9ac0b14362fd7451847f26b28ddb36a706379bb6de4a4e5fe38895",
+    "macos-aarch64": "c73f22acbd71837f9474bb4f236c6f568966e7155989a7facc9a9b9259d60a8c",
+    "windows-x86_64": "203919f35d3e36a483726a69291a018b668b8df2dfd46994931420cf928b9fda"
   },
   "releases": {
+    "0.9.7": {
+      "notes": "### Fixed\n- On Windows, h0x refuses to talk to a pipe run by another account.\n- Folders reported by pane output on network shares or device paths are ignored, so terminal output can't make Windows contact a network share.\n- Git status ignores malformed refs, so repository files can't inject git options.\n- Release files must be signed for that exact file.",
+      "protocol": 22,
+      "endpoint_generation": 1,
+      "assets": {
+        "linux-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.7/h0x-linux-x86_64",
+        "linux-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.7/h0x-linux-aarch64",
+        "macos-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.7/h0x-macos-x86_64",
+        "macos-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.7/h0x-macos-aarch64",
+        "windows-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.7/h0x-windows-x86_64.zip"
+      },
+      "sha256": {
+        "linux-x86_64": "80086d37ed6c0aba535fe9482a831d2707830e10f92e2f5329cd37a3444be602",
+        "linux-aarch64": "8751c0e038f1531c213868445dfd687080d836a510b80326c1948b4b61bc51be",
+        "macos-x86_64": "f96b60047d9ac0b14362fd7451847f26b28ddb36a706379bb6de4a4e5fe38895",
+        "macos-aarch64": "c73f22acbd71837f9474bb4f236c6f568966e7155989a7facc9a9b9259d60a8c",
+        "windows-x86_64": "203919f35d3e36a483726a69291a018b668b8df2dfd46994931420cf928b9fda"
+      }
+    },
     "0.9.6": {
       "notes": "### Changed\n- Updates are signed. `h0x update` checks the release's minisign signature on the manifest and on the downloaded binary, and refuses an update that is unsigned or does not match the release key.\n- Installing h0x on a remote machine checks the same signature before the binary is used.\n- Agent hook installs and plugin links or enables requested through the socket API ask in the attached client first. The request waits for Allow or Deny, gives up after 120 seconds, and fails with `needs_confirmation` when no client is attached. The `h0x integration install`, `h0x plugin link` and `h0x plugin enable` commands still run without a prompt outside any pane on the local machine; inside a pane or with `--machine` they ask.\n- Downloads use HTTPS only. The installers accept plain http only for loopback addresses.\n\n### Fixed\n- Release notes and product announcements no longer pass terminal control characters through to your terminal.\n- Session files are private to your user (files 0600, folders 0700).\n- Git refs and branch names that start with `-` are refused, so they cannot be read as git options.",
       "protocol": 22,
