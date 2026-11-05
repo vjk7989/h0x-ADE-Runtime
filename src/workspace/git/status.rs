@@ -8,7 +8,7 @@ use super::{
     discovery::{
         automatic_workspace_label, canonicalize_best_effort_path, fallback_label_from_cwd,
         git_ref_storage_is_reftable, git_rev_parse_verify, git_space_metadata_from_info,
-        git_symbolic_head_full, git_worktree_info, read_git_ref_file, read_ref_oid,
+        git_symbolic_head_full, git_worktree_info, is_git_oid, read_git_ref_file, read_ref_oid,
         GitWorktreeInfo,
     },
 };
@@ -319,11 +319,11 @@ fn git_ahead_behind_between(
     head_oid: &str,
     upstream_oid: &str,
 ) -> Option<(usize, usize)> {
-    let range = format!("{head_oid}...{upstream_oid}");
+    let args = git_ahead_behind_args(head_oid, upstream_oid)?;
     let output = crate::noninteractive_process::command("git")
         .arg("-C")
         .arg(cwd)
-        .args(["rev-list", "--left-right", "--count", &range])
+        .args(&args)
         .output()
         .ok()?;
 
@@ -333,6 +333,22 @@ fn git_ahead_behind_between(
 
     let stdout = String::from_utf8(output.stdout).ok()?;
     parse_git_ahead_behind_output(&stdout)
+}
+
+/// `rev-list` argv for the ahead/behind count. Both sides come from untrusted
+/// ref files, so they must be full oids; `--end-of-options` keeps git from
+/// reading the range as an option either way.
+fn git_ahead_behind_args(head_oid: &str, upstream_oid: &str) -> Option<[String; 5]> {
+    if !is_git_oid(head_oid) || !is_git_oid(upstream_oid) {
+        return None;
+    }
+    Some([
+        "rev-list".to_string(),
+        "--left-right".to_string(),
+        "--count".to_string(),
+        "--end-of-options".to_string(),
+        format!("{head_oid}...{upstream_oid}"),
+    ])
 }
 
 fn parse_git_ahead_behind_output(stdout: &str) -> Option<(usize, usize)> {
@@ -349,6 +365,68 @@ mod tests {
         git_space_metadata,
         test_support::{run_git, temp_test_dir, write_fake_tracked_repo},
     };
+
+    const SHA1_OID: &str = "1111111111111111111111111111111111111111";
+    const SHA256_OID: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+
+    #[test]
+    fn ahead_behind_args_put_end_of_options_before_the_range() {
+        assert_eq!(
+            git_ahead_behind_args(SHA1_OID, SHA1_OID),
+            Some([
+                "rev-list".to_string(),
+                "--left-right".to_string(),
+                "--count".to_string(),
+                "--end-of-options".to_string(),
+                format!("{SHA1_OID}...{SHA1_OID}"),
+            ])
+        );
+        let sha256 = git_ahead_behind_args(SHA256_OID, SHA256_OID).expect("64-hex oids");
+        assert_eq!(sha256[3], "--end-of-options");
+        assert_eq!(sha256[4], format!("{SHA256_OID}...{SHA256_OID}"));
+    }
+
+    #[test]
+    fn ahead_behind_args_refuse_non_oid_sides() {
+        let upper = SHA1_OID.replace('1', "A");
+        for bad in [
+            "--output=probe",
+            "",
+            "1111111",
+            upper.as_str(),
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+        ] {
+            assert_eq!(git_ahead_behind_args(bad, SHA1_OID), None, "head {bad:?}");
+            assert_eq!(
+                git_ahead_behind_args(SHA1_OID, bad),
+                None,
+                "upstream {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn option_shaped_upstream_ref_gives_no_ahead_behind() {
+        let root = temp_test_dir("option-shaped-upstream");
+        write_fake_tracked_repo(&root);
+        std::fs::write(
+            root.join(".git/refs/remotes/origin/main"),
+            "--output=probe\n",
+        )
+        .unwrap();
+
+        let fingerprint = git_status_fingerprint(&root).unwrap();
+        let (snapshot, _) = git_status_snapshot_for_cwd(&root, None);
+        let probe_written = root.join("probe").exists();
+        std::fs::remove_dir_all(root).unwrap();
+
+        assert_eq!(fingerprint.upstream_oid(), None);
+        assert_eq!(snapshot.ahead_behind, None);
+        assert!(
+            !probe_written,
+            "git must never see the ref text as an option"
+        );
+    }
 
     #[cfg(target_os = "linux")]
     #[test]
