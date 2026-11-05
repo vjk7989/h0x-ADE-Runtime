@@ -1639,8 +1639,38 @@ mod tests {
         assert!(ensure_update_target_unchanged(&expected, None).is_err());
     }
 
+    /// Runs `test` with the config and state dirs in a fresh temp home, so these tests never
+    /// write the user's real registry under `%APPDATA%` or `~/.config` (ADR-052).
+    fn with_temp_plugin_home(label: &str, test: impl FnOnce()) {
+        let _guard = crate::config::test_config_env_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let previous =
+            ["XDG_CONFIG_HOME", "XDG_STATE_HOME"].map(|key| (key, std::env::var_os(key)));
+        let home = std::env::temp_dir().join(unique_plugin_id(label));
+        std::env::set_var("XDG_CONFIG_HOME", home.join("config"));
+        std::env::set_var("XDG_STATE_HOME", home.join("state"));
+        assert!(crate::config::config_dir().starts_with(&home));
+        assert!(crate::config::state_dir().starts_with(&home));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(test));
+        for (key, value) in previous {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        let _ = std::fs::remove_dir_all(home);
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
     #[test]
     fn in_process_link_and_enable_update_the_registry_without_the_api() {
+        with_temp_plugin_home("in-process-home", in_process_link_and_enable);
+    }
+
+    fn in_process_link_and_enable() {
         let plugin_id = unique_plugin_id("in-process");
         let root = std::env::temp_dir().join(&plugin_id);
         std::fs::create_dir_all(&root).unwrap();
@@ -1681,24 +1711,18 @@ platforms = [\"linux\", \"macos\", \"windows\"]
         assert!(missing.to_string().contains("not found"), "{missing}");
         assert!(offline_plugin_enable_response("").is_err());
 
-        crate::persist::plugin_registry::update(|plugins| {
-            plugins.retain(|plugin| plugin.plugin_id != plugin_id)
-        })
-        .unwrap();
-        let _ = std::fs::remove_dir_all(crate::plugin_paths::plugin_config_dir(&plugin_id));
-        let _ = std::fs::remove_dir_all(crate::plugin_paths::plugin_state_dir(&plugin_id));
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
     fn cli_user_dir_creation_seeds_legacy_config_before_printing_config_dir() {
+        with_temp_plugin_home("legacy-config-home", seeds_legacy_config);
+    }
+
+    fn seeds_legacy_config() {
         let plugin_id = unique_plugin_id("legacy-config");
         let config_dir = crate::plugin_paths::plugin_config_dir(&plugin_id);
-        let state_dir = crate::plugin_paths::plugin_state_dir(&plugin_id);
         let legacy_dir = crate::config::config_dir().join("plugins").join(&plugin_id);
-        let _ = std::fs::remove_dir_all(&config_dir);
-        let _ = std::fs::remove_dir_all(&state_dir);
-        let _ = std::fs::remove_dir_all(&legacy_dir);
         std::fs::create_dir_all(&legacy_dir).unwrap();
         std::fs::write(legacy_dir.join(".env"), "TOKEN=legacy\n").unwrap();
 
@@ -1711,9 +1735,5 @@ platforms = [\"linux\", \"macos\", \"windows\"]
             std::fs::read_to_string(config_dir.join(".env")).unwrap(),
             "TOKEN=legacy\n"
         );
-
-        let _ = std::fs::remove_dir_all(config_dir);
-        let _ = std::fs::remove_dir_all(state_dir);
-        let _ = std::fs::remove_dir_all(legacy_dir);
     }
 }
