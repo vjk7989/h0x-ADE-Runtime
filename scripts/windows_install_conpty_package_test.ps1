@@ -250,7 +250,7 @@ try {
 
     $required = @(
         "h0x.exe",
-        "conpty\herdr-conpty.json",
+        "conpty\h0x-conpty.json",
         "conpty\conpty.dll",
         "conpty\x64\OpenConsole.exe",
         "conpty\arm64\OpenConsole.exe",
