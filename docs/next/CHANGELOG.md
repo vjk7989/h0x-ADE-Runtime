@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## [0.9.7] - 2026-11-05
+
+### Fixed
+- On Windows, h0x refuses to talk to a pipe run by another account.
+- Folders reported by pane output on network shares or device paths are ignored, so terminal output can't make Windows contact a network share.
+- Git status ignores malformed refs, so repository files can't inject git options.
+- Release files must be signed for that exact file.
+
 ## [0.9.6] - 2026-11-05
 
 ### Changed
