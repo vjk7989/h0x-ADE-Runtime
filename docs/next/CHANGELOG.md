@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## [0.9.9] - 2026-11-05
+
+### Changed
+- The sidebar shows rotating HyperOx busy words while an agent works.
+- Docs: plugin examples use a neutral `owner/h0x-plugin`, and troubleshooting links point to our issues.
+- Tests keep plugin state in a temporary home.
+
 ## [0.9.8] - 2026-11-05
 
 ### Changed
