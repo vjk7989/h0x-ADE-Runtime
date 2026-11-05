@@ -47,11 +47,10 @@ pub(crate) fn connect_local_stream(path: &Path) -> io::Result<LocalStream> {
 
     #[cfg(windows)]
     {
-        use interprocess::local_socket::{prelude::*, GenericNamespaced};
-
-        let name = path.to_string_lossy().to_string();
-        let name = name.to_ns_name::<GenericNamespaced>()?;
-        LocalStream::connect(name).map_err(crate::platform::local_server_connection_error)
+        crate::platform::connect_local_stream_with_wait_mode(
+            path,
+            interprocess::ConnectWaitMode::Unbounded,
+        )
     }
 }
 

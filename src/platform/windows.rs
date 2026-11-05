@@ -150,32 +150,100 @@ pub(crate) fn allow_unelevated_clients() {
 }
 
 pub(crate) fn probe_local_server(path: &std::path::Path) -> std::io::Result<()> {
-    use interprocess::os::windows::named_pipe::{pipe_mode::Bytes, DuplexPipeStream};
-    use interprocess::ConnectWaitMode;
-
     // The local-socket wrapper ignores wait_mode on Windows in interprocess
     // 2.4.2. Its named-pipe API honors it without importing/reopening a handle.
-    let name = format!(r"\\.\pipe\{}", path.to_string_lossy());
-    DuplexPipeStream::<Bytes>::connect_by_path_with_wait_mode(
-        name.as_str(),
-        ConnectWaitMode::Timeout(Duration::from_millis(500)),
+    connect_local_stream_with_wait_mode(
+        path,
+        interprocess::ConnectWaitMode::Timeout(Duration::from_millis(500)),
     )
     .map(|_| ())
-    .map_err(local_server_connection_error)
 }
 
 pub(crate) fn connect_local_stream_with_timeout(
     path: &std::path::Path,
     timeout: Duration,
 ) -> std::io::Result<crate::ipc::LocalStream> {
+    connect_local_stream_with_wait_mode(path, interprocess::ConnectWaitMode::Timeout(timeout))
+}
+
+/// Every client connect goes through here: the pipe name is predictable, so
+/// whoever created it first serves it. Only talk to a server of this account.
+pub(crate) fn connect_local_stream_with_wait_mode(
+    path: &std::path::Path,
+    wait_mode: interprocess::ConnectWaitMode,
+) -> std::io::Result<crate::ipc::LocalStream> {
     use interprocess::os::windows::named_pipe::{pipe_mode::Bytes, DuplexPipeStream};
     let name = format!(r"\\.\pipe\{}", path.to_string_lossy());
-    DuplexPipeStream::<Bytes>::connect_by_path_with_wait_mode(
-        name.as_str(),
-        interprocess::ConnectWaitMode::Timeout(timeout),
-    )
-    .map(|pipe| crate::ipc::LocalStream::NamedPipe(pipe.into()))
-    .map_err(local_server_connection_error)
+    let pipe = DuplexPipeStream::<Bytes>::connect_by_path_with_wait_mode(name.as_str(), wait_mode)
+        .map_err(local_server_connection_error)?;
+    served_by_this_account(pipe.as_raw_handle(), &name)?;
+    Ok(crate::ipc::LocalStream::NamedPipe(pipe.into()))
+}
+
+fn served_by_this_account(pipe: HANDLE, name: &str) -> std::io::Result<()> {
+    use windows_sys::Win32::{Security::EqualSid, System::Pipes::GetNamedPipeServerProcessId};
+
+    let mut pid = 0u32;
+    if unsafe { GetNamedPipeServerProcessId(pipe, &mut pid) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let server = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if server.is_null() {
+        return Err(std::io::Error::last_os_error());
+    }
+    let server = unsafe { OwnedHandle::from_raw_handle(server) };
+    let theirs = token_user(server.as_raw_handle())?;
+    let ours = token_user(unsafe { GetCurrentProcess() })?;
+    if unsafe { EqualSid(user_sid(&theirs), user_sid(&ours)) } == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("{name} is served by another account (process {pid}); h0x won't use it"),
+        ));
+    }
+    Ok(())
+}
+
+/// The TOKEN_USER of `process`, in usizes so the TOKEN_USER is aligned and
+/// its trailing SID stays alive.
+fn token_user(process: HANDLE) -> std::io::Result<Vec<usize>> {
+    use windows_sys::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY};
+    use windows_sys::Win32::System::Threading::OpenProcessToken;
+
+    let mut token = null_mut();
+    if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let token = unsafe { OwnedHandle::from_raw_handle(token) };
+    let mut needed = 0;
+    unsafe { GetTokenInformation(token.as_raw_handle(), TokenUser, null_mut(), 0, &mut needed) };
+    if needed == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut buffer = vec![0usize; (needed as usize).div_ceil(size_of::<usize>())];
+    if unsafe {
+        GetTokenInformation(
+            token.as_raw_handle(),
+            TokenUser,
+            buffer.as_mut_ptr().cast(),
+            needed,
+            &mut needed,
+        )
+    } == 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(buffer)
+}
+
+fn user_sid(token_user: &[usize]) -> windows_sys::Win32::Security::PSID {
+    // SAFETY: token_user holds an aligned TOKEN_USER written by GetTokenInformation.
+    unsafe {
+        (*token_user
+            .as_ptr()
+            .cast::<windows_sys::Win32::Security::TOKEN_USER>())
+        .User
+        .Sid
+    }
 }
 
 pub(crate) fn local_server_security_descriptor(
@@ -221,40 +289,11 @@ fn user_security_descriptor(
 ) -> std::io::Result<interprocess::os::windows::security_descriptor::SecurityDescriptor> {
     use interprocess::os::windows::security_descriptor::SecurityDescriptor;
     use widestring::{U16CStr, U16CString};
-    use windows_sys::Win32::Security::{
-        Authorization::ConvertSidToStringSidW, GetTokenInformation, TokenUser, TOKEN_QUERY,
-        TOKEN_USER,
-    };
-    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
 
-    let mut token = null_mut();
-    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    let token = unsafe { OwnedHandle::from_raw_handle(token) };
-    let mut needed = 0;
-    unsafe { GetTokenInformation(token.as_raw_handle(), TokenUser, null_mut(), 0, &mut needed) };
-    if needed == 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    // usize storage keeps TOKEN_USER aligned and its trailing SID alive.
-    let mut buffer = vec![0usize; (needed as usize).div_ceil(size_of::<usize>())];
-    if unsafe {
-        GetTokenInformation(
-            token.as_raw_handle(),
-            TokenUser,
-            buffer.as_mut_ptr().cast(),
-            needed,
-            &mut needed,
-        )
-    } == 0
-    {
-        return Err(std::io::Error::last_os_error());
-    }
-    // SAFETY: GetTokenInformation initialized the aligned TOKEN_USER and SID.
-    let user = unsafe { &*buffer.as_ptr().cast::<TOKEN_USER>() };
+    let user = token_user(unsafe { GetCurrentProcess() })?;
     let mut sid = null_mut();
-    if unsafe { ConvertSidToStringSidW(user.User.Sid, &mut sid) } == 0 {
+    if unsafe { ConvertSidToStringSidW(user_sid(&user), &mut sid) } == 0 {
         return Err(std::io::Error::last_os_error());
     }
     let sid_text = unsafe { U16CStr::from_ptr_str(sid) }.to_string_lossy();
@@ -3536,6 +3575,19 @@ mod tests {
             );
             assert!(start.elapsed() < Duration::from_secs(1));
         }
+    }
+
+    #[test]
+    fn a_pipe_we_create_is_one_we_may_connect_to() {
+        // Each connect path takes the one free instance; accepting makes the next.
+        let path = std::path::PathBuf::from(format!("h0x-own-pipe-{}", std::process::id()));
+        let listener = super::PrivateLocalListener::bind(&path).unwrap();
+        let _plain = crate::ipc::connect_local_stream(&path).unwrap();
+        let _served = listener.accept().unwrap();
+        let _timed =
+            super::connect_local_stream_with_timeout(&path, Duration::from_millis(500)).unwrap();
+        let _served_timed = listener.accept().unwrap();
+        super::probe_local_server(&path).unwrap();
     }
 
     #[test]
