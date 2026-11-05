@@ -1092,6 +1092,9 @@ pub struct ClientShellAgent {
     pub state_labels: Vec<(String, String)>,
     pub tokens: Vec<(String, String)>,
     pub focused: bool,
+    /// Client-side only (never sent): when this client first saw the agent working, in Unix ms.
+    #[serde(skip)]
+    pub working_since_ms: Option<u64>,
 }
 
 /// Origin-relative geometry for one pane in a rendered pane surface.

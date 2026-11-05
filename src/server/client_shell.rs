@@ -173,6 +173,7 @@ pub(super) fn snapshot_with_completions(
                 state_labels,
                 tokens,
                 focused,
+                working_since_ms: None,
             }
         })
         .collect();

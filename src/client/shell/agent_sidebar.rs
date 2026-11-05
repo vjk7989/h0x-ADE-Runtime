@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use ratatui::{
@@ -286,8 +287,13 @@ pub(super) fn agent_row(
     let tokens = agent.tokens.iter().cloned().collect::<HashMap<_, _>>();
     let state_text = labels
         .get(status_text(agent.agent_status))
-        .map(String::as_str)
-        .unwrap_or_else(|| sidebar_status_text(agent.agent_status));
+        .map(|label| Cow::Borrowed(label.as_str()))
+        .unwrap_or_else(|| {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since_epoch| since_epoch.as_millis() as u64);
+            sidebar_status_text(agent, now_ms)
+        });
     let canonical_agent = agent
         .agent
         .as_deref()
@@ -308,7 +314,7 @@ pub(super) fn agent_row(
             canonical_agent,
             tokens: &tokens,
         },
-        state_text,
+        &state_text,
     );
     Some(AgentRow {
         pane_id: agent.pane_id.clone(),
@@ -385,12 +391,191 @@ fn display_width(text: &str) -> usize {
     unicode_width::UnicodeWidthStr::width(text)
 }
 
-fn sidebar_status_text(status: crate::api::schema::AgentStatus) -> &'static str {
+fn sidebar_status_text(
+    agent: &crate::protocol::ClientShellAgent,
+    now_ms: u64,
+) -> Cow<'static, str> {
     use crate::api::schema::AgentStatus;
-    match status {
-        AgentStatus::Blocked => "blocked",
-        AgentStatus::Done => "done",
-        AgentStatus::Working => "working",
-        AgentStatus::Idle | AgentStatus::Unknown => "idle",
+    match agent.agent_status {
+        AgentStatus::Blocked => "blocked".into(),
+        AgentStatus::Done => "done".into(),
+        AgentStatus::Working => busy_verb(&agent.pane_id, agent.working_since_ms, now_ms).into(),
+        AgentStatus::Idle | AgentStatus::Unknown => "idle".into(),
+    }
+}
+
+/// HyperOx busy verbs (ADR-059). Must stay identical to the app's `BUSY_VERBS` in `src/mods.rs`.
+const BUSY_VERBS: [&str; 24] = [
+    "Oxygenating",
+    "Hyperthinking",
+    "Catalyzing",
+    "Combusting",
+    "Ionizing",
+    "Bubbling",
+    "Fizzing",
+    "Distilling",
+    "Synthesizing",
+    "Crystallizing",
+    "Percolating",
+    "Kindling",
+    "Smelting",
+    "Forging",
+    "Tinkering",
+    "Conjuring",
+    "Calibrating",
+    "Untangling",
+    "Brewing",
+    "Sparking",
+    "Weaving",
+    "Assembling",
+    "Noodling",
+    "Pondering",
+];
+
+/// The busy verb for `id`: the next one every 4 s since `working_since_ms`, offset by a hash
+/// of the id so neighbours differ. Without `working_since_ms`, the hash alone. Same algorithm
+/// as the app's `busy_verb`.
+fn busy_verb(id: &str, working_since_ms: Option<u64>, now_ms: u64) -> String {
+    let n = BUSY_VERBS.len() as u64;
+    let step = working_since_ms.map_or(0, |since| now_ms.saturating_sub(since) / 4000);
+    let hash = id
+        .bytes()
+        .fold(0u64, |h, b| h.wrapping_mul(31).wrapping_add(b.into()));
+    format!(
+        "{}\u{2026}",
+        BUSY_VERBS[((step % n + hash % n) % n) as usize]
+    )
+}
+
+#[cfg(test)]
+mod busy_verb_tests {
+    use super::*;
+
+    #[test]
+    fn busy_verbs_are_24_and_never_herd() {
+        assert_eq!(BUSY_VERBS.len(), 24);
+        let unique = BUSY_VERBS.iter().collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(unique.len(), 24, "no verb twice");
+        for verb in BUSY_VERBS {
+            assert!(!verb.to_lowercase().contains("herd"), "{verb}");
+            assert!(!verb.is_empty() && verb.ends_with("ing"), "{verb}");
+        }
+        assert_eq!(BUSY_VERBS[0], "Oxygenating");
+        assert_eq!(BUSY_VERBS[23], "Pondering");
+    }
+
+    #[test]
+    fn busy_verb_rotates_every_four_seconds() {
+        let since = 1_700_000_000_000;
+        let at = |ms: u64| busy_verb("t1", Some(since), since + ms);
+        assert_eq!(at(0), "Assembling\u{2026}");
+        assert_eq!(
+            at(3999),
+            "Assembling\u{2026}",
+            "same verb inside one 4 s step"
+        );
+        assert_eq!(at(4000), "Noodling\u{2026}");
+        assert_eq!(at(8000), "Pondering\u{2026}");
+        assert_eq!(
+            at(12000),
+            "Oxygenating\u{2026}",
+            "wraps after the last verb"
+        );
+        assert_eq!(at(24 * 4000), at(0), "a full turn is 24 steps");
+        for step in 0..24 {
+            assert_ne!(
+                at(step * 4000),
+                at((step + 1) * 4000),
+                "step {step} moves on"
+            );
+        }
+        // A clock behind working_since shows the first step, not a panic.
+        assert_eq!(busy_verb("t1", Some(since), since - 5000), at(0));
+    }
+
+    #[test]
+    fn busy_verb_differs_between_panes_deterministically() {
+        let since = Some(1_700_000_000_000);
+        let now = 1_700_000_123_456;
+        assert_ne!(busy_verb("t1", since, now), busy_verb("t2", since, now));
+        assert_eq!(busy_verb("t1", since, now), busy_verb("t1", since, now));
+        assert_ne!(
+            busy_verb("vps/t7", since, now),
+            busy_verb("vps/t8", since, now)
+        );
+        assert!(busy_verb("C:\\work\\t1", since, now).ends_with('\u{2026}'));
+    }
+
+    #[test]
+    fn busy_verb_without_working_since_uses_the_id_alone() {
+        for now in [0, 1_700_000_000_000, 1_700_000_004_000, u64::MAX] {
+            assert_eq!(busy_verb("t1", None, now), "Assembling\u{2026}");
+        }
+        assert_eq!(
+            busy_verb("", None, 0),
+            "Oxygenating\u{2026}",
+            "an empty id is the first verb"
+        );
+    }
+
+    /// The same (id, since, now) cases as the app's render_tests.rs, so both repos show the same verb.
+    #[test]
+    fn busy_verb_matches_the_app() {
+        let since = 1_700_000_000_000;
+        assert_eq!(busy_verb("t2", Some(since), since), "Noodling\u{2026}");
+        assert_eq!(
+            busy_verb("t1", Some(since), since + 4000),
+            "Noodling\u{2026}"
+        );
+        assert_eq!(
+            busy_verb("t1", Some(since), since + 12000),
+            "Oxygenating\u{2026}"
+        );
+        assert_eq!(busy_verb("t1", None, 0), "Assembling\u{2026}");
+        assert_eq!(busy_verb("", None, 0), "Oxygenating\u{2026}");
+    }
+
+    #[test]
+    fn sidebar_state_text_is_a_verb_only_while_working() {
+        use crate::api::schema::AgentStatus;
+        let since = 1_700_000_000_000;
+        let mut agent = crate::protocol::ClientShellAgent {
+            pane_id: "t1".into(),
+            workspace_id: "ws_1".into(),
+            tab_id: "tab_1".into(),
+            name: None,
+            display_agent: None,
+            agent: None,
+            title: None,
+            terminal_title: None,
+            terminal_title_stripped: None,
+            agent_status: AgentStatus::Working,
+            state_change_seq: 1,
+            state_labels: Vec::new(),
+            tokens: Vec::new(),
+            focused: false,
+            working_since_ms: Some(since),
+        };
+        assert_eq!(sidebar_status_text(&agent, since), "Assembling\u{2026}");
+        assert_eq!(
+            sidebar_status_text(&agent, since + 4000),
+            "Noodling\u{2026}",
+            "the verb rotates with the client's working-since time"
+        );
+        agent.working_since_ms = None;
+        assert_eq!(
+            sidebar_status_text(&agent, since + 4000),
+            "Assembling\u{2026}"
+        );
+        for (status, text) in [
+            (AgentStatus::Blocked, "blocked"),
+            (AgentStatus::Done, "done"),
+            (AgentStatus::Idle, "idle"),
+            (AgentStatus::Unknown, "idle"),
+        ] {
+            agent.agent_status = status;
+            agent.working_since_ms = Some(since);
+            assert_eq!(sidebar_status_text(&agent, since), text);
+        }
     }
 }

@@ -961,6 +961,7 @@ pub(crate) struct ClientShellState {
     pub(super) config_diagnostic: Option<String>,
     pub(super) endpoint_error: Option<String>,
     pub(super) endpoint_error_deadline: Option<std::time::Instant>,
+    pub(super) busy_verb_repaint_at: Option<std::time::Instant>,
     pub(super) dismissed_product_announcement: Option<(String, String)>,
 }
 
@@ -1129,6 +1130,7 @@ impl ClientShellState {
             local_config_diagnostic,
             endpoint_error: None,
             endpoint_error_deadline: None,
+            busy_verb_repaint_at: None,
             dismissed_product_announcement: None,
         }
     }
@@ -1890,6 +1892,27 @@ impl ClientShellState {
             return true;
         }
         false
+    }
+
+    /// Repaints at most once a second while an agent is working, so the sidebar's busy verb
+    /// moves on (ADR-059).
+    pub(crate) fn tick_busy_verbs(&mut self, now: std::time::Instant) -> bool {
+        let working = self
+            .endpoints
+            .iter()
+            .filter_map(|endpoint| endpoint.snapshot.as_deref())
+            .chain(self.snapshot.as_deref())
+            .flat_map(|snapshot| &snapshot.agents)
+            .any(|agent| agent.agent_status == crate::api::schema::AgentStatus::Working);
+        if !working {
+            self.busy_verb_repaint_at = None;
+            return false;
+        }
+        if self.busy_verb_repaint_at.is_some_and(|at| now < at) {
+            return false;
+        }
+        self.busy_verb_repaint_at = Some(now + std::time::Duration::from_secs(1));
+        true
     }
 
     pub(crate) fn timer_delay(&self, now: std::time::Instant) -> std::time::Duration {
