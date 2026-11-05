@@ -1532,34 +1532,32 @@ mod tests {
 
     #[test]
     fn github_plugin_source_parses_root_repo() {
-        let source = GithubPluginSource::parse("ogulcancelik/h0x-plugin-examples").unwrap();
-        assert_eq!(source.owner, "ogulcancelik");
-        assert_eq!(source.repo, "h0x-plugin-examples");
+        let source = GithubPluginSource::parse("owner/h0x-plugin").unwrap();
+        assert_eq!(source.owner, "owner");
+        assert_eq!(source.repo, "h0x-plugin");
         assert_eq!(source.subdir, None);
         assert_eq!(
             source.remote_url(),
-            "https://github.com/ogulcancelik/h0x-plugin-examples.git"
+            "https://github.com/owner/h0x-plugin.git"
         );
     }
 
     #[test]
     fn github_plugin_source_parses_subdir() {
-        let source =
-            GithubPluginSource::parse("ogulcancelik/h0x-plugin-examples/worktree-bootstrap")
-                .unwrap();
-        assert_eq!(source.owner, "ogulcancelik");
-        assert_eq!(source.repo, "h0x-plugin-examples");
+        let source = GithubPluginSource::parse("owner/h0x-plugin/worktree-bootstrap").unwrap();
+        assert_eq!(source.owner, "owner");
+        assert_eq!(source.repo, "h0x-plugin");
         assert_eq!(source.subdir.as_deref(), Some("worktree-bootstrap"));
     }
 
     #[test]
     fn github_plugin_source_rejects_non_shorthand_sources() {
         for source in [
-            "https://github.com/ogulcancelik/h0x-plugin-examples",
-            "git@github.com:ogulcancelik/h0x-plugin-examples.git",
-            "ogulcancelik",
-            "ogulcancelik/h0x-plugin-examples/../bad",
-            "ogulcancelik/h0x-plugin-examples//bad",
+            "https://github.com/owner/h0x-plugin",
+            "git@github.com:owner/h0x-plugin.git",
+            "owner",
+            "owner/h0x-plugin/../bad",
+            "owner/h0x-plugin//bad",
         ] {
             assert!(
                 GithubPluginSource::parse(source).is_err(),
@@ -1570,20 +1568,18 @@ mod tests {
 
     #[test]
     fn github_source_lookup_matches_installed_plugin_source() {
-        let source =
-            GithubPluginSource::parse("ogulcancelik/h0x-plugin-examples/agent-telegram-notify")
-                .unwrap();
+        let source = GithubPluginSource::parse("owner/h0x-plugin/agent-telegram-notify").unwrap();
         let plugins = vec![
             github_plugin(
                 "examples.github-link-preview",
-                "ogulcancelik",
-                "h0x-plugin-examples",
+                "owner",
+                "h0x-plugin",
                 Some("github-link-preview"),
             ),
             github_plugin(
                 "examples.agent-telegram-notify",
-                "ogulcancelik",
-                "h0x-plugin-examples",
+                "owner",
+                "h0x-plugin",
                 Some("agent-telegram-notify"),
             ),
         ];
@@ -1594,11 +1590,11 @@ mod tests {
 
     #[test]
     fn github_source_lookup_requires_exact_subdir() {
-        let source = GithubPluginSource::parse("ogulcancelik/h0x-plugin-examples").unwrap();
+        let source = GithubPluginSource::parse("owner/h0x-plugin").unwrap();
         let plugins = vec![github_plugin(
             "examples.agent-telegram-notify",
-            "ogulcancelik",
-            "h0x-plugin-examples",
+            "owner",
+            "h0x-plugin",
             Some("agent-telegram-notify"),
         )];
 
@@ -1607,13 +1603,8 @@ mod tests {
 
     #[test]
     fn github_source_lookup_ignores_owner_and_repo_case() {
-        let source = GithubPluginSource::parse("OGULCANCELIK/H0X-PLUGIN-EXAMPLES").unwrap();
-        let plugins = vec![github_plugin(
-            "examples.root",
-            "ogulcancelik",
-            "h0x-plugin-examples",
-            None,
-        )];
+        let source = GithubPluginSource::parse("OWNER/H0X-PLUGIN").unwrap();
+        let plugins = vec![github_plugin("examples.root", "owner", "h0x-plugin", None)];
 
         assert_eq!(
             plugin_by_github_source(plugins, &source).unwrap().plugin_id,
@@ -1623,13 +1614,8 @@ mod tests {
 
     #[test]
     fn github_source_lookup_ignores_local_plugins() {
-        let source = GithubPluginSource::parse("ogulcancelik/h0x-plugin-examples").unwrap();
-        let mut plugin = github_plugin(
-            "examples.local",
-            "ogulcancelik",
-            "h0x-plugin-examples",
-            None,
-        );
+        let source = GithubPluginSource::parse("owner/h0x-plugin").unwrap();
+        let mut plugin = github_plugin("examples.local", "owner", "h0x-plugin", None);
         plugin.source = PluginSourceInfo::default();
 
         assert!(plugin_by_github_source([plugin], &source).is_none());
