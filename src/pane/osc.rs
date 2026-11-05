@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tracing::info;
 
@@ -339,11 +339,46 @@ fn parse_default_color_set_events(body: &[u8]) -> Vec<DefaultColorEvent> {
 
 pub(super) fn parse_reported_cwd(value: &[u8]) -> Option<PathBuf> {
     let value = std::str::from_utf8(value).ok()?.trim();
-    if value.starts_with("file://") {
-        return parse_file_uri_cwd(value);
+    let path = if value.starts_with("file://") {
+        parse_file_uri_cwd(value)?
+    } else {
+        let path = value.trim_matches('"');
+        if path.is_empty() {
+            return None;
+        }
+        PathBuf::from(path)
+    };
+    is_local_cwd(&path).then_some(path)
+}
+
+/// Pane output controls the reported cwd, and callers later run `is_dir()` on
+/// it and spawn in it. A UNC path would make Windows open an SMB connection
+/// (leaking NTLM credentials), so only local shapes pass. This never touches
+/// the filesystem; it mirrors the vendored kitty `windows.checkPath`.
+pub(super) fn is_local_cwd(path: &Path) -> bool {
+    let Some(text) = path.to_str() else {
+        return false;
+    };
+    let bytes = text.as_bytes();
+    let is_sep = |byte: u8| byte == b'/' || byte == b'\\';
+    // Two leading separators: a server name, or `\\?\` / `\\.\` device paths.
+    if bytes.len() >= 2 && is_sep(bytes[0]) && is_sep(bytes[1]) {
+        return false;
     }
-    let path = value.trim_matches('"');
-    (!path.is_empty()).then(|| PathBuf::from(path))
+    // NT object namespace: `\??\` and `/??/`.
+    if bytes.len() >= 4
+        && is_sep(bytes[0])
+        && bytes[1] == b'?'
+        && bytes[2] == b'?'
+        && is_sep(bytes[3])
+    {
+        return false;
+    }
+    #[cfg(windows)]
+    if let Some(std::path::Component::Prefix(prefix)) = path.components().next() {
+        return matches!(prefix.kind(), std::path::Prefix::Disk(_));
+    }
+    true
 }
 
 /// Collects complete OSC bodies from a raw byte stream. Consumers receive only
@@ -1003,6 +1038,51 @@ mod tests {
         assert_eq!(parse_reported_cwd(b""), None);
         assert_eq!(parse_reported_cwd(b"\xff"), None);
         assert_eq!(parse_reported_cwd(b"file://remote/tmp"), None);
+    }
+
+    #[test]
+    fn reported_cwd_rejects_unc_and_device_paths() {
+        for value in [
+            &b"\\\\h\\s"[..],
+            b"//h/s",
+            b"\\/h/s",
+            b"/\\h\\s",
+            b"\"\\\\h\\s\"",
+            b"file:////h/s",
+            b"file://localhost//h/s",
+            b"file:///%2Fh/s",
+            b"\\\\?\\C:\\x",
+            b"\\\\.\\pipe\\x",
+            b"\\??\\UNC\\h\\s",
+            b"/??/UNC/h/s",
+        ] {
+            assert_eq!(
+                parse_reported_cwd(value),
+                None,
+                "{}",
+                String::from_utf8_lossy(value)
+            );
+        }
+    }
+
+    #[test]
+    fn reported_cwd_keeps_local_paths() {
+        assert_eq!(
+            parse_reported_cwd(b"/home/u"),
+            Some(std::path::PathBuf::from("/home/u"))
+        );
+        assert_eq!(
+            parse_reported_cwd(b"C:\\Users\\u"),
+            Some(std::path::PathBuf::from("C:\\Users\\u"))
+        );
+        assert_eq!(
+            parse_reported_cwd(b"file:///home/u"),
+            Some(std::path::PathBuf::from("/home/u"))
+        );
+        assert_eq!(
+            parse_reported_cwd(b"file://localhost/home/u"),
+            Some(std::path::PathBuf::from("/home/u"))
+        );
     }
 
     // -----------------------------------------------------------------------

@@ -2928,7 +2928,8 @@ fn windows_powershell_prompt_line_cwd(line: &str) -> Option<std::path::PathBuf> 
         raw_cwd = filesystem_path;
     }
     let cwd = std::path::PathBuf::from(raw_cwd);
-    (cwd.is_absolute() && cwd.is_dir()).then_some(cwd)
+    // Refuse UNC/device paths before `is_dir()`, which would open SMB.
+    (super::osc::is_local_cwd(&cwd) && cwd.is_absolute() && cwd.is_dir()).then_some(cwd)
 }
 
 fn ghostty_recent_text_snapshot(
@@ -4276,6 +4277,39 @@ mod tests {
         let text = format!("PS {}> echo hi", cwd.display());
 
         assert_eq!(windows_powershell_prompt_cwd(&text), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_powershell_prompt_cwd_rejects_unc_prompt_paths() {
+        assert_eq!(
+            windows_powershell_prompt_line_cwd("PS \\\\host\\share>"),
+            None
+        );
+        assert_eq!(
+            windows_powershell_prompt_line_cwd(
+                "PS Microsoft.PowerShell.Core\\FileSystem::\\\\host\\share>"
+            ),
+            None
+        );
+        assert!(!super::super::osc::is_local_cwd(std::path::Path::new(
+            "\\\\host\\share"
+        )));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_powershell_prompt_cwd_keeps_local_prompt_paths() {
+        assert!(super::super::osc::is_local_cwd(std::path::Path::new(
+            "C:\\Users\\u"
+        )));
+        let cwd = std::env::current_dir().unwrap();
+        let line = format!("PS {}>", cwd.display());
+
+        assert_eq!(
+            windows_powershell_prompt_line_cwd(&line).as_ref(),
+            Some(&cwd)
+        );
     }
 
     #[cfg(windows)]
