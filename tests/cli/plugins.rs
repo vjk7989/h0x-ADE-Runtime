@@ -1040,7 +1040,7 @@ command = ["sh", "-c", "echo bootstrap"]
     fs::write(
         &git_config,
         format!(
-            "[url \"file://{}\"]\n    insteadOf = https://github.com/ogulcancelik/h0x-plugin-examples.git\n",
+            "[url \"file://{}\"]\n    insteadOf = https://github.com/owner/h0x-plugin.git\n",
             source_repo.display()
         ),
     )
@@ -1058,7 +1058,7 @@ command = ["sh", "-c", "echo bootstrap"]
             "--yes",
             "--ref",
             "v0.43.0",
-            "ogulcancelik/h0x-plugin-examples/worktree-bootstrap",
+            "owner/h0x-plugin/worktree-bootstrap",
         ],
         &[
             ("GIT_CONFIG_GLOBAL", &git_config),
@@ -1081,8 +1081,8 @@ command = ["sh", "-c", "echo bootstrap"]
     let plugin = &listed["result"]["plugins"][0];
     assert_eq!(plugin["plugin_id"], "example.worktree-bootstrap");
     assert_eq!(plugin["source"]["kind"], "github");
-    assert_eq!(plugin["source"]["owner"], "ogulcancelik");
-    assert_eq!(plugin["source"]["repo"], "h0x-plugin-examples");
+    assert_eq!(plugin["source"]["owner"], "owner");
+    assert_eq!(plugin["source"]["repo"], "h0x-plugin");
     assert_eq!(plugin["source"]["subdir"], "worktree-bootstrap");
     assert_eq!(plugin["source"]["requested_ref"], "v0.43.0");
     assert!(plugin["source"]["resolved_commit"].as_str().is_some());
@@ -1176,7 +1176,7 @@ command = ["sh", "-c", "echo should-not-install"]
     fs::write(
         &git_config,
         format!(
-            "[url \"file://{}\"]\n    insteadOf = https://github.com/ogulcancelik/h0x-plugin-examples.git\n",
+            "[url \"file://{}\"]\n    insteadOf = https://github.com/owner/h0x-plugin.git\n",
             source_repo.display()
         ),
     )
@@ -1190,7 +1190,7 @@ command = ["sh", "-c", "echo should-not-install"]
             "plugins",
             "plugin",
             "install",
-            "ogulcancelik/h0x-plugin-examples/build-fail",
+            "owner/h0x-plugin/build-fail",
             "--yes",
         ],
         &[("GIT_CONFIG_GLOBAL", &git_config)],
@@ -1272,7 +1272,7 @@ command = ["sh", "-c", "echo should-not-install"]
     fs::write(
         &git_config,
         format!(
-            "[url \"file://{}\"]\n    insteadOf = https://github.com/ogulcancelik/h0x-plugin-examples.git\n",
+            "[url \"file://{}\"]\n    insteadOf = https://github.com/owner/h0x-plugin.git\n",
             source_repo.display()
         ),
     )
@@ -1286,7 +1286,7 @@ command = ["sh", "-c", "echo should-not-install"]
             "plugins",
             "plugin",
             "install",
-            "ogulcancelik/h0x-plugin-examples/missing-tool",
+            "owner/h0x-plugin/missing-tool",
             "--yes",
         ],
         &[("GIT_CONFIG_GLOBAL", &git_config)],
@@ -1381,7 +1381,7 @@ EOF
     fs::write(
         &git_config,
         format!(
-            "[url \"file://{}\"]\n    insteadOf = https://github.com/ogulcancelik/h0x-plugin-examples.git\n",
+            "[url \"file://{}\"]\n    insteadOf = https://github.com/owner/h0x-plugin.git\n",
             source_repo.display()
         ),
     )
@@ -1395,7 +1395,7 @@ EOF
             "plugins",
             "plugin",
             "install",
-            "ogulcancelik/h0x-plugin-examples/manifest-mutator",
+            "owner/h0x-plugin/manifest-mutator",
             "--yes",
         ],
         &[("GIT_CONFIG_GLOBAL", &git_config)],

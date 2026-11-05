@@ -137,7 +137,7 @@ mod tests {
             api_rx,
             event_hub,
         );
-        app.state.workspaces = vec![Workspace::test_new("herd")];
+        app.state.workspaces = vec![Workspace::test_new("hive")];
         app.state.active = Some(0);
         app.state.ensure_test_terminals();
         app
@@ -148,10 +148,10 @@ mod tests {
         let mut app = test_app();
         app.configure_window_title("{workspace}/{tab}");
 
-        assert_eq!(app.window_title().as_deref(), Some("herd/1"));
+        assert_eq!(app.window_title().as_deref(), Some("hive/1"));
 
         app.state.workspaces[0].tabs[0].custom_name = Some("build".into());
-        assert_eq!(app.window_title().as_deref(), Some("herd/build"));
+        assert_eq!(app.window_title().as_deref(), Some("hive/build"));
     }
 
     #[test]

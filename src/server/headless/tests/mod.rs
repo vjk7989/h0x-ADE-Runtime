@@ -333,7 +333,7 @@ fn headless_api_request_drains_all_pending_internal_events_before_reading_state(
 
 fn window_title_test_server() -> (HeadlessServer, std::sync::mpsc::Receiver<Vec<u8>>) {
     let mut server = test_headless_server();
-    server.app.state.workspaces = vec![crate::workspace::Workspace::test_new("herd")];
+    server.app.state.workspaces = vec![crate::workspace::Workspace::test_new("hive")];
     server.app.state.active = Some(0);
     server.app.state.selected = 0;
 
@@ -384,7 +384,7 @@ fn no_window_title(control_rx: &std::sync::mpsc::Receiver<Vec<u8>>) -> bool {
 #[test]
 fn window_title_waits_for_a_foreground_client_to_exist() {
     let mut server = test_headless_server();
-    server.app.state.workspaces = vec![crate::workspace::Workspace::test_new("herd")];
+    server.app.state.workspaces = vec![crate::workspace::Workspace::test_new("hive")];
     server.app.state.active = Some(0);
     server.app.configure_window_title("{workspace}");
 
@@ -409,7 +409,7 @@ fn window_title_waits_for_a_foreground_client_to_exist() {
 
     assert_eq!(
         next_window_title(&control_rx),
-        Some(Some("herd".to_string()))
+        Some(Some("hive".to_string()))
     );
     shutdown_test_runtimes(&mut server);
 }
@@ -421,7 +421,7 @@ fn an_attaching_client_gets_the_title_even_when_it_has_not_changed() {
     server.sync_window_title();
     assert_eq!(
         next_window_title(&first_control_rx),
-        Some(Some("herd".to_string()))
+        Some(Some("hive".to_string()))
     );
 
     // ClientConnected assigns the foreground client directly rather than
@@ -443,7 +443,7 @@ fn an_attaching_client_gets_the_title_even_when_it_has_not_changed() {
 
     assert_eq!(
         next_window_title(&second_control_rx),
-        Some(Some("herd".to_string()))
+        Some(Some("hive".to_string()))
     );
     shutdown_test_runtimes(&mut server);
 }
@@ -456,7 +456,7 @@ fn configured_window_title_reaches_the_foreground_client_once_per_change() {
     server.sync_window_title();
     assert_eq!(
         next_window_title(&control_rx),
-        Some(Some("herd/1".to_string()))
+        Some(Some("hive/1".to_string()))
     );
 
     // An unchanged title must not re-emit an OSC on every render.
@@ -467,7 +467,7 @@ fn configured_window_title_reaches_the_foreground_client_once_per_change() {
     server.sync_window_title();
     assert_eq!(
         next_window_title(&control_rx),
-        Some(Some("herd/build".to_string()))
+        Some(Some("hive/build".to_string()))
     );
 
     shutdown_test_runtimes(&mut server);
@@ -535,7 +535,7 @@ fn a_foreground_client_without_a_writer_does_not_cache_the_window_title() {
     server.sync_window_title();
     assert_eq!(
         next_window_title(&control_rx),
-        Some(Some("herd".to_string()))
+        Some(Some("hive".to_string()))
     );
 
     shutdown_test_runtimes(&mut server);
@@ -601,7 +601,7 @@ fn a_newly_promoted_client_gets_the_window_title_again() {
     server.sync_window_title();
     assert_eq!(
         next_window_title(&first_control_rx),
-        Some(Some("herd".to_string()))
+        Some(Some("hive".to_string()))
     );
 
     // A second terminal starts on whatever its shell or ssh left behind.
@@ -621,7 +621,7 @@ fn a_newly_promoted_client_gets_the_window_title_again() {
 
     assert_eq!(
         next_window_title(&second_control_rx),
-        Some(Some("herd".to_string()))
+        Some(Some("hive".to_string()))
     );
     shutdown_test_runtimes(&mut server);
 }
