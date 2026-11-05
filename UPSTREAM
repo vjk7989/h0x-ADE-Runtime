@@ -1,0 +1,21 @@
+repo: herdrdev/herdr (https://github.com/herdrdev/herdr)
+base: ee5bfb50 (upstream master, 2026-10-29; our import 2026-11-03)
+synced-to: ee5bfb50
+date: 2026-11-05
+
+Ported or adapted:
+none. Upstream master has had no commits since our import, and its latest
+release tag is still v0.9.5 (checked 2026-11-05). The source tree (src/) is
+identical to upstream; the only differences are our rebrand and removals
+(sponsors, preview channel tooling, upstream-only meta files).
+
+Version mapping:
+Our v0.9.5 is upstream's v0.9.5 rebranded. Our v0.9.6, v0.9.7 and v0.9.8 are
+HyperOx-only releases (security hardening, signing, rebrand fixes, logo) and do
+NOT correspond to any upstream release with the same number. When upstream
+publishes its own v0.9.6 or later, port its commits by content (ADR-055), not
+by version number.
+
+How to check for new upstream work:
+git fetch upstream            (tags are off: remote.upstream.tagOpt=--no-tags)
+git log --oneline ee5bfb50..upstream/master
