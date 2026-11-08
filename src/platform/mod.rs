@@ -187,7 +187,7 @@ pub(crate) fn spawn_server_signal_monitor(
 #[cfg(not(unix))]
 pub(crate) fn ignore_server_hangup() {}
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub(crate) fn local_stream_peer_description(_stream: &crate::ipc::LocalStream) -> Option<String> {
     None
 }

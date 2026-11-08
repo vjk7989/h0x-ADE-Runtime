@@ -213,6 +213,36 @@ fn served_by_this_account(pipe: HANDLE, name: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Describes the process on the other end of a local pipe, for logs and prompts.
+pub(crate) fn local_stream_peer_description(stream: &crate::ipc::LocalStream) -> Option<String> {
+    use std::os::windows::io::{AsHandle as _, AsRawHandle as _};
+    use windows_sys::Win32::System::{
+        Pipes::GetNamedPipeClientProcessId, Threading::QueryFullProcessImageNameW,
+    };
+
+    let crate::ipc::LocalStream::NamedPipe(pipe) = stream;
+    let mut pid = 0u32;
+    if unsafe { GetNamedPipeClientProcessId(pipe.as_handle().as_raw_handle(), &mut pid) } == 0 {
+        return None;
+    }
+    let image = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if image.is_null() {
+        return Some(format!("pid {pid}"));
+    }
+    let image = unsafe { OwnedHandle::from_raw_handle(image) };
+    let mut buffer = vec![0u16; 32 * 1024];
+    let mut len = buffer.len() as u32;
+    if unsafe {
+        QueryFullProcessImageNameW(image.as_raw_handle(), 0, buffer.as_mut_ptr(), &mut len)
+    } == 0
+    {
+        return Some(format!("pid {pid}"));
+    }
+    let path = String::from_utf16_lossy(&buffer[..len as usize]);
+    let name = path.rsplit(['\\', '/']).next().unwrap_or(&path);
+    Some(format!("pid {pid} ({name})"))
+}
+
 /// The TOKEN_USER of `process`, in usizes so the TOKEN_USER is aligned and
 /// its trailing SID stays alive.
 fn token_user(process: HANDLE) -> std::io::Result<Vec<usize>> {
@@ -3549,6 +3579,26 @@ impl Drop for InputSourceRestore {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pipe_client_is_described_by_process_name_and_pid() {
+        let path = std::path::PathBuf::from(format!("h0x-peer-test-{}", std::process::id()));
+        let listener = super::PrivateLocalListener::bind(&path).expect("bind");
+        let client_path = path.clone();
+        let client = std::thread::spawn(move || {
+            super::connect_local_stream_with_timeout(
+                &client_path,
+                std::time::Duration::from_secs(5),
+            )
+            .expect("connect")
+        });
+        let served = listener.accept().expect("accept");
+        let description = super::local_stream_peer_description(&served).expect("description");
+        let exe = std::env::current_exe().unwrap();
+        let name = exe.file_name().unwrap().to_string_lossy();
+        assert_eq!(description, format!("pid {} ({name})", std::process::id()));
+        drop(client.join().unwrap());
+    }
+
     #[test]
     fn pipe_server_integrity_must_not_be_below_the_client() {
         const MEDIUM: u32 = 0x2000;
