@@ -313,13 +313,13 @@ pub(crate) fn fetch_release_signature(url: &str) -> Option<String> {
             "10",
             "--max-time",
             "20",
+            "--max-filesize",
+            "4096",
         ])
         .arg(format!("{url}.minisig"))
         .output()
         .ok()?;
-    output
-        .status
-        .success()
+    (output.status.success() && output.stdout.len() <= 4096)
         .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 

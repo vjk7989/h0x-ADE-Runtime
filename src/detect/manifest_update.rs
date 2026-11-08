@@ -376,10 +376,7 @@ fn parse_catalog(content: &str) -> Result<Vec<CatalogAgent>, String> {
         if entry.path.trim().is_empty() {
             return Err(format!("catalog entry {} has an empty path", entry.id));
         }
-        if entry.path.contains("://")
-            || entry.path.starts_with('/')
-            || entry.path.split('/').any(|part| part == "..")
-        {
+        if !is_safe_manifest_path(&entry.path) {
             return Err(format!(
                 "catalog entry {} has an unsafe path {}",
                 entry.id, entry.path
@@ -581,10 +578,21 @@ fn base_url(url: &str) -> Result<String, String> {
 }
 
 fn join_url(base: &str, path: &str) -> Result<String, String> {
-    if path.contains("://") || path.starts_with('/') || path.split('/').any(|part| part == "..") {
+    if !is_safe_manifest_path(path) {
         return Err(format!("unsafe manifest path {path}"));
     }
     Ok(format!("{}/{}", base.trim_end_matches('/'), path))
+}
+
+/// A manifest path is a relative `/`-separated file path inside the release
+/// directory: no backslash, query, fragment, percent escape, scheme colon or
+/// control character, no leading `/` and no `..` segment.
+fn is_safe_manifest_path(path: &str) -> bool {
+    !path.starts_with('/')
+        && !path
+            .chars()
+            .any(|ch| ch.is_control() || matches!(ch, '\\' | '?' | '#' | '%' | ':'))
+        && !path.split('/').any(|part| part == "..")
 }
 
 fn now_unix() -> u64 {
@@ -1396,10 +1404,13 @@ path = "../codex.toml"
             let result = check_and_update_from_url(&file_url(&dir), TEST_KEY);
             let _ = fs::remove_dir_all(&dir);
 
-            let output = result.unwrap();
-            assert!(output.updated.is_empty(), "applied {output:?}");
-            let status = output.status.agents.get("codex").unwrap();
-            assert_eq!(status.last_result, "failed");
+            // The catalog parser now refuses the `?` path outright; either way
+            // nothing is applied.
+            if let Ok(output) = result {
+                assert!(output.updated.is_empty(), "applied {output:?}");
+                let status = output.status.agents.get("codex").unwrap();
+                assert_eq!(status.last_result, "failed");
+            }
             assert_eq!(cached_codex_version().as_deref(), Some("9999.01.01.1"));
         });
     }

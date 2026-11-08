@@ -244,8 +244,8 @@ jobs:
             h0x-*/*.minisig
             distribution/*.minisig
             dist/*.minisig
-            distribution/install.cmd
-            dist/latest.json
             dist/agent-detection.toml
             distribution/agent-detection/*.toml
             distribution/agent-detection/*.minisig
+            distribution/install.cmd
+            dist/latest.json
