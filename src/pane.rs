@@ -5529,6 +5529,69 @@ mod tests {
         );
     }
 
+    #[test]
+    fn strip_paste_escapes_keeps_c1_neighbours_and_is_idempotent() {
+        use super::strip_paste_escapes;
+        // DEL (U+007F) and U+00A0 sit just outside the stripped range; C0 other than ESC stays.
+        assert_eq!(
+            strip_paste_escapes("\u{7f}\u{80}\u{a0}\u{1a}"),
+            "\u{7f}\u{a0}\u{1a}"
+        );
+        // Clean text, including a Windows path, is passed through without copying.
+        let clean = r"C:\Users\me\x1b[201~.txt";
+        assert!(matches!(
+            strip_paste_escapes(clean),
+            std::borrow::Cow::Borrowed(text) if text == clean
+        ));
+        let dirty = "\u{1b}\u{1b}[201~\u{9b}201~\u{1b}\u{9b}";
+        let once = strip_paste_escapes(dirty).into_owned();
+        assert_eq!(once, "[201~201~");
+        assert_eq!(strip_paste_escapes(&once), once);
+    }
+
+    #[tokio::test]
+    async fn non_bracketed_paste_is_sent_unchanged() {
+        let (runtime, mut rx) = PaneRuntime::test_with_channel(80, 24);
+        runtime
+            .try_send_paste("x\x1b[201~y\u{9b}z".to_string())
+            .unwrap();
+        assert_eq!(
+            rx.recv().await,
+            Some(Bytes::from("x\x1b[201~y\u{9b}z".as_bytes()))
+        );
+    }
+
+    #[tokio::test]
+    async fn large_bracketed_paste_keeps_a_single_end_marker() {
+        let (runtime, mut rx) = PaneRuntime::test_with_channel(80, 24);
+        runtime.test_process_pty_bytes(b"\x1b[?2004h");
+        // ~1 MiB with an end marker every 64 KiB, half ESC-based and half single-char CSI.
+        let mut text = String::new();
+        for index in 0..16 {
+            text.push_str(&"a".repeat(64 * 1024));
+            text.push_str(if index % 2 == 0 {
+                "\x1b[201~"
+            } else {
+                "\u{9b}201~"
+            });
+        }
+        runtime.try_send_paste(text).unwrap();
+        let payload = rx.recv().await.expect("paste payload");
+        let payload = std::str::from_utf8(&payload).unwrap();
+        assert!(payload.starts_with("\x1b[200~"));
+        assert!(payload.ends_with("\x1b[201~"));
+        assert_eq!(payload.matches('\u{1b}').count(), 2);
+        assert!(!payload.contains('\u{9b}'));
+        assert_eq!(
+            payload.len(),
+            "\x1b[200~".len()
+                + 16 * 64 * 1024
+                + 8 * "[201~".len()
+                + 8 * "201~".len()
+                + "\x1b[201~".len()
+        );
+    }
+
     #[tokio::test]
     async fn subscribed_idle_child_receives_color_scheme_transition() {
         let (runtime, mut rx) = PaneRuntime::test_with_channel(80, 24);

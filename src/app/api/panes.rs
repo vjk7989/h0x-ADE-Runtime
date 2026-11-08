@@ -2968,6 +2968,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn api_pane_send_input_strips_escapes_only_inside_bracketed_paste() {
+        let (mut app, pane_id, mut rx) = app_with_send_key_runtime(4);
+        let internal_pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        fn send(app: &mut App, pane_id: &str, text: &str) {
+            let response = app.handle_api_request(crate::api::schema::Request {
+                id: "req".into(),
+                method: crate::api::schema::Method::PaneSendInput(PaneSendInputParams {
+                    pane_id: pane_id.into(),
+                    text: text.into(),
+                    keys: Vec::new(),
+                }),
+            });
+            let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+            assert_eq!(success.result, ResponseResult::Ok {});
+        }
+
+        // Bracketed paste off: agent text is sent byte for byte.
+        send(&mut app, &pane_id, "a\x1b[201~b");
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"a\x1b[201~b")
+        );
+
+        app.lookup_runtime_sender(0, internal_pane_id)
+            .unwrap()
+            .test_process_pty_bytes(b"\x1b[?2004h");
+        // Bracketed paste on: ESC and C1 (incl. single-char CSI) cannot end the paste.
+        send(
+            &mut app,
+            &pane_id,
+            "cd C:\\Users\\me\x1b[201~\u{9b}201~\u{85}rm",
+        );
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"\x1b[200~cd C:\\Users\\me[201~201~rm\x1b[201~")
+        );
+        // Text made only of escapes leaves just the empty paste frame.
+        send(&mut app, &pane_id, "\x1b\u{9b}");
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"\x1b[200~\x1b[201~")
+        );
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
     async fn api_pane_send_input_keys_accept_key_combo_chords() {
         let (mut app, pane_id, mut rx) = app_with_send_key_runtime(1);
 

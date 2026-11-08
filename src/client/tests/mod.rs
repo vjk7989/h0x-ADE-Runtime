@@ -918,6 +918,13 @@ fn osc52_clipboard_write_is_blocked_unless_allowed() {
 }
 
 #[test]
+fn osc52_clipboard_write_drops_huge_payload_while_off() {
+    // 16 MiB of valid base64: refused before decoding, so nothing is allocated or written.
+    let payload = "QUFB".repeat(4 * 1024 * 1024);
+    assert!(!forward_clipboard(&payload, false));
+}
+
+#[test]
 fn ioctl_cell_size_accepts_fractional_terminal_geometry() {
     assert_eq!(ioctl_cell_size(80, 24, 800, 480), Some((10, 20)));
     assert_eq!(ioctl_cell_size(80, 24, 805, 480), Some((10, 20)));

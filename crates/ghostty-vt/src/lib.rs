@@ -3961,6 +3961,98 @@ mod tests {
     }
 
     #[test]
+    fn kitty_file_medium_refuses_directories_fifos_and_windows_paths_without_blocking() {
+        use base64::Engine as _;
+        let dir = std::env::temp_dir().join(format!(
+            "h0x-kitty-refused-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Opening a FIFO with no writer blocks forever; a refused medium never opens it.
+        #[cfg(unix)]
+        let fifo = {
+            let fifo = dir.join("fifo");
+            let c_path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+            assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+            Some(fifo.to_string_lossy().into_owned())
+        };
+        #[cfg(not(unix))]
+        let fifo: Option<String> = None;
+        let paths = [
+            dir.to_string_lossy().into_owned(),
+            r"C:\Windows\System32\drivers\etc\hosts".to_string(),
+            r"\\?\C:\pagefile.sys".to_string(),
+            String::new(),
+        ]
+        .into_iter()
+        .chain(fifo);
+
+        let mut terminal = Terminal::new(10, 5, 0).unwrap();
+        terminal.enable_kitty_graphics().unwrap();
+        for (index, path) in paths.enumerate() {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&path);
+            for medium in ["f", "t", "s"] {
+                terminal.write(
+                    format!(
+                        "\x1b_Ga=T,f=100,t={medium},i={},c=1,r=1,q=2;{encoded}\x1b\\",
+                        index + 1
+                    )
+                    .as_bytes(),
+                );
+                assert!(
+                    terminal.kitty_image_placements().unwrap().is_empty(),
+                    "t={medium} path {path:?} must be refused"
+                );
+            }
+        }
+
+        assert!(dir.is_dir());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn kitty_direct_medium_still_places_a_large_chunked_image() {
+        use base64::Engine as _;
+        let (width, height) = (256u32, 256u32);
+        let pixels: Vec<u8> = (0..width * height)
+            .flat_map(|index| [(index % 251) as u8, (index / 256) as u8, 7, 255])
+            .collect();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&pixels);
+        let chunks: Vec<&str> = encoded
+            .as_bytes()
+            .chunks(4096)
+            .map(|chunk| std::str::from_utf8(chunk).unwrap())
+            .collect();
+        assert!(chunks.len() > 1);
+
+        let mut terminal = Terminal::new(10, 5, 0).unwrap();
+        terminal.enable_kitty_graphics().unwrap();
+        for (index, chunk) in chunks.iter().enumerate() {
+            let more = u8::from(index + 1 < chunks.len());
+            let control = if index == 0 {
+                format!("a=T,f=32,t=d,i=9,s={width},v={height},c=4,r=4,q=2,m={more}")
+            } else {
+                format!("m={more}")
+            };
+            terminal.write(format!("\x1b_G{control};{chunk}\x1b\\").as_bytes());
+        }
+
+        let placements = terminal.kitty_image_placements().unwrap();
+        assert_eq!(placements.len(), 1);
+        assert_eq!(placements[0].image_id, 9);
+        assert_eq!(
+            (placements[0].image_width, placements[0].image_height),
+            (width, height)
+        );
+        assert_eq!(placements[0].data, pixels);
+        assert!(placements[0].source_file.is_none());
+    }
+
+    #[test]
     fn kitty_image_fingerprint_covers_full_payload() {
         let mut data = vec![1u8; 4096 * 4];
         let original =

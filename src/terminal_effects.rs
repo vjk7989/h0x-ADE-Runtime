@@ -63,4 +63,29 @@ mod tests {
         write_window_title(&mut output, Some("")).unwrap();
         assert_eq!(output, b"\x1b]0;h0x\x07");
     }
+
+    #[test]
+    fn window_title_bounds_length_keeps_windows_paths_and_is_idempotent() {
+        // MAX_WINDOW_TITLE_CHARS in config/window_title.rs (private module).
+        let max = 200;
+        let title_of = |title: &str| {
+            let mut output = Vec::new();
+            write_window_title(&mut output, Some(title)).unwrap();
+            let text = String::from_utf8(output).unwrap();
+            text["\x1b]0;".len()..text.len() - 1].to_string()
+        };
+
+        // Exactly the maximum survives; one more (multi-byte) char is cut at a char boundary.
+        assert_eq!(title_of(&"x".repeat(max)), "x".repeat(max));
+        assert_eq!(title_of(&"日".repeat(max + 1)), "日".repeat(max));
+        // Whitespace-only titles fall back to the default.
+        assert_eq!(title_of("   \t  "), "h0x");
+        // Backslashes are not controls: a Windows cwd title is kept as is.
+        assert_eq!(title_of(r"C:\Users\me\repo"), r"C:\Users\me\repo");
+
+        let hostile = "  a\u{1b}]52;c;x\u{7}\u{9c}\u{9d}b\u{7f}\r\n  ";
+        let once = title_of(hostile);
+        assert_eq!(once, "a]52;c;xb");
+        assert_eq!(title_of(&once), once);
+    }
 }
