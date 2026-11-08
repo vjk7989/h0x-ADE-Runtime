@@ -226,6 +226,7 @@ fn run_client_with_mode(
         initial_host_input: Vec::new(),
         endpoint_keybindings,
         remote_image_paste_key,
+        clipboard_write: loaded_config.config.terminal.clipboard_write,
         shell_config,
     };
 
@@ -485,6 +486,7 @@ async fn run_client_loop(
         #[cfg(unix)]
         mouse_scroll_lines: config.mouse_scroll_lines,
         remote_image_paste_key: config.remote_image_paste_key,
+        clipboard_write: config.clipboard_write,
         redraw_on_focus_gained: config.redraw_on_focus_gained,
         repaint_pending: false,
         presentation_frozen: false,
@@ -2007,11 +2009,7 @@ async fn run_client_loop(
                         }
                     }
                     ServerMessage::Clipboard { data } => {
-                        let clipboard_write = crate::config::Config::load()
-                            .config
-                            .terminal
-                            .clipboard_write;
-                        if forward_clipboard(&data, clipboard_write) {
+                        if forward_clipboard(&data, state.clipboard_write) {
                             let (width, height) = state.reported_size;
                             let frame = state.shell.as_mut().and_then(|shell| {
                                 shell

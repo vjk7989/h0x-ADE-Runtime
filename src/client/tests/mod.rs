@@ -781,6 +781,7 @@ fn reload_local_client_config_refreshes_local_client_presentation_state() {
     let mut redraw_on_focus_gained = true;
     let mut draw_host_cursor = false;
     let mut remote_image_paste_key = None;
+    let mut clipboard_write = false;
     let mut mouse_capture = true;
 
     reload_local_client_config(
@@ -788,6 +789,7 @@ fn reload_local_client_config_refreshes_local_client_presentation_state() {
         &mut redraw_on_focus_gained,
         &mut draw_host_cursor,
         &mut remote_image_paste_key,
+        &mut clipboard_write,
         &mut mouse_capture,
     );
 
@@ -815,6 +817,7 @@ fn reload_local_client_config_keeps_ui_preferences_when_ui_is_invalid() {
     let mut redraw_on_focus_gained = false;
     let mut draw_host_cursor = true;
     let mut remote_image_paste_key = None;
+    let mut clipboard_write = false;
     let mut mouse_capture = false;
 
     reload_local_client_config(
@@ -822,6 +825,7 @@ fn reload_local_client_config_keeps_ui_preferences_when_ui_is_invalid() {
         &mut redraw_on_focus_gained,
         &mut draw_host_cursor,
         &mut remote_image_paste_key,
+        &mut clipboard_write,
         &mut mouse_capture,
     );
 
@@ -1059,4 +1063,61 @@ fn terminal_control_scroll_command_maps_to_attach_scroll() {
     assert_eq!(source, AttachScrollSource::Wheel);
     assert_eq!(direction, AttachScrollDirection::Up);
     assert_eq!(lines, 3);
+}
+
+fn reload_clipboard_write_from(config_text: &str, initial: bool) -> bool {
+    let _guard = crate::config::test_config_env_lock().lock().unwrap();
+    let path = std::env::temp_dir().join(format!(
+        "h0x-client-clipboard-reload-{}-{}.toml",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::write(&path, config_text).unwrap();
+    let path_string = path.to_string_lossy().to_string();
+    let _env = EnvVarGuard::set(crate::config::CONFIG_PATH_ENV_VAR, &path_string);
+    let mut sound_config = crate::config::SoundConfig::default();
+    let mut redraw_on_focus_gained = false;
+    let mut draw_host_cursor = false;
+    let mut remote_image_paste_key = None;
+    let mut clipboard_write = initial;
+    let mut mouse_capture = false;
+    reload_local_client_config(
+        &mut sound_config,
+        &mut redraw_on_focus_gained,
+        &mut draw_host_cursor,
+        &mut remote_image_paste_key,
+        &mut clipboard_write,
+        &mut mouse_capture,
+    );
+    let _ = std::fs::remove_file(path);
+    clipboard_write
+}
+
+#[test]
+fn reload_refreshes_the_cached_clipboard_write_setting() {
+    assert!(reload_clipboard_write_from(
+        "[terminal]\nclipboard_write = true\n",
+        false
+    ));
+    assert!(!reload_clipboard_write_from(
+        "[terminal]\nclipboard_write = false\n",
+        true
+    ));
+    // Unset means the default, off.
+    assert!(!reload_clipboard_write_from("", true));
+}
+
+#[test]
+fn reload_turns_clipboard_write_off_when_the_terminal_section_is_malformed() {
+    assert!(!reload_clipboard_write_from(
+        "[terminal]\nclipboard_write = \"yes please\"\n",
+        true
+    ));
+    assert!(!reload_clipboard_write_from(
+        "[terminal\nclipboard_write = true\n",
+        true
+    ));
 }
