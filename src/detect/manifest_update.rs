@@ -13,9 +13,10 @@ use serde::{Deserialize, Serialize};
 use super::{agent_label, parse_agent_label, Agent};
 
 pub(crate) const MANIFEST_ENGINE_VERSION: u32 = 3;
-const DEFAULT_CATALOG_URL: &str = "https://raw.githubusercontent.com/vjk7989/h0x-ADE-Runtime/main/distribution/agent-detection/index.toml";
-#[cfg(any(debug_assertions, test))]
-const CATALOG_URL_ENV: &str = "H0X_AGENT_DETECTION_MANIFEST_CATALOG_URL";
+/// The catalog is a signed asset of the latest release: `release.yml` signs it
+/// (and every agent manifest it lists) with the release key.
+const CATALOG_URL: &str =
+    "https://github.com/vjk7989/h0x-ADE-Runtime/releases/latest/download/agent-detection.toml";
 const MAX_FETCH_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone)]
@@ -167,7 +168,15 @@ struct CatalogAgent {
 }
 
 pub(crate) fn auto_update(events: tokio::sync::mpsc::Sender<crate::events::AppEvent>) {
-    let result = check_and_update();
+    auto_update_from(events, CATALOG_URL, crate::update::RELEASE_PUBLIC_KEY);
+}
+
+fn auto_update_from(
+    events: tokio::sync::mpsc::Sender<crate::events::AppEvent>,
+    url: &str,
+    key: &str,
+) {
+    let result = check_and_update_from_url(url, key);
     let status = match result {
         Ok(output) => {
             let activated = agents_needing_cache_reload(&output);
@@ -234,11 +243,11 @@ pub(crate) struct ManifestUpdateOutput {
 }
 
 pub(crate) fn check_and_update() -> Result<ManifestUpdateOutput, String> {
-    check_and_update_from_url(&catalog_url())
+    check_and_update_from_url(CATALOG_URL, crate::update::RELEASE_PUBLIC_KEY)
 }
 
-fn check_and_update_from_url(url: &str) -> Result<ManifestUpdateOutput, String> {
-    let catalog = parse_catalog(&fetch_text(url)?)?;
+fn check_and_update_from_url(url: &str, key: &str) -> Result<ManifestUpdateOutput, String> {
+    let catalog = parse_catalog(&fetch_signed_text(url, key)?)?;
     let base_url = base_url(url)?;
     let mut status = load_status();
     let check_time = now_unix();
@@ -250,7 +259,7 @@ fn check_and_update_from_url(url: &str) -> Result<ManifestUpdateOutput, String> 
     for entry in catalog {
         let agent_id = agent_label(entry.agent).to_string();
         let manifest_url = join_url(&base_url, &entry.path)?;
-        match fetch_text(&manifest_url)
+        match fetch_signed_text(&manifest_url, key)
             .map_err(|err| format!("fetch failed: {err}"))
             .and_then(|content| process_agent_manifest(entry.agent, &content, check_time))
         {
@@ -499,17 +508,19 @@ fn state_root() -> PathBuf {
     crate::config::state_dir().join("agent-detection")
 }
 
-fn catalog_url() -> String {
-    // The override only exists in debug/test builds; release always uses the default.
-    #[cfg(any(debug_assertions, test))]
-    if let Some(url) = std::env::var(CATALOG_URL_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        return url;
-    }
-    DEFAULT_CATALOG_URL.to_string()
+/// Fetches `url` and returns it only when `<url>.minisig` is a valid signature
+/// by `key` made for this file name; anything else is an error and the caller
+/// keeps what it had.
+fn fetch_signed_text(url: &str, key: &str) -> Result<String, String> {
+    let text = fetch_text(url)?;
+    crate::update::verify_release_signature(
+        url,
+        url.rsplit('/').next().unwrap_or(url),
+        text.as_bytes(),
+        crate::update::fetch_release_signature(url).as_deref(),
+        key,
+    )?;
+    Ok(text)
 }
 
 fn fetch_text(url: &str) -> Result<String, String> {
@@ -639,6 +650,221 @@ contains = ["{contains}"]
         result
     }
 
+    /// A throwaway key pair (not the release key); the signatures below are
+    /// made with it by `rsign sign -W -t "timestamp:1<TAB>file:<name>"` over the
+    /// exact bytes the tests write. `SIG_*_OTHER_KEY` is from a second throwaway key.
+    const TEST_KEY: &str = "RWRoiCZgYc65YANz+u2IxSwI5GlIK0sCuai/aFXAhHbjOk4aFQJYQ0kR";
+
+    fn file_url(web_dir: &Path) -> String {
+        format!(
+            "file:///{}",
+            web_dir
+                .join("index.toml")
+                .to_string_lossy()
+                .replace('\\', "/")
+                .trim_start_matches('/')
+        )
+    }
+
+    fn put_sig(web_dir: &Path, name: &str, sig: &str) {
+        fs::write(web_dir.join(format!("{name}.minisig")), sig).unwrap();
+    }
+
+    fn web_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("h0x-manifest-sig-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Serves a catalog with the given index and codex manifest (each with an
+    /// optional signature), with codex 9999.01.01.1 already cached, and runs one
+    /// update against `key`.
+    fn serve_and_update(
+        name: &str,
+        index: (&str, Option<&str>),
+        codex: (&str, Option<&str>),
+        key: &str,
+    ) -> Result<ManifestUpdateOutput, String> {
+        let dir = web_dir(name);
+        fs::write(dir.join("index.toml"), index.0).unwrap();
+        if let Some(sig) = index.1 {
+            put_sig(&dir, "index.toml", sig);
+        }
+        fs::write(dir.join("codex.toml"), codex.0).unwrap();
+        if let Some(sig) = codex.1 {
+            put_sig(&dir, "codex.toml", sig);
+        }
+        process_agent_manifest(
+            Agent::Codex,
+            &remote_manifest("9999.01.01.1", "initial-ready"),
+            1,
+        )
+        .unwrap();
+        let result = check_and_update_from_url(&file_url(&dir), key);
+        let _ = fs::remove_dir_all(&dir);
+        result
+    }
+
+    const INDEX_A: &str = r#"
+schema_version = 1
+
+[[agents]]
+id = "codex"
+path = "codex.toml"
+"#;
+
+    fn cached_codex_version() -> Option<String> {
+        cached_remote_version(Agent::Codex).map(|v| v.to_string())
+    }
+
+    #[test]
+    fn catalog_is_a_release_asset_not_the_main_branch() {
+        assert_eq!(
+            CATALOG_URL,
+            "https://github.com/vjk7989/h0x-ADE-Runtime/releases/latest/download/agent-detection.toml"
+        );
+    }
+
+    #[test]
+    fn signed_catalog_and_manifest_are_applied() {
+        with_state_dir("sig-good", || {
+            let manifest = remote_manifest("9999.01.01.2", "current-ready");
+            let output = serve_and_update(
+                "good",
+                (INDEX_A, Some(SIG_IDX_A)),
+                (&manifest, Some(SIG_M_CURRENT)),
+                TEST_KEY,
+            )
+            .unwrap();
+            assert_eq!(output.updated.len(), 1);
+            assert_eq!(cached_codex_version().as_deref(), Some("9999.01.01.2"));
+        });
+    }
+
+    #[test]
+    fn unsigned_or_wrongly_signed_manifest_keeps_the_cached_one() {
+        let manifest = remote_manifest("9999.01.01.2", "current-ready");
+        let tampered = format!("{manifest}# tampered\n");
+        let cases: [(&str, &str, Option<&str>); 4] = [
+            ("unsigned", &manifest, None),
+            ("other-file", &manifest, Some(SIG_M_CURRENT_OTHER_FILE)),
+            ("other-key", &manifest, Some(SIG_M_CURRENT_OTHER_KEY)),
+            ("tampered", &tampered, Some(SIG_M_CURRENT)),
+        ];
+        for (name, content, sig) in cases {
+            with_state_dir(&format!("sig-bad-{name}"), || {
+                let output =
+                    serve_and_update(name, (INDEX_A, Some(SIG_IDX_A)), (content, sig), TEST_KEY)
+                        .unwrap();
+                assert!(output.updated.is_empty(), "{name}: applied");
+                assert_eq!(
+                    cached_codex_version().as_deref(),
+                    Some("9999.01.01.1"),
+                    "{name}: cached manifest changed"
+                );
+                let status = output.status.agents.get("codex").unwrap();
+                assert_eq!(status.last_result, "failed", "{name}");
+                assert!(
+                    status
+                        .last_error
+                        .as_deref()
+                        .is_some_and(|e| e.contains("not signed by the h0x release key")),
+                    "{name}: {status:?}"
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn unsigned_or_wrongly_signed_catalog_is_refused() {
+        let manifest = remote_manifest("9999.01.01.2", "current-ready");
+        let tampered = format!("{INDEX_A}# tampered\n");
+        let cases: [(&str, &str, Option<&str>, &str); 5] = [
+            ("unsigned", INDEX_A, None, TEST_KEY),
+            ("tampered", &tampered, Some(SIG_IDX_A), TEST_KEY),
+            ("other-file", INDEX_A, Some(SIG_M_CURRENT), TEST_KEY),
+            // Signed by the test key, but the runtime trusts the release key.
+            (
+                "release-key",
+                INDEX_A,
+                Some(SIG_IDX_A),
+                crate::update::RELEASE_PUBLIC_KEY,
+            ),
+            ("garbage-sig", INDEX_A, Some("not a signature"), TEST_KEY),
+        ];
+        for (name, index, sig, key) in cases {
+            with_state_dir(&format!("sig-bad-index-{name}"), || {
+                let result =
+                    serve_and_update(name, (index, sig), (&manifest, Some(SIG_M_CURRENT)), key);
+                let err = result.expect_err(name);
+                assert!(
+                    err.contains("not signed by the h0x release key"),
+                    "{name}: {err}"
+                );
+                assert_eq!(
+                    cached_codex_version().as_deref(),
+                    Some("9999.01.01.1"),
+                    "{name}"
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn unreachable_catalog_keeps_the_cached_manifest() {
+        with_state_dir("sig-offline", || {
+            process_agent_manifest(
+                Agent::Codex,
+                &remote_manifest("9999.01.01.1", "initial-ready"),
+                1,
+            )
+            .unwrap();
+            let dir = web_dir("offline");
+            let result = check_and_update_from_url(&file_url(&dir), TEST_KEY);
+            let _ = fs::remove_dir_all(&dir);
+            assert!(result.is_err());
+            assert_eq!(cached_codex_version().as_deref(), Some("9999.01.01.1"));
+        });
+    }
+
+    const SIG_IDX_A: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YEhfHfjLZ6FVW48oF8iEOMnbXTA7bXrtYO+a8A+VkVtsdW7ipKuKpRN9qarXImmaIdP8jdT9fAxjxWmDBYMccQc=
+trusted comment: timestamp:1\tfile:index.toml
+JQNLK0lCCjzRgoYWX25VgQh4l+h5Vfo1qSYW59TTycB6VMh54dFnRukAoEHqeCbh4ZS9jAYuEmyNPuVxDXJeBQ==
+";
+    const SIG_IDX_B: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YJLRQX7aXOhwkR3WsVjZ4vuYXyu7TBj9g7UOqgP2wUCX7VFs+OcwiRMDBkrp/8VFrLXs9wLXzvif98lsm8qGkw0=
+trusted comment: timestamp:1\tfile:index.toml
+Bdq5DLXZN3PCEa+L9uPmbnX4SfGh3ilz3Ufmp+6KLbgpQdArniE2pguIbRDx+3q+CLqE2NyHrRBhk3inQIl+Cw==
+";
+    const SIG_M_READY: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YB6DHga+ln6M/zbJ+Nmad9TJ0gHWqKXFSsslar4uJ4TD0vZP8m7udtgHemLXRCJ63tjTWj8HOhMKkoOZwXy4rws=
+trusted comment: timestamp:1\tfile:codex.toml
+MSZOYJzTmi+rl95XgP2cW7F06Ky2I4IAq03/f69RSy3Jz7fc6ftgTNj2j4nsA3RPXAKY3OCt61rrDhm6pDAiBQ==
+";
+    const SIG_M_CURRENT: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YOonO5mlKw94AdaYWcUkZD9pNxLimEBSlP1v1Tk4S4KegwZ1ZSs9z43yquTMn44429/UNdhnLpavPh0iK1W/SAY=
+trusted comment: timestamp:1\tfile:codex.toml
+4AKE1VyZY1as2QPCNs/MfqHy8D+pa0ZWl2uTHFGYeChJuqpWHeLTAe+2DBFqkIHilQCijnaZnhAkbfZuafT6Bw==
+";
+    const SIG_M_CODEX_CURRENT: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YFBsnYsDTUqyyyCYPAAJlr7Ro4lrOMqQ8AlKc+AIWiZhT3lcCbyx5VKbWJFSor9X0t3uuDyJIpO39ZVcmdFl6wI=
+trusted comment: timestamp:1\tfile:codex.toml
+EsSgHusY7KNCUeQBWMnY4FGLEzB8aLN4cFRx7UkIDZ/Pm0Aib0gUDPZE83nnGh2HWLrzFK9KzSBAAHeteuMDCg==
+";
+    const SIG_M_CURRENT_OTHER_FILE: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YD73B3ZbtUekFLC95MgboZAe1TaQMIjZcoZ9tQl0LBcGin2mA+ZvrpoY/37ZgEp8ytWC13KCH2hoyUSUcTqc+AI=
+trusted comment: timestamp:1\tfile:cursor.toml
+wCqEqSpLtVnNWaPg5OnyrV9JPfdvDSOL9CUU+F/0694+aO02VkvBUtRpHhw+OB9HnFHQnYWzQKaz03vi/E46Cw==
+";
+    const SIG_M_CURRENT_OTHER_KEY: &str = "untrusted comment: signature from rsign secret key
+RURoaNYB1lrhrPjIMgHflYAQS4O6FoEWaLewWM8+jUjfmpgwfcexW1vUkEc/EtNwhtmkBg+7xJdFT3zR/Y0E7qowWQIXRBkNSwg=
+trusted comment: timestamp:1\tfile:codex.toml
+NEZO1V79BoDa0Izdjv/v9nUfrclBSwC2leSP3xVnYS9zmhhUDi7c7mHkmQe9MfiIt5gf3FgqvnmbKha1Lr7RAQ==
+";
+
     #[test]
     fn manifest_version_compares_dotted_numeric_segments() {
         assert!(
@@ -680,7 +906,6 @@ contains = ["{contains}"]
     #[test]
     fn auto_update_reloads_manifest_cache_after_remote_commit() {
         with_state_dir("auto-update-reloads-cache", || {
-            let old_catalog_url = std::env::var_os(CATALOG_URL_ENV);
             let web_dir = std::env::temp_dir()
                 .join(format!("h0x-manifest-update-web-{}", std::process::id()));
             let _ = fs::remove_dir_all(&web_dir);
@@ -701,20 +926,12 @@ path = "codex.toml"
                 remote_manifest("9999.01.01.1", "auto-update-ready"),
             )
             .unwrap();
-            std::env::set_var(
-                CATALOG_URL_ENV,
-                format!(
-                    "file:///{}",
-                    web_dir
-                        .join("index.toml")
-                        .to_string_lossy()
-                        .replace('\\', "/")
-                        .trim_start_matches('/')
-                ),
-            );
+            let url = file_url(&web_dir);
+            put_sig(&web_dir, "index.toml", SIG_IDX_A);
+            put_sig(&web_dir, "codex.toml", SIG_M_READY);
 
             let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-            auto_update(tx);
+            auto_update_from(tx, &url, TEST_KEY);
 
             let event = rx.try_recv().expect("manifest update event");
             let crate::events::AppEvent::AgentDetectionManifestsUpdated { updated, .. } = event
@@ -735,10 +952,6 @@ path = "codex.toml"
                 Some("idle")
             );
 
-            match old_catalog_url {
-                Some(value) => std::env::set_var(CATALOG_URL_ENV, value),
-                None => std::env::remove_var(CATALOG_URL_ENV),
-            }
             let _ = fs::remove_dir_all(&web_dir);
         });
     }
@@ -750,7 +963,6 @@ path = "codex.toml"
             process_agent_manifest(Agent::Codex, &initial, 1).unwrap();
             crate::detect::manifest::reload_manifests();
 
-            let old_catalog_url = std::env::var_os(CATALOG_URL_ENV);
             let web_dir = std::env::temp_dir().join(format!(
                 "h0x-manifest-update-current-web-{}",
                 std::process::id()
@@ -771,20 +983,12 @@ path = "codex.toml"
             let current = remote_manifest("9999.01.01.2", "current-ready");
             fs::write(web_dir.join("codex.toml"), &current).unwrap();
             fs::write(remote_manifest_path(Agent::Codex), current).unwrap();
-            std::env::set_var(
-                CATALOG_URL_ENV,
-                format!(
-                    "file:///{}",
-                    web_dir
-                        .join("index.toml")
-                        .to_string_lossy()
-                        .replace('\\', "/")
-                        .trim_start_matches('/')
-                ),
-            );
+            let url = file_url(&web_dir);
+            put_sig(&web_dir, "index.toml", SIG_IDX_A);
+            put_sig(&web_dir, "codex.toml", SIG_M_CURRENT);
 
             let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-            auto_update(tx);
+            auto_update_from(tx, &url, TEST_KEY);
 
             let event = rx.try_recv().expect("manifest update event");
             let crate::events::AppEvent::AgentDetectionManifestsUpdated { updated, .. } = event
@@ -801,10 +1005,6 @@ path = "codex.toml"
                 Some("idle")
             );
 
-            match old_catalog_url {
-                Some(value) => std::env::set_var(CATALOG_URL_ENV, value),
-                None => std::env::remove_var(CATALOG_URL_ENV),
-            }
             let _ = fs::remove_dir_all(&web_dir);
         });
     }
@@ -819,7 +1019,6 @@ path = "codex.toml"
             process_agent_manifest(Agent::Cursor, &initial_cursor, 1).unwrap();
             crate::detect::manifest::reload_manifests();
 
-            let old_catalog_url = std::env::var_os(CATALOG_URL_ENV);
             let web_dir = std::env::temp_dir().join(format!(
                 "h0x-manifest-update-partial-web-{}",
                 std::process::id()
@@ -849,20 +1048,12 @@ path = "missing-cursor.toml"
                 remote_manifest_for("cursor", "9999.01.01.2", "cursor-current-ready"),
             )
             .unwrap();
-            std::env::set_var(
-                CATALOG_URL_ENV,
-                format!(
-                    "file:///{}",
-                    web_dir
-                        .join("index.toml")
-                        .to_string_lossy()
-                        .replace('\\', "/")
-                        .trim_start_matches('/')
-                ),
-            );
+            let url = file_url(&web_dir);
+            put_sig(&web_dir, "index.toml", SIG_IDX_B);
+            put_sig(&web_dir, "codex.toml", SIG_M_CODEX_CURRENT);
 
             let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-            auto_update(tx);
+            auto_update_from(tx, &url, TEST_KEY);
 
             let event = rx.try_recv().expect("manifest update event");
             let crate::events::AppEvent::AgentDetectionManifestsUpdated {
@@ -887,10 +1078,6 @@ path = "missing-cursor.toml"
                 Some("idle")
             );
 
-            match old_catalog_url {
-                Some(value) => std::env::set_var(CATALOG_URL_ENV, value),
-                None => std::env::remove_var(CATALOG_URL_ENV),
-            }
             let _ = fs::remove_dir_all(&web_dir);
         });
     }
