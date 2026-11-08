@@ -481,7 +481,7 @@ const ASSET_HOSTS: [&str; 3] = [
 
 /// `https://<allowed host>/...`, the host exactly: no userinfo, no port.
 /// Unit tests also serve fixtures from `file://` URLs.
-fn asset_url_allowed(url: &str) -> bool {
+pub(crate) fn asset_url_allowed(url: &str) -> bool {
     #[cfg(test)]
     if url.starts_with("file://") {
         return true;
@@ -495,7 +495,7 @@ fn asset_url_allowed(url: &str) -> bool {
 
 /// Downloads `url` to `path` from an allowed host only, following at most 5
 /// redirects; the URL curl landed on must be allowed too.
-fn download_asset(url: &str, path: &Path) -> Result<(), String> {
+pub(crate) fn download_asset(url: &str, path: &Path) -> Result<(), String> {
     if !asset_url_allowed(url) {
         return Err(format!("{url}: not an https GitHub release URL"));
     }
@@ -3500,6 +3500,16 @@ mod asset_url_tests {
             "//github.com/x",
         ] {
             assert!(!asset_url_allowed(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn download_asset_refuses_other_hosts_before_running_curl() {
+        let path = std::env::temp_dir().join("h0x-asset-refused.tmp");
+        for url in ["http://github.com/x", "https://github.com@evil.example/x"] {
+            let err = super::download_asset(url, &path).expect_err(url);
+            assert!(err.contains("not an https GitHub release URL"), "{err}");
+            assert!(!path.exists());
         }
     }
 
