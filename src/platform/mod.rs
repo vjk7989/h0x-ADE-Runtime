@@ -655,7 +655,20 @@ pub(crate) fn quote_powershell_arg(value: &str) -> String {
     {
         return value.to_string();
     }
-    format!("'{}'", value.replace('\'', "''"))
+    format!("'{}'", escape_powershell_single_quotes(value))
+}
+
+/// PowerShell treats ' and the curly U+2018 U+2019 U+201A U+201B as single
+/// quotes inside a single-quoted string; each one is doubled.
+pub(crate) fn escape_powershell_single_quotes(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        out.push(ch);
+        if matches!(ch, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 pub(crate) fn quote_windows_command_line_arg(value: &str) -> String {

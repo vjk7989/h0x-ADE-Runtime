@@ -200,13 +200,31 @@ fn served_by_this_account(pipe: HANDLE, name: &str) -> std::io::Result<()> {
             format!("{name} is served by another account (process {pid}); h0x won't use it"),
         ));
     }
+    let theirs = integrity_level(server.as_raw_handle())?;
+    let ours = integrity_level(unsafe { GetCurrentProcess() })?;
+    if !integrity_acceptable(theirs, ours) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "{name} is served at a lower integrity level (process {pid}); h0x won't use it"
+            ),
+        ));
+    }
     Ok(())
 }
 
 /// The TOKEN_USER of `process`, in usizes so the TOKEN_USER is aligned and
 /// its trailing SID stays alive.
 fn token_user(process: HANDLE) -> std::io::Result<Vec<usize>> {
-    use windows_sys::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY};
+    token_information(process, windows_sys::Win32::Security::TokenUser)
+}
+
+/// The `class` record of `process`'s token, in usizes so it is aligned.
+fn token_information(
+    process: HANDLE,
+    class: windows_sys::Win32::Security::TOKEN_INFORMATION_CLASS,
+) -> std::io::Result<Vec<usize>> {
+    use windows_sys::Win32::Security::{GetTokenInformation, TOKEN_QUERY};
     use windows_sys::Win32::System::Threading::OpenProcessToken;
 
     let mut token = null_mut();
@@ -215,7 +233,7 @@ fn token_user(process: HANDLE) -> std::io::Result<Vec<usize>> {
     }
     let token = unsafe { OwnedHandle::from_raw_handle(token) };
     let mut needed = 0;
-    unsafe { GetTokenInformation(token.as_raw_handle(), TokenUser, null_mut(), 0, &mut needed) };
+    unsafe { GetTokenInformation(token.as_raw_handle(), class, null_mut(), 0, &mut needed) };
     if needed == 0 {
         return Err(std::io::Error::last_os_error());
     }
@@ -223,7 +241,7 @@ fn token_user(process: HANDLE) -> std::io::Result<Vec<usize>> {
     if unsafe {
         GetTokenInformation(
             token.as_raw_handle(),
-            TokenUser,
+            class,
             buffer.as_mut_ptr().cast(),
             needed,
             &mut needed,
@@ -233,6 +251,30 @@ fn token_user(process: HANDLE) -> std::io::Result<Vec<usize>> {
         return Err(std::io::Error::last_os_error());
     }
     Ok(buffer)
+}
+
+/// The integrity RID (last sub-authority of the mandatory label SID) of `process`.
+fn integrity_level(process: HANDLE) -> std::io::Result<u32> {
+    use windows_sys::Win32::Security::{
+        GetSidSubAuthority, GetSidSubAuthorityCount, TokenIntegrityLevel, TOKEN_MANDATORY_LABEL,
+    };
+
+    let label = token_information(process, TokenIntegrityLevel)?;
+    // SAFETY: label holds an aligned TOKEN_MANDATORY_LABEL written by GetTokenInformation.
+    unsafe {
+        let sid = (*label.as_ptr().cast::<TOKEN_MANDATORY_LABEL>()).Label.Sid;
+        let count = *GetSidSubAuthorityCount(sid);
+        if count == 0 {
+            return Err(std::io::Error::from(std::io::ErrorKind::InvalidData));
+        }
+        Ok(*GetSidSubAuthority(sid, u32::from(count) - 1))
+    }
+}
+
+/// A server running below the client's integrity level could be a
+/// lower-privileged impostor; the same or a higher level is fine.
+fn integrity_acceptable(server: u32, client: u32) -> bool {
+    server >= client
 }
 
 fn user_sid(token_user: &[usize]) -> windows_sys::Win32::Security::PSID {
@@ -3507,6 +3549,28 @@ impl Drop for InputSourceRestore {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pipe_server_integrity_must_not_be_below_the_client() {
+        const MEDIUM: u32 = 0x2000;
+        const HIGH: u32 = 0x3000;
+        const SYSTEM: u32 = 0x4000;
+        assert!(super::integrity_acceptable(MEDIUM, MEDIUM));
+        assert!(super::integrity_acceptable(HIGH, MEDIUM));
+        assert!(super::integrity_acceptable(SYSTEM, HIGH));
+        assert!(!super::integrity_acceptable(MEDIUM, HIGH));
+        assert!(!super::integrity_acceptable(0, MEDIUM));
+    }
+
+    #[test]
+    fn own_integrity_level_is_readable_and_acceptable_to_itself() {
+        let own = super::integrity_level(unsafe {
+            windows_sys::Win32::System::Threading::GetCurrentProcess()
+        })
+        .expect("own integrity level");
+        assert!(own >= 0x1000);
+        assert!(super::integrity_acceptable(own, own));
+    }
+
     use std::{
         fs,
         process::{Command, Stdio},
