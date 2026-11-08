@@ -2007,7 +2007,11 @@ async fn run_client_loop(
                         }
                     }
                     ServerMessage::Clipboard { data } => {
-                        if forward_clipboard(&data) {
+                        let clipboard_write = crate::config::Config::load()
+                            .config
+                            .terminal
+                            .clipboard_write;
+                        if forward_clipboard(&data, clipboard_write) {
                             let (width, height) = state.reported_size;
                             let frame = state.shell.as_mut().and_then(|shell| {
                                 shell

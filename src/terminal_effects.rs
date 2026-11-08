@@ -13,11 +13,10 @@ pub(crate) fn write_terminal_bells<W: Write>(writer: &mut W, count: u16) -> io::
 }
 
 pub(crate) fn write_window_title<W: Write>(writer: &mut W, title: Option<&str>) -> io::Result<()> {
-    let title = title.unwrap_or("h0x");
+    // A remote server's title is untrusted: same sanitizer the server applies.
     let safe_title = title
-        .chars()
-        .filter(|ch| !matches!(*ch, '\u{1b}' | '\u{7}' | '\u{9c}'))
-        .collect::<String>();
+        .and_then(crate::config::sanitize_window_title_text)
+        .unwrap_or_else(|| "h0x".to_string());
     write!(writer, "\x1b]0;{safe_title}\x07")?;
     writer.flush()
 }
@@ -43,6 +42,25 @@ mod tests {
 
         output.clear();
         write_window_title(&mut output, None).unwrap();
+        assert_eq!(output, b"\x1b]0;h0x\x07");
+    }
+
+    #[test]
+    fn window_title_drops_every_control_character() {
+        let mut output = Vec::new();
+        write_window_title(
+            &mut output,
+            Some("a\r\nb\u{18}c\u{1a}d\u{85}e\u{9b}f\u{7f}g\x1b]52;c;x\x07"),
+        )
+        .unwrap();
+        assert_eq!(output, b"\x1b]0;abcdefg]52;c;x\x07");
+
+        // A title made only of controls falls back to the default.
+        output.clear();
+        write_window_title(&mut output, Some("\r\n\u{18}\u{9b}")).unwrap();
+        assert_eq!(output, b"\x1b]0;h0x\x07");
+        output.clear();
+        write_window_title(&mut output, Some("")).unwrap();
         assert_eq!(output, b"\x1b]0;h0x\x07");
     }
 }

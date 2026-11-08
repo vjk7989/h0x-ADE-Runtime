@@ -909,6 +909,15 @@ fn decode_clipboard_payload_decodes_base64() {
 }
 
 #[test]
+fn osc52_clipboard_write_is_blocked_unless_allowed() {
+    // Valid payload, setting off: nothing is written and nothing is reported as written.
+    assert!(!forward_clipboard("dGVzdA==", false));
+    assert!(!forward_clipboard("", false));
+    // Setting on still rejects a malformed payload before touching the clipboard.
+    assert!(!forward_clipboard("not-base64!!!", true));
+}
+
+#[test]
 fn ioctl_cell_size_accepts_fractional_terminal_geometry() {
     assert_eq!(ioctl_cell_size(80, 24, 800, 480), Some((10, 20)));
     assert_eq!(ioctl_cell_size(80, 24, 805, 480), Some((10, 20)));

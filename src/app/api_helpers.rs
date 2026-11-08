@@ -25,6 +25,7 @@ fn normalize_api_key_alias(key: &str) -> &str {
 pub(super) fn encode_api_text(runtime: &crate::terminal::TerminalRuntime, text: &str) -> Vec<u8> {
     let bracketed = runtime.bracketed_paste_enabled();
     if bracketed {
+        let text = crate::pane::strip_paste_escapes(text);
         format!("\x1b[200~{text}\x1b[201~").into_bytes()
     } else {
         text.as_bytes().to_vec()
