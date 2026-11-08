@@ -1320,6 +1320,7 @@ fn api_confirmation_overlay_follows_the_snapshot_and_sends_the_answer() {
     let pending = crate::protocol::ClientShellApiConfirmation {
         id: 7,
         prompt: "Link plugin example.confirm from C:\\plugins\\confirm".into(),
+        caller: "pid 42 (node)".into(),
     };
     let answers = |outcome: &ClientShellInput| {
         outcome
@@ -1352,7 +1353,7 @@ fn api_confirmation_overlay_follows_the_snapshot_and_sends_the_answer() {
     state.set_snapshot(Box::new(next.clone()));
     assert!(matches!(
         state.overlay.as_ref(),
-        Some(ClientShellOverlay::ApiConfirmation(current)) if current == &pending
+        Some(ClientShellOverlay::ApiConfirmation(current)) if current.pending == pending
     ));
     let frame = state.compose(106, 24).expect("confirmation frame");
     let text = frame
@@ -1371,6 +1372,9 @@ fn api_confirmation_overlay_follows_the_snapshot_and_sends_the_answer() {
     assert!(text.contains("Link plugin example.confirm from C:\\plugins\\confirm"));
     assert!(text.contains("allow") && text.contains("deny"));
 
+    assert!(text.contains("asked by pid 42 (node)"));
+    expire_api_confirmation_guard(&mut state);
+
     // Other keys neither answer nor dismiss the confirmation.
     let ignored = state.handle_raw_events(vec![RawInputEvent::Key(
         crate::input::TerminalKey::new(KeyCode::Char('x'), KeyModifiers::empty()),
@@ -1381,9 +1385,21 @@ fn api_confirmation_overlay_follows_the_snapshot_and_sends_the_answer() {
         Some(ClientShellOverlay::ApiConfirmation(_))
     ));
 
-    let allowed = state.handle_raw_events(vec![RawInputEvent::Key(
-        crate::input::TerminalKey::new(KeyCode::Enter, KeyModifiers::empty()),
+    // Allow is a deliberate move to its button (Tab), then Enter; `y` no longer answers.
+    let typed_y = state.handle_raw_events(vec![RawInputEvent::Key(
+        crate::input::TerminalKey::new(KeyCode::Char('y'), KeyModifiers::empty()),
     )]);
+    assert!(answers(&typed_y).is_empty());
+    let allowed = state.handle_raw_events(vec![
+        RawInputEvent::Key(crate::input::TerminalKey::new(
+            KeyCode::Tab,
+            KeyModifiers::empty(),
+        )),
+        RawInputEvent::Key(crate::input::TerminalKey::new(
+            KeyCode::Enter,
+            KeyModifiers::empty(),
+        )),
+    ]);
     assert_eq!(
         answers(&allowed),
         vec![crate::protocol::endpoint::EndpointApiConfirmationAnswer { id: 7, allow: true }]
@@ -1394,8 +1410,10 @@ fn api_confirmation_overlay_follows_the_snapshot_and_sends_the_answer() {
     second.api_confirmation = Some(crate::protocol::ClientShellApiConfirmation {
         id: 8,
         prompt: "Install the claude integration hooks".into(),
+        caller: "pid 43 (sh)".into(),
     });
     state.set_snapshot(Box::new(second.clone()));
+    expire_api_confirmation_guard(&mut state);
     let denied = state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
         KeyCode::Esc,
         KeyModifiers::empty(),
@@ -1417,4 +1435,121 @@ fn api_confirmation_overlay_follows_the_snapshot_and_sends_the_answer() {
     second.api_confirmation = None;
     state.set_snapshot(Box::new(second));
     assert!(state.overlay.is_none());
+}
+
+fn expire_api_confirmation_guard(state: &mut ClientShellState) {
+    let Some(ClientShellOverlay::ApiConfirmation(confirmation)) = state.overlay.as_mut() else {
+        panic!("no api confirmation overlay");
+    };
+    confirmation.shown_at = std::time::Instant::now()
+        - super::super::state::API_CONFIRMATION_INPUT_GUARD
+        - std::time::Duration::from_millis(10);
+}
+
+fn api_confirmation_state() -> ClientShellState {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    let mut projected = snapshot();
+    projected.api_confirmation = Some(crate::protocol::ClientShellApiConfirmation {
+        id: 3,
+        prompt: "Enable plugin demo".into(),
+        caller: "pid 9 (sh)".into(),
+    });
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+    state
+}
+
+fn api_answers(outcome: &ClientShellInput) -> usize {
+    outcome
+        .requests
+        .iter()
+        .filter(|request| {
+            matches!(
+                request,
+                ClientMessage::EndpointControl { kind, .. }
+                    if kind == crate::protocol::endpoint::API_CONFIRMATION_ANSWER_KIND
+            )
+        })
+        .count()
+}
+
+fn key_event(code: KeyCode) -> RawInputEvent {
+    RawInputEvent::Key(crate::input::TerminalKey::new(code, KeyModifiers::empty()))
+}
+
+#[test]
+fn api_confirmation_ignores_all_input_during_the_guard() {
+    let mut state = api_confirmation_state();
+    // Typing already under way when the prompt appears, including Tab+Enter and Esc.
+    let outcome = state.handle_raw_events(vec![
+        key_event(KeyCode::Char('y')),
+        key_event(KeyCode::Tab),
+        key_event(KeyCode::Enter),
+        key_event(KeyCode::Esc),
+        RawInputEvent::Text(crate::input::TextCommit::new("y")),
+        RawInputEvent::Paste("y\n".into()),
+    ]);
+    assert_eq!(api_answers(&outcome), 0);
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::ApiConfirmation(ref c)) if !c.allow_focused
+    ));
+}
+
+#[test]
+fn api_confirmation_guard_boundary_is_exact() {
+    let state = api_confirmation_state();
+    let Some(ClientShellOverlay::ApiConfirmation(confirmation)) = state.overlay.as_ref() else {
+        panic!("no api confirmation overlay");
+    };
+    let shown = confirmation.shown_at;
+    let guard = super::super::state::API_CONFIRMATION_INPUT_GUARD;
+    assert!(!confirmation.accepts_input(shown));
+    assert!(!confirmation.accepts_input(shown + guard - std::time::Duration::from_millis(1)));
+    assert!(confirmation.accepts_input(shown + guard));
+}
+
+#[test]
+fn typing_yarn_after_the_guard_does_not_approve() {
+    let mut state = api_confirmation_state();
+    expire_api_confirmation_guard(&mut state);
+    let outcome = state.handle_raw_events(
+        "yarn"
+            .chars()
+            .map(|c| key_event(KeyCode::Char(c)))
+            .collect(),
+    );
+    // `n` denies; nothing in "yarn" allows.
+    let denied = outcome.requests.iter().any(|request| {
+        matches!(
+            request,
+            ClientMessage::EndpointControl { data, .. } if data.contains("\"allow\":false")
+        )
+    });
+    assert_eq!(api_answers(&outcome), 1);
+    assert!(denied);
+}
+
+#[test]
+fn api_confirmation_enter_denies_until_allow_is_focused() {
+    let mut state = api_confirmation_state();
+    expire_api_confirmation_guard(&mut state);
+    let outcome = state.handle_raw_events(vec![key_event(KeyCode::Enter)]);
+    assert!(outcome.requests.iter().any(|request| matches!(
+        request,
+        ClientMessage::EndpointControl { data, .. } if data.contains("\"allow\":false")
+    )));
+
+    let mut state = api_confirmation_state();
+    expire_api_confirmation_guard(&mut state);
+    // Tab twice returns focus to Deny.
+    let outcome = state.handle_raw_events(vec![
+        key_event(KeyCode::Tab),
+        key_event(KeyCode::Tab),
+        key_event(KeyCode::Enter),
+    ]);
+    assert!(outcome.requests.iter().any(|request| matches!(
+        request,
+        ClientMessage::EndpointControl { data, .. } if data.contains("\"allow\":false")
+    )));
 }

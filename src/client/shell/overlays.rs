@@ -1256,10 +1256,10 @@ fn render_help_overlay(
 }
 fn render_api_confirmation_overlay(
     b: &mut Buffer,
-    c: &crate::protocol::ClientShellApiConfirmation,
+    c: &ClientApiConfirmationOverlay,
     p: &Palette,
 ) -> Option<OverlayRender> {
-    let q = popup(b.area, 72, 6)?;
+    let q = popup(b.area, 72, 7)?;
     let i = panel(b, q, p.red, p.panel_bg)?;
     put_text(
         b,
@@ -1277,30 +1277,40 @@ fn render_api_confirmation_overlay(
         i.x,
         i.y + 1,
         i.width,
-        &format!(" {}", c.prompt),
+        &format!(" {}", c.pending.prompt),
         Style::default().fg(p.text).bg(p.panel_bg),
     );
-    let rs = row(i, &[11, 10], 2, 3);
+    put_text(
+        b,
+        i.x,
+        i.y + 2,
+        i.width,
+        &format!(" asked by {}", c.pending.caller),
+        Style::default().fg(p.text).bg(p.panel_bg),
+    );
+    let rs = row(i, &[15, 10], 2, 4);
     let [allow, deny] = rs.as_slice() else {
         return None;
     };
+    let focused = Style::default()
+        .fg(contrast(p))
+        .bg(p.red)
+        .add_modifier(Modifier::BOLD);
+    let idle = Style::default()
+        .fg(p.text)
+        .bg(p.surface0)
+        .add_modifier(Modifier::BOLD);
     button(
         b,
         *allow,
-        " ↵ allow ",
-        Style::default()
-            .fg(contrast(p))
-            .bg(p.red)
-            .add_modifier(Modifier::BOLD),
+        " tab, ↵ allow ",
+        if c.allow_focused { focused } else { idle },
     );
     button(
         b,
         *deny,
         " esc deny ",
-        Style::default()
-            .fg(p.text)
-            .bg(p.surface0)
-            .add_modifier(Modifier::BOLD),
+        if c.allow_focused { idle } else { focused },
     );
     Some(OverlayRender {
         area: q,

@@ -20,6 +20,14 @@ fn socket_request(
     server: &mut HeadlessServer,
     method: api::schema::Method,
 ) -> std::sync::mpsc::Receiver<String> {
+    socket_request_from(server, method, None)
+}
+
+fn socket_request_from(
+    server: &mut HeadlessServer,
+    method: api::schema::Method,
+    caller: Option<&str>,
+) -> std::sync::mpsc::Receiver<String> {
     let (respond_to, response_rx) = std::sync::mpsc::channel();
     server.handle_api_request_with_shutdown_check(api::ApiRequestMessage {
         request: api::schema::Request {
@@ -28,6 +36,7 @@ fn socket_request(
         },
         respond_to,
         response_write_complete: None,
+        caller: caller.map(str::to_owned),
     });
     response_rx
 }
@@ -296,6 +305,7 @@ async fn client_shell_plugin_enable_runs_without_api_confirmation() {
             },
             respond_to,
             response_write_complete: None,
+            caller: None,
         },
     );
 
@@ -305,4 +315,121 @@ async fn client_shell_plugin_enable_runs_without_api_confirmation() {
     assert!(server.app.current_api_confirmation().is_none());
     let _ = fs::remove_dir_all(root);
     shutdown_test_runtimes(&mut server);
+}
+
+#[test]
+fn api_confirmation_shows_the_requesting_process() {
+    let mut server = test_headless_server();
+    attach_shell_client(&mut server);
+    let _rx = socket_request_from(&mut server, integration_install(), Some("pid 42 (node)"));
+    assert_eq!(
+        server.app.current_api_confirmation().unwrap().caller,
+        "pid 42 (node)"
+    );
+    shutdown_test_runtimes(&mut server);
+
+    let mut server = test_headless_server();
+    attach_shell_client(&mut server);
+    let _rx = socket_request(&mut server, integration_install());
+    assert_eq!(
+        server.app.current_api_confirmation().unwrap().caller,
+        "an unidentified program"
+    );
+    shutdown_test_runtimes(&mut server);
+}
+
+#[test]
+fn api_confirmation_after_a_deny_refuses_the_same_caller_only() {
+    let mut server = test_headless_server();
+    attach_shell_client(&mut server);
+    let first = socket_request_from(&mut server, integration_install(), Some("pid 1 (a)"));
+    let id = pending_id(&server);
+    assert!(answer(&mut server, SHELL_CLIENT, id, false));
+    assert_eq!(
+        error_of(&first.recv_timeout(Duration::from_secs(1)).unwrap()).0,
+        "denied_by_user"
+    );
+
+    let again = socket_request_from(&mut server, integration_install(), Some("pid 1 (a)"));
+    let (code, message) = error_of(&again.recv_timeout(Duration::from_secs(1)).unwrap());
+    assert_eq!(code, "confirmation_refused");
+    assert_eq!(message, "denied recently; try again later");
+    assert!(server.app.current_api_confirmation().is_none());
+
+    let other = socket_request_from(&mut server, integration_install(), Some("pid 2 (b)"));
+    assert!(
+        other.try_recv().is_err(),
+        "another caller still waits for the user"
+    );
+    assert!(server.app.current_api_confirmation().is_some());
+    shutdown_test_runtimes(&mut server);
+}
+
+#[test]
+fn api_confirmation_deny_cooldown_expires_at_five_minutes() {
+    let mut server = test_headless_server();
+    attach_shell_client(&mut server);
+    let _rx = socket_request_from(&mut server, integration_install(), Some("pid 1 (a)"));
+    let id = pending_id(&server);
+    let denied_at = Instant::now();
+    assert!(server
+        .app
+        .answer_api_confirmation(id, false, denied_at)
+        .is_none());
+
+    let caller = Some("pid 1 (a)");
+    let just_before = denied_at + Duration::from_secs(299);
+    assert!(server
+        .app
+        .api_confirmation_refusal(caller, just_before)
+        .is_some());
+    let at_expiry = denied_at + Duration::from_secs(300);
+    assert!(server
+        .app
+        .api_confirmation_refusal(caller, at_expiry)
+        .is_none());
+    shutdown_test_runtimes(&mut server);
+}
+
+#[test]
+fn api_confirmation_queue_is_capped_and_extra_requests_are_refused_at_once() {
+    let mut server = test_headless_server();
+    attach_shell_client(&mut server);
+    let waiting = (0..4)
+        .map(|n| {
+            let caller = format!("pid {n} (x)");
+            socket_request_from(&mut server, integration_install(), Some(&caller))
+        })
+        .collect::<Vec<_>>();
+    for rx in &waiting {
+        assert!(rx.try_recv().is_err(), "within the cap the request waits");
+    }
+    let fifth = socket_request_from(&mut server, integration_install(), Some("pid 9 (x)"));
+    let (code, message) = error_of(&fifth.recv_timeout(Duration::from_secs(1)).unwrap());
+    assert_eq!(code, "confirmation_refused");
+    assert_eq!(message, "too many confirmations are waiting");
+
+    // Answering one frees a slot.
+    let id = pending_id(&server);
+    assert!(answer(&mut server, SHELL_CLIENT, id, false));
+    let sixth = socket_request_from(&mut server, integration_install(), Some("pid 10 (x)"));
+    assert!(sixth.try_recv().is_err());
+    shutdown_test_runtimes(&mut server);
+}
+
+#[test]
+fn api_confirmation_prompt_strips_bidi_and_format_characters() {
+    let server = test_headless_server();
+    let request = api::schema::Request {
+        id: "confirm-me".into(),
+        method: plugin_enable(
+            "evil\u{202e}gnp\u{200b}.\u{2066}x\u{2069}\u{feff}\u{e0041}\u{0007}ok",
+        ),
+    };
+    let prompt = server
+        .app
+        .api_confirmation_prompt(&request)
+        .unwrap()
+        .unwrap();
+    assert_eq!(prompt, "Enable plugin evil?gnp?.?x????ok");
 }
