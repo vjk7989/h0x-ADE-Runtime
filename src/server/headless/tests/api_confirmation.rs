@@ -433,3 +433,154 @@ fn api_confirmation_prompt_strips_bidi_and_format_characters() {
         .unwrap();
     assert_eq!(prompt, "Enable plugin evil?gnp?.?x????ok");
 }
+
+fn enable_prompt(server: &HeadlessServer, plugin_id: &str) -> String {
+    server
+        .app
+        .api_confirmation_prompt(&api::schema::Request {
+            id: "confirm-me".into(),
+            method: plugin_enable(plugin_id),
+        })
+        .unwrap()
+        .unwrap()
+}
+
+#[test]
+fn api_confirmation_prompt_replaces_each_listed_format_character_and_keeps_its_neighbours() {
+    let server = test_headless_server();
+    let format_chars = [
+        0x00AD, 0x061C, 0x180E, 0x200B, 0x200C, 0x200D, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C,
+        0x202D, 0x202E, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0x2066, 0x2067, 0x2068, 0x2069,
+        0xFEFF, 0xE0001, 0xE0020, 0xE0041, 0xE007F,
+    ];
+    for code in format_chars {
+        let c = char::from_u32(code).unwrap();
+        assert_eq!(
+            enable_prompt(&server, &format!("a{c}b")),
+            "Enable plugin a?b",
+            "U+{code:04X}"
+        );
+    }
+    // Printable neighbours of the replaced ranges stay as they are.
+    for code in [0x200A, 0x2010, 0x202F, 0x2070, 0xE0080, 0x00E9] {
+        let c = char::from_u32(code).unwrap();
+        assert_eq!(
+            enable_prompt(&server, &format!("a{c}b")),
+            format!("Enable plugin a{c}b"),
+            "U+{code:04X}"
+        );
+    }
+    // Controls: C0, DEL and C1.
+    assert_eq!(
+        enable_prompt(&server, "a\u{1b}[31mb\u{7f}c\u{85}d"),
+        "Enable plugin a?[31mb?c?d"
+    );
+    // An id that is empty after trimming must not panic.
+    assert!(enable_prompt(&server, "   ").starts_with("Enable plugin"));
+}
+
+#[test]
+fn api_confirmation_prompt_breaks_emoji_zwj_sequences() {
+    // Current behaviour: U+200D is a format character, so a family emoji shows as its parts.
+    let server = test_headless_server();
+    assert_eq!(
+        enable_prompt(&server, "team\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}"),
+        "Enable plugin team\u{1F468}?\u{1F469}?\u{1F467}"
+    );
+}
+
+#[test]
+fn api_confirmation_caller_is_shown_printable_with_windows_paths_intact() {
+    let mut server = test_headless_server();
+    attach_shell_client(&mut server);
+    let _rx = socket_request_from(
+        &mut server,
+        integration_install(),
+        Some("pid 7 (C:\\Tools\\node.exe)\u{202e}exe.txt\u{200b}\u{1b}"),
+    );
+    assert_eq!(
+        server.app.current_api_confirmation().unwrap().caller,
+        "pid 7 (C:\\Tools\\node.exe)?exe.txt??"
+    );
+    shutdown_test_runtimes(&mut server);
+}
+
+#[test]
+fn api_confirmation_allow_and_timeout_do_not_start_the_deny_cooldown() {
+    let mut server = test_headless_server();
+    attach_shell_client(&mut server);
+    let caller = Some("pid 1 (a)");
+
+    let _allowed = socket_request_from(&mut server, integration_install(), caller);
+    let id = pending_id(&server);
+    let now = Instant::now();
+    // Allow hands the request back for dispatch; it is not run here.
+    assert!(server.app.answer_api_confirmation(id, true, now).is_some());
+    assert!(server.app.api_confirmation_refusal(caller, now).is_none());
+
+    let timed_out = socket_request_from(&mut server, integration_install(), caller);
+    let later = Instant::now() + Duration::from_secs(121);
+    assert!(server.app.expire_api_confirmations(later));
+    assert_eq!(
+        error_of(&timed_out.recv_timeout(Duration::from_secs(1)).unwrap()).0,
+        "not_confirmed"
+    );
+    assert!(server.app.api_confirmation_refusal(caller, later).is_none());
+
+    // An unknown id answers nothing and denies nobody.
+    assert!(server
+        .app
+        .answer_api_confirmation(999, false, later)
+        .is_none());
+    assert!(server.app.api_confirmation_refusal(caller, later).is_none());
+    shutdown_test_runtimes(&mut server);
+}
+
+#[test]
+fn api_confirmation_deny_of_an_unidentified_caller_refuses_other_unidentified_callers() {
+    let mut server = test_headless_server();
+    attach_shell_client(&mut server);
+    let first = socket_request(&mut server, integration_install());
+    let id = pending_id(&server);
+    assert!(answer(&mut server, SHELL_CLIENT, id, false));
+    assert_eq!(
+        error_of(&first.recv_timeout(Duration::from_secs(1)).unwrap()).0,
+        "denied_by_user"
+    );
+
+    let again = socket_request(&mut server, integration_install());
+    assert_eq!(
+        error_of(&again.recv_timeout(Duration::from_secs(1)).unwrap()).0,
+        "confirmation_refused"
+    );
+    // A known caller is unaffected.
+    let known = socket_request_from(&mut server, integration_install(), Some("pid 5 (a)"));
+    assert!(known.try_recv().is_err());
+    shutdown_test_runtimes(&mut server);
+}
+
+#[test]
+fn api_confirmation_cooldown_is_checked_before_the_queue_cap() {
+    let mut server = test_headless_server();
+    attach_shell_client(&mut server);
+    let _first = socket_request_from(&mut server, integration_install(), Some("pid 1 (a)"));
+    let id = pending_id(&server);
+    assert!(answer(&mut server, SHELL_CLIENT, id, false));
+    let _waiting = (0..4)
+        .map(|n| {
+            let caller = format!("pid {} (x)", n + 10);
+            socket_request_from(&mut server, integration_install(), Some(&caller))
+        })
+        .collect::<Vec<_>>();
+    let denied = socket_request_from(&mut server, integration_install(), Some("pid 1 (a)"));
+    assert_eq!(
+        error_of(&denied.recv_timeout(Duration::from_secs(1)).unwrap()).1,
+        "denied recently; try again later"
+    );
+    // The waiting requests are untouched by the refusals.
+    assert_eq!(
+        server.app.current_api_confirmation().unwrap().caller,
+        "pid 10 (x)"
+    );
+    shutdown_test_runtimes(&mut server);
+}
