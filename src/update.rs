@@ -3502,4 +3502,58 @@ mod asset_url_tests {
             assert!(!asset_url_allowed(url), "{url}");
         }
     }
+
+    #[test]
+    fn rejects_lookalike_and_smuggled_github_hosts() {
+        let long_host = format!("https://{}.github.com/x", "a".repeat(10_000));
+        for url in [
+            " ",
+            "https://",
+            "https:///x",
+            " https://github.com/x",
+            "https://github.com\n",
+            "https://github.com\t/x",
+            "HTTPS://github.com/x",
+            "https://GitHub.com/x",
+            "https://github.com:443/x",
+            "https://github.com:/x",
+            "https://github.com%40evil.example/x",
+            "https://github.com\\@evil.example/x",
+            "https://evil.example\\github.com/x",
+            "https://user:pass@github.com/x",
+            "https://@github.com/x",
+            "https://[::1]/x",
+            "https://[2606:50c0:8000::153]/x",
+            "https://140.82.112.3/x",
+            "https://xn--githb-zxa.com/x",
+            "https://gith\u{0443}b.com/x",
+            "https://github\u{3002}com/x",
+            "https://www.github.com/x",
+            "https://api.github.com/x",
+            "https://githubusercontent.com/x",
+            "https://evil.objects.githubusercontent.com/x",
+            "https://raw.githubusercontent.com/x",
+            "https:\\\\github.com\\x",
+            "https:/github.com/x",
+            "file:/github.com/x",
+            long_host.as_str(),
+        ] {
+            assert!(!asset_url_allowed(url), "{url:?}");
+        }
+    }
+
+    #[test]
+    fn allows_github_hosts_regardless_of_path_query_or_length() {
+        let long_path = format!("https://github.com/{}", "a".repeat(100_000));
+        for url in [
+            "https://github.com/",
+            "https://github.com?x=1",
+            "https://github.com#@evil.example",
+            "https://github.com/x?u=https://evil.example/",
+            "https://objects.githubusercontent.com/@evil.example",
+            long_path.as_str(),
+        ] {
+            assert!(asset_url_allowed(url), "{url:?}");
+        }
+    }
 }

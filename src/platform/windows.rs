@@ -3571,6 +3571,41 @@ mod tests {
         assert!(super::integrity_acceptable(own, own));
     }
 
+    #[test]
+    fn pipe_server_integrity_table_accepts_only_same_or_higher_levels() {
+        // Untrusted, Low, Medium, Medium Plus, High, System, Protected, then
+        // RIDs Windows does not name: the comparison stays numeric.
+        let levels: [u32; 9] = [
+            0,
+            0x1000,
+            0x2000,
+            0x2100,
+            0x3000,
+            0x4000,
+            0x5000,
+            0x0FFF,
+            u32::MAX,
+        ];
+        for server in levels {
+            for client in levels {
+                assert_eq!(
+                    super::integrity_acceptable(server, client),
+                    server >= client,
+                    "server {server:#x}, client {client:#x}"
+                );
+            }
+        }
+        assert!(!super::integrity_acceptable(0x1FFF, 0x2000));
+        assert!(!super::integrity_acceptable(0x0FFF, 0x1000));
+        assert!(super::integrity_acceptable(0x2001, 0x2000));
+    }
+
+    #[test]
+    fn unreadable_integrity_level_is_an_error() {
+        // A null handle has no token to read, so the caller must refuse the pipe.
+        assert!(super::integrity_level(std::ptr::null_mut()).is_err());
+    }
+
     use std::{
         fs,
         process::{Command, Stdio},
