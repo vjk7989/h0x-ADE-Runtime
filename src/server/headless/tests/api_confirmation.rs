@@ -475,8 +475,15 @@ fn api_confirmation_prompt_replaces_each_listed_format_character_and_keeps_its_n
         enable_prompt(&server, "a\u{1b}[31mb\u{7f}c\u{85}d"),
         "Enable plugin a?[31mb?c?d"
     );
-    // An id that is empty after trimming must not panic.
-    assert!(enable_prompt(&server, "   ").starts_with("Enable plugin"));
+    // An id that is empty after trimming is refused instead of prompting (see the empty-id test).
+    assert!(server
+        .app
+        .api_confirmation_prompt(&api::schema::Request {
+            id: "confirm-me".into(),
+            method: plugin_enable("   "),
+        })
+        .unwrap()
+        .is_err());
 }
 
 #[test]
@@ -582,5 +589,60 @@ fn api_confirmation_cooldown_is_checked_before_the_queue_cap() {
         server.app.current_api_confirmation().unwrap().caller,
         "pid 10 (x)"
     );
+    shutdown_test_runtimes(&mut server);
+}
+
+#[test]
+fn api_confirmation_blank_caller_shows_and_keys_as_unidentified() {
+    for caller in [Some(""), Some("   \t"), None] {
+        let mut server = test_headless_server();
+        attach_shell_client(&mut server);
+        let _rx = socket_request_from(&mut server, integration_install(), caller);
+        assert_eq!(
+            server.app.current_api_confirmation().unwrap().caller,
+            "an unidentified program",
+            "{caller:?}"
+        );
+        // Blank and missing callers share one cooldown key.
+        let id = pending_id(&server);
+        assert!(server
+            .app
+            .answer_api_confirmation(id, false, Instant::now())
+            .is_none());
+        assert!(server
+            .app
+            .api_confirmation_refusal(Some(" "), Instant::now())
+            .is_some());
+        shutdown_test_runtimes(&mut server);
+    }
+}
+
+#[test]
+fn api_confirmation_prompt_replaces_line_and_paragraph_separators() {
+    let server = test_headless_server();
+    assert_eq!(
+        enable_prompt(&server, "a\u{2028}b\u{2029}c"),
+        "Enable plugin a?b?c"
+    );
+}
+
+#[test]
+fn api_confirmation_with_an_empty_plugin_id_or_path_is_refused_without_a_prompt() {
+    let mut server = test_headless_server();
+    attach_shell_client(&mut server);
+    for method in [
+        plugin_enable(""),
+        plugin_enable("  \t "),
+        api::schema::Method::PluginLink(api::schema::PluginLinkParams {
+            path: "   ".into(),
+            enabled: false,
+            source: None,
+        }),
+    ] {
+        let rx = socket_request(&mut server, method);
+        let (code, _) = error_of(&rx.recv_timeout(Duration::from_secs(1)).unwrap());
+        assert_eq!(code, "invalid_params");
+        assert!(server.app.current_api_confirmation().is_none());
+    }
     shutdown_test_runtimes(&mut server);
 }

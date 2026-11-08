@@ -37,6 +37,7 @@ fn is_format_char(c: char) -> bool {
             | 0x08E2
             | 0x180E
             | 0x200B..=0x200F
+            | 0x2028..=0x2029
             | 0x202A..=0x202E
             | 0x2060..=0x2064
             | 0x2066..=0x206F
@@ -66,7 +67,10 @@ fn printable(value: &str) -> String {
 }
 
 fn caller_key(caller: Option<&str>) -> String {
-    caller.map_or_else(|| UNKNOWN_CALLER.to_owned(), printable)
+    match caller.map(str::trim) {
+        Some(caller) if !caller.is_empty() => printable(caller),
+        _ => UNKNOWN_CALLER.to_owned(),
+    }
 }
 
 impl App {
@@ -81,6 +85,11 @@ impl App {
                 "Install the {} integration hooks",
                 crate::integration::integration_target_label(params.target)
             ))),
+            Method::PluginLink(params) if params.path.trim().is_empty() => Some(Err(encode_error(
+                request.id.clone(),
+                "invalid_params",
+                "plugin path is empty",
+            ))),
             Method::PluginLink(params) => Some(
                 match super::plugins::load_plugin_manifest(&params.path, params.enabled) {
                     Ok(plugin) => Ok(format!(
@@ -91,6 +100,9 @@ impl App {
                     Err((code, message)) => Err(encode_error(request.id.clone(), code, message)),
                 },
             ),
+            Method::PluginEnable(params) if params.plugin_id.trim().is_empty() => Some(Err(
+                encode_error(request.id.clone(), "invalid_params", "plugin id is empty"),
+            )),
             Method::PluginEnable(params) => Some(Ok(format!(
                 "Enable plugin {}",
                 printable(params.plugin_id.trim())
