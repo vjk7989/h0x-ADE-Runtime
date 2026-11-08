@@ -39,6 +39,72 @@ fn windows_powershell_encoded_hook_command_preserves_script_invocation() {
     );
 }
 
+#[test]
+fn windows_powershell_encoded_hook_command_doubles_curly_quotes() {
+    use base64::Engine;
+
+    let hook_path = Path::new("C:\\Users\\O\u{2019}Brien\u{2018}\u{201A}\u{201B}'x\\h.ps1");
+    let command = powershell_encoded_hook_command(hook_path, "session");
+    let encoded = command.rsplit(' ').next().expect("payload");
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .expect("base64 payload");
+    let utf16 = bytes
+        .chunks_exact(2)
+        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        String::from_utf16(&utf16).expect("PowerShell script"),
+        "& 'C:\\Users\\O\u{2019}\u{2019}Brien\u{2018}\u{2018}\u{201A}\u{201A}\u{201B}\u{201B}''x\\h.ps1' session"
+    );
+}
+
+#[test]
+fn windows_powershell_encoded_hook_command_round_trips_hostile_paths() {
+    use base64::Engine;
+
+    const QUOTES: [char; 5] = ['\'', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'];
+    let long_path = format!("C:\\{}h.ps1", "dir\u{2019}\u{1F600}\\".repeat(2048));
+    for path in [
+        "",
+        "'\u{2018}\u{2019}\u{201A}\u{201B}",
+        "C:\\Users\\\u{1F600}'\u{1F600}\u{201B}\\h.ps1",
+        "C:\\a`'$(calc)\u{2019};exit;\u{2018}\\h.ps1",
+        "\\\\server\\share\\it\u{2019}s\\h.ps1",
+        long_path.as_str(),
+    ] {
+        let command = powershell_encoded_hook_command(Path::new(path), "session");
+        let encoded = command
+            .strip_prefix("powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ")
+            .expect("encoded PowerShell command");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("base64 payload");
+        let utf16 = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        let script = String::from_utf16(&utf16).expect("PowerShell script");
+        let quoted = script
+            .strip_prefix("& '")
+            .and_then(|rest| rest.strip_suffix("' session"))
+            .expect("single-quoted hook path");
+        // Read the literal back the way PowerShell does: a quote character
+        // followed by a quote character is one quote, a lone one ends it.
+        let mut decoded = String::new();
+        let mut chars = quoted.chars();
+        while let Some(ch) = chars.next() {
+            if QUOTES.contains(&ch) {
+                let next = chars.next().filter(|next| QUOTES.contains(next));
+                decoded.push(next.unwrap_or_else(|| panic!("unescaped quote in {script:?}")));
+            } else {
+                decoded.push(ch);
+            }
+        }
+        assert_eq!(decoded, path);
+    }
+}
+
 #[cfg(windows)]
 #[test]
 fn windows_antigravity_cli_hook_command_uses_encoded_powershell() {
