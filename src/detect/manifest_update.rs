@@ -1404,6 +1404,47 @@ path = "../codex.toml"
         });
     }
 
+    #[test]
+    fn manifest_paths_cannot_leave_the_release_directory() {
+        let manifest = remote_manifest("9999.01.01.2", "current-ready");
+        let cases: [(&str, &str, &str); 2] = [
+            // A Windows separator that `..` checks on `/` do not see.
+            ("backslash", INDEX_BACKSLASH, SIG_IDX_BACKSLASH),
+            ("query", INDEX_QUERY, SIG_IDX_QUERY),
+        ];
+        for (name, index, index_sig) in cases {
+            with_state_dir(&format!("sig-escape-{name}"), || {
+                let initial = remote_manifest("9999.01.01.1", "initial-ready");
+                process_agent_manifest(Agent::Codex, &initial, 1).unwrap();
+                let dir = web_dir(&format!("escape-{name}"));
+                let release = dir.join("release");
+                let outside = dir.join("outside");
+                // A correctly signed codex manifest both inside and outside
+                // the release directory.
+                for place in [&release, &outside] {
+                    fs::create_dir_all(place).unwrap();
+                    fs::write(place.join("codex.toml"), &manifest).unwrap();
+                    put_sig(place, "codex.toml", SIG_M_CURRENT);
+                }
+                fs::write(release.join("index.toml"), index).unwrap();
+                put_sig(&release, "index.toml", index_sig);
+                let result = check_and_update_from_url(&file_url(&release), TEST_KEY);
+                let _ = fs::remove_dir_all(&dir);
+
+                if let Ok(output) = &result {
+                    assert!(output.updated.is_empty(), "{name}: applied {output:?}");
+                    let status = output.status.agents.get("codex").unwrap();
+                    assert_eq!(status.last_result, "failed", "{name}");
+                }
+                assert_eq!(
+                    cached_codex_version().as_deref(),
+                    Some("9999.01.01.1"),
+                    "{name}"
+                );
+            });
+        }
+    }
+
     const INDEX_TWO: &str = r#"
 schema_version = 1
 
@@ -1414,6 +1455,14 @@ path = "codex.toml"
 [[agents]]
 id = "cursor"
 path = "cursor.toml"
+"#;
+
+    const INDEX_BACKSLASH: &str = r#"
+schema_version = 1
+
+[[agents]]
+id = "codex"
+path = '..\outside/codex.toml'
 "#;
 
     const INDEX_QUERY: &str = r#"
@@ -1428,6 +1477,11 @@ path = "codex.toml?v=1"
 RURoiCZgYc65YM/YP2ux75pDoShxvEXzGf9kBxqn0Z+nnwsMOO3nViYdrpCdJLotu8bw515107bStJvB+J/r0vkXds3ehW32DAQ=
 trusted comment: timestamp:1\tfile:index.toml
 xWxPLWHLcuRQwkNLXAVVY/TymqYKV/RNa24UgPnY2OoXR/WUhP7FYTOQo0i5sqF4SL8nTNsyHBN4BxLWnGx5Dg==
+";
+    const SIG_IDX_BACKSLASH: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YM2nJU+w1rAD0TnkuXk6m/Lvdlm5bOtADioeJf4G+DJvIpzOM11NiVs+G3/LdKAbW3c1G7t+yQNpFzM70jaE6gU=
+trusted comment: timestamp:1\tfile:index.toml
+s7Bx+MosiplRvZj0lw3cXv9lpJxId93+rCPaURLMfcxXBByTO6aPpc0h0kNtvCEfTMIJZ8JxR1hRHVUHm3LnCA==
 ";
     const SIG_IDX_QUERY: &str = "untrusted comment: signature from rsign secret key
 RURoiCZgYc65YNtSxQw0se6o9xHYMtZQF99Fx3D943sSW7Wk7PAmcDpjYH6NH8D8ZsvZoyy6PUT6zerlU8pEXidaWy8GuKZZkg8=
