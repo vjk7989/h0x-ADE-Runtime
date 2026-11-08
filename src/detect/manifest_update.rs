@@ -1200,4 +1200,278 @@ path = "../codex.toml"
         )
         .is_err());
     }
+
+    #[test]
+    fn catalog_rejects_absolute_foreign_host_and_empty_manifest_paths() {
+        for path in [
+            "",
+            "   ",
+            "/etc/codex.toml",
+            "//evil.example/codex.toml",
+            "https://evil.example/codex.toml",
+            "file:///etc/codex.toml",
+            "sub/../../codex.toml",
+            "sub/..",
+        ] {
+            let catalog =
+                format!("schema_version = 1\n\n[[agents]]\nid = \"codex\"\npath = \"{path}\"\n");
+            assert!(
+                parse_catalog(&catalog).is_err(),
+                "catalog accepted {path:?}"
+            );
+            if !path.trim().is_empty() {
+                assert!(
+                    join_url("https://example.invalid/download", path).is_err(),
+                    "join_url accepted {path:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn signatures_with_crlf_line_endings_are_accepted() {
+        with_state_dir("sig-crlf", || {
+            let manifest = remote_manifest("9999.01.01.2", "current-ready");
+            let index_sig = SIG_IDX_A.replace('\n', "\r\n");
+            let codex_sig = SIG_M_CURRENT.replace('\n', "\r\n");
+            let output = serve_and_update(
+                "crlf",
+                (INDEX_A, Some(&index_sig)),
+                (&manifest, Some(&codex_sig)),
+                TEST_KEY,
+            )
+            .unwrap();
+            assert_eq!(output.updated.len(), 1);
+            assert_eq!(cached_codex_version().as_deref(), Some("9999.01.01.2"));
+        });
+    }
+
+    #[test]
+    fn signed_empty_catalog_changes_nothing() {
+        let manifest = remote_manifest("9999.01.01.2", "current-ready");
+        with_state_dir("sig-empty-file", || {
+            let err = serve_and_update(
+                "empty-file",
+                ("", Some(SIG_IDX_EMPTY)),
+                (&manifest, Some(SIG_M_CURRENT)),
+                TEST_KEY,
+            )
+            .expect_err("an empty catalog file has no schema_version");
+            assert!(err.contains("catalog"), "{err}");
+            assert_eq!(cached_codex_version().as_deref(), Some("9999.01.01.1"));
+        });
+        with_state_dir("sig-no-agents", || {
+            let output = serve_and_update(
+                "no-agents",
+                ("\nschema_version = 1\n", Some(SIG_IDX_NO_AGENTS)),
+                (&manifest, Some(SIG_M_CURRENT)),
+                TEST_KEY,
+            )
+            .unwrap();
+            assert!(output.checked.is_empty());
+            assert!(output.updated.is_empty());
+            assert_eq!(cached_codex_version().as_deref(), Some("9999.01.01.1"));
+        });
+    }
+
+    #[test]
+    fn catalog_is_read_up_to_the_fetch_limit_and_refused_beyond_it() {
+        let manifest = remote_manifest("9999.01.01.2", "current-ready");
+        let padded_index = |len: usize| {
+            let mut index = format!("{INDEX_A}#");
+            while index.len() < len - 1 {
+                index.push('x');
+            }
+            index.push('\n');
+            index
+        };
+        with_state_dir("sig-size-at-limit", || {
+            let index = padded_index(MAX_FETCH_BYTES);
+            assert_eq!(index.len(), MAX_FETCH_BYTES);
+            let output = serve_and_update(
+                "size-at-limit",
+                (&index, Some(SIG_IDX_AT_LIMIT)),
+                (&manifest, Some(SIG_M_CURRENT)),
+                TEST_KEY,
+            )
+            .unwrap();
+            assert_eq!(output.updated.len(), 1);
+            assert_eq!(cached_codex_version().as_deref(), Some("9999.01.01.2"));
+        });
+        with_state_dir("sig-size-over-limit", || {
+            let index = padded_index(MAX_FETCH_BYTES + 1);
+            assert_eq!(index.len(), MAX_FETCH_BYTES + 1);
+            let result = serve_and_update(
+                "size-over-limit",
+                (&index, Some(SIG_IDX_OVER_LIMIT)),
+                (&manifest, Some(SIG_M_CURRENT)),
+                TEST_KEY,
+            );
+            assert!(result.is_err(), "{result:?}");
+            assert_eq!(cached_codex_version().as_deref(), Some("9999.01.01.1"));
+        });
+    }
+
+    #[test]
+    fn signed_but_invalid_manifest_fails_only_that_agent() {
+        let bad_regex = format!(
+            "{}regex = [\"(\"]\n",
+            remote_manifest("9999.01.01.2", "bad-regex")
+        );
+        let cursor = remote_manifest_for("cursor", "9999.01.01.2", "cursor-current-ready");
+        let cases: [(&str, &str, &str); 3] = [
+            (
+                "bad-toml",
+                "id = \"codex\"\nversion =\n",
+                SIG_M_CODEX_BAD_TOML,
+            ),
+            ("bad-regex", &bad_regex, SIG_M_CODEX_BAD_REGEX),
+            // The cursor manifest, signed as `codex.toml`: a valid signature
+            // does not let one agent's manifest stand in for another's.
+            ("other-agent", &cursor, SIG_M_CURSOR_AS_CODEX),
+        ];
+        for (name, codex, codex_sig) in cases {
+            with_state_dir(&format!("sig-invalid-{name}"), || {
+                for agent in [Agent::Codex, Agent::Cursor] {
+                    let initial =
+                        remote_manifest_for(agent_label(agent), "9999.01.01.1", "initial-ready");
+                    process_agent_manifest(agent, &initial, 1).unwrap();
+                }
+                let dir = web_dir(&format!("invalid-{name}"));
+                fs::write(dir.join("index.toml"), INDEX_TWO).unwrap();
+                put_sig(&dir, "index.toml", SIG_IDX_TWO);
+                fs::write(dir.join("codex.toml"), codex).unwrap();
+                put_sig(&dir, "codex.toml", codex_sig);
+                fs::write(dir.join("cursor.toml"), &cursor).unwrap();
+                put_sig(&dir, "cursor.toml", SIG_M_CURSOR);
+                let result = check_and_update_from_url(&file_url(&dir), TEST_KEY);
+                let _ = fs::remove_dir_all(&dir);
+
+                let output = result.unwrap();
+                let updated = output.updated.iter().map(|c| c.agent).collect::<Vec<_>>();
+                assert_eq!(updated, vec![Agent::Cursor], "{name}");
+                assert_eq!(
+                    cached_codex_version().as_deref(),
+                    Some("9999.01.01.1"),
+                    "{name}"
+                );
+                assert_eq!(
+                    cached_remote_version(Agent::Cursor)
+                        .map(|v| v.to_string())
+                        .as_deref(),
+                    Some("9999.01.01.2"),
+                    "{name}"
+                );
+                let codex_status = output.status.agents.get("codex").unwrap();
+                assert_eq!(codex_status.last_result, "failed", "{name}");
+                assert!(
+                    codex_status
+                        .last_error
+                        .as_deref()
+                        .is_some_and(|e| !e.contains("not signed")),
+                    "{name}: the signature was valid: {codex_status:?}"
+                );
+                assert_eq!(
+                    output.status.agents.get("cursor").unwrap().last_result,
+                    "updated",
+                    "{name}"
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn manifest_path_with_a_query_string_is_not_applied() {
+        with_state_dir("sig-query-path", || {
+            let initial = remote_manifest("9999.01.01.1", "initial-ready");
+            process_agent_manifest(Agent::Codex, &initial, 1).unwrap();
+            // A correctly signed `codex.toml` sits next to the catalog, but the
+            // catalog names it `codex.toml?v=1`, which is not the signed name.
+            let dir = web_dir("query-path");
+            let manifest = remote_manifest("9999.01.01.2", "current-ready");
+            fs::write(dir.join("codex.toml"), &manifest).unwrap();
+            put_sig(&dir, "codex.toml", SIG_M_CURRENT);
+            fs::write(dir.join("index.toml"), INDEX_QUERY).unwrap();
+            put_sig(&dir, "index.toml", SIG_IDX_QUERY);
+            let result = check_and_update_from_url(&file_url(&dir), TEST_KEY);
+            let _ = fs::remove_dir_all(&dir);
+
+            let output = result.unwrap();
+            assert!(output.updated.is_empty(), "applied {output:?}");
+            let status = output.status.agents.get("codex").unwrap();
+            assert_eq!(status.last_result, "failed");
+            assert_eq!(cached_codex_version().as_deref(), Some("9999.01.01.1"));
+        });
+    }
+
+    const INDEX_TWO: &str = r#"
+schema_version = 1
+
+[[agents]]
+id = "codex"
+path = "codex.toml"
+
+[[agents]]
+id = "cursor"
+path = "cursor.toml"
+"#;
+
+    const INDEX_QUERY: &str = r#"
+schema_version = 1
+
+[[agents]]
+id = "codex"
+path = "codex.toml?v=1"
+"#;
+
+    const SIG_IDX_TWO: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YM/YP2ux75pDoShxvEXzGf9kBxqn0Z+nnwsMOO3nViYdrpCdJLotu8bw515107bStJvB+J/r0vkXds3ehW32DAQ=
+trusted comment: timestamp:1\tfile:index.toml
+xWxPLWHLcuRQwkNLXAVVY/TymqYKV/RNa24UgPnY2OoXR/WUhP7FYTOQo0i5sqF4SL8nTNsyHBN4BxLWnGx5Dg==
+";
+    const SIG_IDX_QUERY: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YNtSxQw0se6o9xHYMtZQF99Fx3D943sSW7Wk7PAmcDpjYH6NH8D8ZsvZoyy6PUT6zerlU8pEXidaWy8GuKZZkg8=
+trusted comment: timestamp:1\tfile:index.toml
+gnfZLXoWPWSxYxyK68vXZ6qtD/TBf/yMB7AwJAFTPXdcou2NfBVHKzvp82hNLQYawdlEgfb8VbulqAzwvzvTBQ==
+";
+    const SIG_IDX_EMPTY: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YFMBAJ8ruuPc6a3mLf5XTC/UfJ8ksyV7CxcA+eG/b3mExha35vS22Y6J/Q+/Rj/phqlnlboyk47QUsxaBcXqUws=
+trusted comment: timestamp:1\tfile:index.toml
+ZtuQCTzwjQ+3Dvo6wbrAJwcqR/46xSUAXT2CyvNt2OtOG817eu86SHJKPXAuxHDBonSjA3aybjjzxEcwZOoJDg==
+";
+    const SIG_IDX_NO_AGENTS: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YOcrrzBAU7ZPAQsroxtXI01LVL0Nd8Jl73Mj6xKuvHDNuWOw8g9V9ijNrXpnMV1/BjFTpC0NV5K1v00X4tDWzwo=
+trusted comment: timestamp:1\tfile:index.toml
+4VyVaY563a5n29EcCaXhH4MtFcP80K0+mD1ioKKFy2MOzMoeN2WZ6F7ucAcbXtWlPCbVDgfRHtM8Tq/UsHiLAg==
+";
+    const SIG_IDX_AT_LIMIT: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YDR/GhNAaNfnaq6XlXybjKgqwq5IgzNEGZYNEY5u0MJj/qQp9YSbXLmTX/baX6VEElH8rTUZLxZgZFF64reHYAo=
+trusted comment: timestamp:1\tfile:index.toml
+YpzFKNKNJ/3vj+zKjXHYYvFpVAxeSm01zjflzlb0fZj0i27tRtA5pnPgVYrI4peyRo6pnQhdWkt2XNMYxTBcDw==
+";
+    const SIG_IDX_OVER_LIMIT: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YAJMvIYneHE7YLjOr/CNZ3K/y1LU4Bn8lypJVUUeIcnLM/xU/3q8jt7PcUk0xHOV2h5rbrndhvtnLAAdVWnMVg4=
+trusted comment: timestamp:1\tfile:index.toml
+p6cpphCzVa1w8LwUQpWscLdb1uihjfnNPlzX904OBLWKY80XJSnoGvY8kklTBUnwuR/7YXXP+rXCGiNAvJE3Bg==
+";
+    const SIG_M_CODEX_BAD_TOML: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YAwrKJ6UEy7Tkjh28TFdGxmUgLQFr43nMRtgo28RlisgD+lwNN8KJc+qJ8ZRm6KqgXHSGYkxu8wxqzB00wXhrgE=
+trusted comment: timestamp:1\tfile:codex.toml
+7x5wG2ESEjQmhgzv9k9f0z2qrVyJOO7czxQEJCfgCbp8KVHic4nKJgRvNjmz9GLrEuRhOkathYtGrLL1+WXnCA==
+";
+    const SIG_M_CODEX_BAD_REGEX: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YFKSxg9VEQNr9qsGYQmHBYUmnelUk6WYmXai+Vr+WR1UW72Bsbqz5cMmAHao6sbnMAgd8x3LOm9MsK0fMiYzFQI=
+trusted comment: timestamp:1\tfile:codex.toml
+K9QRN3VWNmS/CfLacCX1Y171fJbBOvaA7HeRipY2HOH6hDHl2Leob9KT+mt1b+ZwO862rC+43EDRte/QLV2UAw==
+";
+    const SIG_M_CURSOR_AS_CODEX: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YJy7HD+8x2FmFUJqfU0EHuFHGwUrevunXaZ9fxXpdY37IEAqDm7mbc4CZyhzpFXBUFp3BOsrxBgK7TB8EFXeZQs=
+trusted comment: timestamp:1\tfile:codex.toml
+nGlbYu+aWZQYShfJh6Y9sNkNQaSGtd0rP9Ya7DzUdpw6ycLzAYeGmQ+HBTU4ysA35Y2e+zVEfOHDXWGnjrymAA==
+";
+    const SIG_M_CURSOR: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YIwcVrJrrLv1wDDdXgPB5mQrOxfiTo36iS5KajYWpKx5eLlo6DgSUmnl3SdWKzvnxXwgvQxUrUeFpDubUoUiPAA=
+trusted comment: timestamp:1\tfile:cursor.toml
+MWBBe11zeMnCa+rjy2QTKodaEEAxfyHlvHZUFpWGCWEz2jYIxfgfOIc1g89dEOOUTy/cK4Q9MxntRRjfZFc2BA==
+";
 }
