@@ -227,6 +227,19 @@ impl ClientShellState {
             outcome.repaint = true;
         }
         for event in events {
+            if matches!(
+                event,
+                RawInputEvent::Key(_)
+                    | RawInputEvent::Text(_)
+                    | RawInputEvent::Paste(_)
+                    | RawInputEvent::Mouse(_)
+            ) && matches!(
+                &self.overlay,
+                Some(ClientShellOverlay::ApiConfirmation(c))
+                    if !c.accepts_input(std::time::Instant::now())
+            ) {
+                continue;
+            }
             let event = match event {
                 RawInputEvent::Key(key) => match self.host_text_commit(&key) {
                     Some(text) => RawInputEvent::Text(crate::input::TextCommit::new(text)),

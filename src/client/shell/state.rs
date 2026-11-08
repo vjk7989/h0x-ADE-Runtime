@@ -580,6 +580,25 @@ pub(super) struct ClientConfirmCloseOverlay {
     pub(super) detail: String,
 }
 
+/// Input is ignored this long after an API confirmation appears, so typing that was already
+/// under way cannot answer it.
+pub(super) const API_CONFIRMATION_INPUT_GUARD: std::time::Duration =
+    std::time::Duration::from_secs(1);
+
+#[derive(Debug)]
+pub(super) struct ClientApiConfirmationOverlay {
+    pub(super) pending: crate::protocol::ClientShellApiConfirmation,
+    pub(super) shown_at: std::time::Instant,
+    /// Allow needs a deliberate move to its button; Deny is the default.
+    pub(super) allow_focused: bool,
+}
+
+impl ClientApiConfirmationOverlay {
+    pub(super) fn accepts_input(&self, now: std::time::Instant) -> bool {
+        now.saturating_duration_since(self.shown_at) >= API_CONFIRMATION_INPUT_GUARD
+    }
+}
+
 #[derive(Debug)]
 pub(super) enum ClientShellOverlay {
     Onboarding,
@@ -595,7 +614,7 @@ pub(super) enum ClientShellOverlay {
     ContextMenu(ClientContextMenuOverlay),
     GlobalMenu(ClientGlobalMenuOverlay),
     Settings(ClientSettingsOverlay),
-    ApiConfirmation(crate::protocol::ClientShellApiConfirmation),
+    ApiConfirmation(ClientApiConfirmationOverlay),
 }
 
 impl ClientShellOverlay {
@@ -1575,9 +1594,15 @@ impl ClientShellState {
         // A pending API confirmation takes the screen until it is answered or withdrawn.
         match (snapshot.api_confirmation.as_ref(), self.overlay.as_ref()) {
             (Some(pending), Some(ClientShellOverlay::ApiConfirmation(current)))
-                if current == pending => {}
+                if &current.pending == pending => {}
             (Some(pending), _) => {
-                self.overlay = Some(ClientShellOverlay::ApiConfirmation(pending.clone()));
+                self.overlay = Some(ClientShellOverlay::ApiConfirmation(
+                    ClientApiConfirmationOverlay {
+                        pending: pending.clone(),
+                        shown_at: std::time::Instant::now(),
+                        allow_focused: false,
+                    },
+                ));
                 self.chrome_drag = None;
             }
             (None, Some(ClientShellOverlay::ApiConfirmation(_))) => self.overlay = None,
