@@ -17,6 +17,8 @@ The terminal runtime your coding agents live on.
 
 ## Install
 
+HyperOx is in Beta: expect rough edges and breaking changes between releases.
+
 Linux and macOS:
 
 ```bash
@@ -29,15 +31,42 @@ Windows PowerShell:
 powershell -ExecutionPolicy Bypass -c "irm https://github.com/vjk7989/h0x-ADE-Runtime/releases/latest/download/install.ps1 | iex"
 ```
 
-Prebuilt binaries for every platform are attached to each release at https://github.com/vjk7989/h0x-ADE-Runtime/releases.
+### Manual download
 
-Then:
+Pick the file for your platform from the [latest release](https://github.com/vjk7989/h0x-ADE-Runtime/releases/latest) and put it on your PATH as `h0x` (`h0x.exe` on Windows):
+
+| Platform | Asset |
+|---|---|
+| Linux x86_64 / aarch64 | `h0x-linux-x86_64` / `h0x-linux-aarch64` |
+| macOS Intel / Apple Silicon | `h0x-macos-x86_64` / `h0x-macos-aarch64` |
+| Windows x86_64 | `h0x-windows-x86_64.zip` |
+
+### Verify a download
+
+Every release file has a [minisign](https://jedisct1.github.io/minisign/) signature beside it (`<file>.minisig`, same folder). The public key is:
+
+```text
+RWTEdqtOBn6VKQ/x9x3qWk/gIWUb/I1OlZXsTlHyrkp9Yq30qBki+tdt
+```
+
+```bash
+base=https://github.com/vjk7989/h0x-ADE-Runtime/releases/latest/download
+curl -fsSLO $base/h0x-linux-x86_64
+curl -fsSLO $base/h0x-linux-x86_64.minisig
+minisign -Vm h0x-linux-x86_64 -P RWTEdqtOBn6VKQ/x9x3qWk/gIWUb/I1OlZXsTlHyrkp9Yq30qBki+tdt
+```
+
+`h0x update` checks these signatures itself.
+
+## Get started
 
 ```bash
 h0x          # start the server and attach to the default session
 # ctrl+b q   # detach; everything keeps running
 h0x          # reattach
 ```
+
+The prefix key is `ctrl+b`: press it, then an action key (`v` splits right, `c` opens a new tab). The mouse covers everything too.
 
 ## Docs
 
