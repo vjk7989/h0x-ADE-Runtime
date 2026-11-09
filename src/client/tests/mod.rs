@@ -167,6 +167,186 @@ fn server_graphics_files_require_local_filesystem_not_just_local_terminal() {
     assert!(!server_graphics_files_allowed(&ssh, true));
 }
 
+#[test]
+fn raw_terminal_frames_are_only_allowed_for_local_non_semantic_attach() {
+    let local = endpoint::ClientEndpointId::Local;
+    let ssh = endpoint::ClientEndpointId::Ssh(
+        endpoint::ProfileId::parse("0123456789abcdef0123456789abcdef").unwrap(),
+    );
+    assert!(terminal_frames_allowed(&local, false, false));
+    assert!(!terminal_frames_allowed(&local, false, true));
+    assert!(!terminal_frames_allowed(&local, true, false));
+    assert!(!terminal_frames_allowed(&ssh, false, false));
+    assert!(!terminal_frames_allowed(&ssh, true, true));
+}
+
+#[test]
+fn kitty_file_medium_detection_covers_every_non_direct_medium() {
+    use frame_output::kitty_graphics_has_file_medium as has_file;
+    assert!(!has_file(b""));
+    assert!(!has_file(b"plain text"));
+    assert!(!has_file(b"\x1b_Ga=T,f=100,t=d,i=1;AAAA\x1b\\"));
+    assert!(!has_file(b"\x1b_Ga=T,f=100,i=1;t=f\x1b\\"));
+    assert!(has_file(b"\x1b_Ga=T,f=100,t=f,i=1;L2V0Yy9wYXNzd2Q=\x1b\\"));
+    assert!(has_file(b"\x1b_Ga=T,t=t,i=1;AAAA\x1b\\"));
+    assert!(has_file(b"\x1b_Ga=T,t=s,i=1;AAAA\x1b\\"));
+    assert!(has_file(
+        b"\x1b_Ga=T,t=d,i=1;AAAA\x1b\\\x1b_Ga=T,t=f,i=2;AAAA\x1b\\"
+    ));
+    // An unterminated command is still inspected.
+    assert!(has_file(b"\x1b_Ga=T,t=f,i=1;AAAA"));
+}
+
+#[test]
+fn full_surface_grid_must_match_declared_size() {
+    let mut surface = protocol::PaneSurfaceFrame {
+        boot_id: "boot".into(),
+        projection_revision: 1,
+        surface_revision: 1,
+        frame: protocol::FrameData {
+            cells: Vec::new(),
+            width: 0,
+            height: 0,
+            cursor: None,
+            hyperlinks: Vec::new(),
+            graphics: Vec::new(),
+        },
+        panes: Vec::new(),
+        splits: Vec::new(),
+        popup: None,
+        graphics: Default::default(),
+    };
+    assert!(surface_grid_is_consistent(&surface));
+    surface.frame.width = u16::MAX;
+    surface.frame.height = u16::MAX;
+    assert!(!surface_grid_is_consistent(&surface));
+    surface.frame.width = 1;
+    surface.frame.height = 0;
+    assert!(surface_grid_is_consistent(&surface));
+    surface.frame.height = 1;
+    assert!(!surface_grid_is_consistent(&surface));
+}
+
+#[test]
+fn kitty_file_medium_detection_reads_headers_not_payloads() {
+    use frame_output::kitty_graphics_has_file_medium as has_file;
+    // A direct transmission whose payload spells a file medium is still direct.
+    assert!(!has_file(b"\x1b_Ga=T,t=d,i=1;t=f,t=s,t=t\x1b\\"));
+    assert!(!has_file(b"\x1b_Gt=d\x1b\\"));
+    // Only the lowercase `t` key names the medium; any other value than `d` is refused.
+    assert!(!has_file(b"\x1b_Ga=T,T=f,i=1;AAAA\x1b\\"));
+    assert!(has_file(b"\x1b_Ga=T,t=F,i=1;AAAA\x1b\\"));
+    assert!(has_file(b"\x1b_Ga=T,t=,i=1;AAAA\x1b\\"));
+    assert!(has_file(b"\x1b_Ga=T,t=dd,i=1;AAAA\x1b\\"));
+    // A repeated key cannot hide a file medium behind an earlier `t=d`.
+    assert!(has_file(b"\x1b_Ga=T,t=d,t=f,i=1;AAAA\x1b\\"));
+    // One file command among several direct ones taints the whole frame.
+    assert!(has_file(
+        b"\x1b_Ga=T,t=d,i=1;AAAA\x1b\\text\x1b_Ga=T,t=f,i=2;L3RtcC94\x1b\\\x1b_Ga=p,i=1\x1b\\"
+    ));
+    // Truncated introducers at the end of the buffer are not a command.
+    assert!(!has_file(b"text\x1b_G"));
+    assert!(!has_file(b"\x1b"));
+    assert!(!has_file(b"\x1b_Xt=f\x1b\\"));
+}
+
+#[test]
+fn kitty_file_medium_split_across_graphics_frames_is_detected() {
+    use frame_output::kitty_graphics_has_file_medium as has_file;
+    // The host terminal parses one byte stream, so two Graphics frames join into `t=f`.
+    let first: &[u8] = b"\x1b_Ga=T,t";
+    let second: &[u8] = b"=f,i=1;L2V0Yy9wYXNzd2Q=\x1b\\";
+    assert!(has_file(&[first, second].concat()));
+    // Per-frame detection cannot see a split header; the per-connection guard holds the
+    // unfinished APC back so the host never receives a completable `t` header.
+    let mut guard = frame_output::KittyApcGuard::default();
+    let mut written = guard.filter(first);
+    written.extend(guard.filter(second));
+    assert!(!has_file(&written));
+    assert!(!written.windows(2).any(|pair| pair == b"t="));
+}
+
+#[test]
+fn kitty_apc_guard_holds_unfinished_sequences_and_passes_clean_ones() {
+    let mut guard = frame_output::KittyApcGuard::default();
+    // Complete direct transmission passes untouched.
+    let clean: &[u8] = b"\x1b_Ga=T,f=100,t=d,i=1;AAAA\x1b\\";
+    assert_eq!(guard.filter(clean), clean);
+    // Split on every byte boundary inside a file-medium command: nothing leaks.
+    let file: &[u8] = b"x\x1b_Ga=T,t=f,i=1;L2V0Yy9wYXNzd2Q=\x1b\\y";
+    for split in 1..file.len() {
+        let mut guard = frame_output::KittyApcGuard::default();
+        let mut out = guard.filter(&file[..split]);
+        out.extend(guard.filter(&file[split..]));
+        assert!(!out.windows(3).any(|w| w == b"t=f"), "split at {split}");
+    }
+    // A dangling ESC is held until the next frame decides what it is.
+    let mut guard = frame_output::KittyApcGuard::default();
+    assert_eq!(guard.filter(b"ab\x1b"), b"ab");
+    assert_eq!(guard.filter(b"[0m"), b"\x1b[0m");
+    // Legitimate split direct transmission is delivered whole once complete.
+    let mut guard = frame_output::KittyApcGuard::default();
+    assert!(guard.filter(b"\x1b_Ga=T,t=d,").is_empty());
+    assert_eq!(
+        guard.filter(b"i=1;AAAA\x1b\\"),
+        b"\x1b_Ga=T,t=d,i=1;AAAA\x1b\\"
+    );
+}
+
+#[test]
+fn surface_graphics_with_file_medium_or_unfinished_apc_are_unsafe() {
+    use frame_output::surface_graphics_are_safe as safe;
+    assert!(safe(b""));
+    assert!(safe(b"\x1b_Ga=T,t=d,i=1;AAAA\x1b\\"));
+    assert!(!safe(b"\x1b_Ga=T,t=f,i=1;AAAA\x1b\\"));
+    assert!(!safe(b"\x1b_Ga=T,t"));
+    assert!(!safe(b"ok\x1b_G"));
+    assert!(!safe(b"ok\x1b"));
+    assert!(!safe(b"ok\x1b_"));
+}
+
+#[test]
+fn full_surface_grid_rejects_one_cell_too_many_or_too_few() {
+    let cell = || protocol::CellData {
+        symbol: " ".into(),
+        fg: 0,
+        bg: 0,
+        modifier: 0,
+        skip: false,
+        hyperlink: None,
+    };
+    let mut surface = protocol::PaneSurfaceFrame {
+        boot_id: "boot".into(),
+        projection_revision: 1,
+        surface_revision: 1,
+        frame: protocol::FrameData {
+            cells: (0..6).map(|_| cell()).collect(),
+            width: 3,
+            height: 2,
+            cursor: None,
+            hyperlinks: Vec::new(),
+            graphics: Vec::new(),
+        },
+        panes: Vec::new(),
+        splits: Vec::new(),
+        popup: None,
+        graphics: Default::default(),
+    };
+    assert!(surface_grid_is_consistent(&surface));
+    surface.frame.cells.push(cell());
+    assert!(!surface_grid_is_consistent(&surface));
+    surface.frame.cells.truncate(5);
+    assert!(!surface_grid_is_consistent(&surface));
+    // A zero dimension never accepts cells.
+    surface.frame.cells.truncate(1);
+    surface.frame.width = 0;
+    surface.frame.height = 1;
+    assert!(!surface_grid_is_consistent(&surface));
+    surface.frame.width = 1;
+    surface.frame.height = 0;
+    assert!(!surface_grid_is_consistent(&surface));
+}
+
 fn restore_env_var(key: &str, value: Option<OsString>) {
     if let Some(value) = value {
         std::env::set_var(key, value);

@@ -11,6 +11,8 @@ use super::shell::ClientShellEndpointError;
 
 const ENDPOINT_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_RETIRED_REQUESTS_PER_ENDPOINT: usize = 128;
+/// Aggregate cap for one chunked endpoint response; a remote endpoint cannot grow it unboundedly.
+const MAX_ENDPOINT_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
 struct QueuedCommand {
     generation: u64,
@@ -225,6 +227,13 @@ impl EndpointCommands {
         {
             return Ok(None);
         }
+        if in_flight.response.len().saturating_add(data.len()) > MAX_ENDPOINT_RESPONSE_BYTES {
+            lane.in_flight = None;
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "endpoint response exceeds the size limit",
+            ));
+        }
         in_flight.response.extend(data);
         if !final_chunk {
             return Ok(None);
@@ -328,6 +337,108 @@ mod tests {
             .lanes
             .get(&endpoint())
             .is_some_and(|lane| lane.in_flight.is_some())
+    }
+
+    #[test]
+    fn oversize_aggregate_response_is_refused_and_clears_the_lane() {
+        let mut commands = commands_with_in_flight();
+        let chunk = vec![b'x'; MAX_ENDPOINT_RESPONSE_BYTES / 2];
+        for _ in 0..2 {
+            assert!(commands
+                .receive_chunk(&endpoint(), 1, "boot-a", "request-a", false, chunk.clone())
+                .unwrap()
+                .is_none());
+        }
+        let Err(error) =
+            commands.receive_chunk(&endpoint(), 1, "boot-a", "request-a", false, vec![b'x'])
+        else {
+            panic!("oversize response must be refused");
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(!has_in_flight(&commands));
+    }
+
+    #[test]
+    fn response_of_exactly_the_cap_completes_and_one_more_byte_is_refused() {
+        let json = serde_json::to_string(&SuccessResponse {
+            id: "request-a".into(),
+            result: ResponseResult::Ok {},
+        })
+        .unwrap();
+        let mut response = json.into_bytes();
+        response.resize(MAX_ENDPOINT_RESPONSE_BYTES, b' ');
+        let split = MAX_ENDPOINT_RESPONSE_BYTES / 3;
+
+        let mut commands = commands_with_in_flight();
+        assert!(commands
+            .receive_chunk(
+                &endpoint(),
+                1,
+                "boot-a",
+                "request-a",
+                false,
+                response[..split].to_vec()
+            )
+            .unwrap()
+            .is_none());
+        let completed = commands
+            .receive_chunk(
+                &endpoint(),
+                1,
+                "boot-a",
+                "request-a",
+                true,
+                response[split..].to_vec(),
+            )
+            .unwrap()
+            .expect("a response of exactly the cap completes");
+        assert!(completed.result.is_ok());
+        assert!(!has_in_flight(&commands));
+
+        let mut commands = commands_with_in_flight();
+        assert!(commands
+            .receive_chunk(&endpoint(), 1, "boot-a", "request-a", false, response)
+            .unwrap()
+            .is_none());
+        let Err(error) =
+            commands.receive_chunk(&endpoint(), 1, "boot-a", "request-a", true, vec![b' '])
+        else {
+            panic!("the byte past the cap must be refused even on the final chunk");
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(!has_in_flight(&commands));
+        // A late chunk for the refused request finds no command and is ignored.
+        assert!(commands
+            .receive_chunk(&endpoint(), 1, "boot-a", "request-a", true, vec![b'}'])
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn single_oversize_chunk_is_refused_but_uncorrelated_oversize_chunk_is_ignored() {
+        let oversize = vec![b'x'; MAX_ENDPOINT_RESPONSE_BYTES + 1];
+        let mut commands = commands_with_in_flight();
+        assert!(commands
+            .receive_chunk(
+                &endpoint(),
+                1,
+                "boot-a",
+                "request-other",
+                false,
+                oversize.clone()
+            )
+            .unwrap()
+            .is_none());
+        assert!(has_in_flight(&commands));
+        // An empty chunk never trips the cap.
+        assert!(commands
+            .receive_chunk(&endpoint(), 1, "boot-a", "request-a", false, Vec::new())
+            .unwrap()
+            .is_none());
+        assert!(commands
+            .receive_chunk(&endpoint(), 1, "boot-a", "request-a", true, oversize)
+            .is_err());
+        assert!(!has_in_flight(&commands));
     }
 
     #[test]

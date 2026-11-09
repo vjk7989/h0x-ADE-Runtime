@@ -751,10 +751,28 @@ struct DecodedPng {
     data: Vec<u8>,
 }
 
+/// Bounds on a kitty PNG payload, checked against the IHDR before any pixel buffer is allocated.
+const MAX_PNG_DIMENSION: u32 = 10_000;
+const MAX_PNG_OUTPUT_BYTES: usize = 400_000_000;
+
+fn png_dimensions_allowed(width: u32, height: u32) -> bool {
+    width > 0
+        && height > 0
+        && width <= MAX_PNG_DIMENSION
+        && height <= MAX_PNG_DIMENSION
+        && (width as usize) * (height as usize) * 4 <= MAX_PNG_OUTPUT_BYTES
+}
+
 fn decode_png_rgba(bytes: &[u8]) -> Option<DecodedPng> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info().ok()?;
+    let header = reader.info();
+    if !png_dimensions_allowed(header.width, header.height)
+        || reader.output_buffer_size() > MAX_PNG_OUTPUT_BYTES
+    {
+        return None;
+    }
     let mut buf = vec![0; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).ok()?;
     let frame = &buf[..info.buffer_size()];
@@ -3894,6 +3912,119 @@ mod tests {
             .read_text_screen((0, last_row - 1), (79, last_row), false)
             .unwrap();
         assert!(newest.contains("10000"));
+    }
+
+    fn encode_test_png(width: u32, height: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut encoder = png::Encoder::new(&mut out, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer
+            .write_image_data(&vec![255; width as usize * height as usize * 4])
+            .unwrap();
+        writer.finish().unwrap();
+        out
+    }
+
+    #[test]
+    fn png_dimension_limits_are_checked_before_allocation() {
+        assert!(!png_dimensions_allowed(16_777_215, u32::MAX));
+        assert!(!png_dimensions_allowed(10_001, 10_001));
+        assert!(!png_dimensions_allowed(10_001, 1));
+        assert!(!png_dimensions_allowed(0, 1));
+        assert!(png_dimensions_allowed(10_000, 1));
+        assert!(png_dimensions_allowed(10_000, 10_000));
+    }
+
+    #[test]
+    fn png_decode_accepts_max_width_and_refuses_oversize_width() {
+        let ok = decode_png_rgba(&encode_test_png(10_000, 1)).unwrap();
+        assert_eq!((ok.width, ok.height), (10_000, 1));
+        assert!(decode_png_rgba(&encode_test_png(10_001, 1)).is_none());
+    }
+
+    #[test]
+    fn png_header_with_huge_dimensions_is_refused() {
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(&16_777_215u32.to_be_bytes());
+        ihdr.extend_from_slice(&u32::MAX.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&ihdr);
+        let mut crc = 0xffff_ffffu32;
+        for byte in b"IHDR".iter().chain(ihdr.iter()) {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xedb8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        png.extend_from_slice(&(!crc).to_be_bytes());
+        assert!(decode_png_rgba(&png).is_none());
+    }
+
+    #[test]
+    fn png_limits_hold_on_each_axis_and_at_the_output_cap() {
+        assert!(!png_dimensions_allowed(0, 0));
+        assert!(!png_dimensions_allowed(1, 0));
+        assert!(!png_dimensions_allowed(10_000, 10_001));
+        assert!(!png_dimensions_allowed(10_001, 10_000));
+        assert!(png_dimensions_allowed(1, 10_000));
+        assert!(png_dimensions_allowed(1, 1));
+        // 10000 x 10000 RGBA is exactly the output cap, so the cap itself is inclusive.
+        assert_eq!(10_000usize * 10_000 * 4, MAX_PNG_OUTPUT_BYTES);
+
+        let tall = decode_png_rgba(&encode_test_png(1, 10_000)).unwrap();
+        assert_eq!((tall.width, tall.height), (1, 10_000));
+        assert_eq!(tall.data.len(), 10_000 * 4);
+        assert!(decode_png_rgba(&encode_test_png(1, 10_001)).is_none());
+    }
+
+    #[test]
+    fn png_with_empty_truncated_or_corrupt_header_is_refused() {
+        let header_only = |width: u32, height: u32, corrupt_crc: bool| {
+            let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+            let mut ihdr = Vec::new();
+            ihdr.extend_from_slice(&width.to_be_bytes());
+            ihdr.extend_from_slice(&height.to_be_bytes());
+            ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+            png.extend_from_slice(&13u32.to_be_bytes());
+            png.extend_from_slice(b"IHDR");
+            png.extend_from_slice(&ihdr);
+            let mut crc = 0xffff_ffffu32;
+            for byte in b"IHDR".iter().chain(ihdr.iter()) {
+                crc ^= u32::from(*byte);
+                for _ in 0..8 {
+                    crc = if crc & 1 != 0 {
+                        (crc >> 1) ^ 0xedb8_8320
+                    } else {
+                        crc >> 1
+                    };
+                }
+            }
+            let crc = if corrupt_crc { crc } else { !crc };
+            png.extend_from_slice(&crc.to_be_bytes());
+            png
+        };
+        assert!(decode_png_rgba(&[]).is_none());
+        assert!(decode_png_rgba(&header_only(1, 1, false)[..8]).is_none());
+        assert!(decode_png_rgba(&header_only(1, 1, false)[..20]).is_none());
+        assert!(decode_png_rgba(&header_only(0, 1, false)).is_none());
+        assert!(decode_png_rgba(&header_only(1, 0, false)).is_none());
+        assert!(decode_png_rgba(&header_only(10_000, 10_001, false)).is_none());
+        assert!(decode_png_rgba(&header_only(10_001, 10_000, false)).is_none());
+        assert!(decode_png_rgba(&header_only(16, 16, true)).is_none());
+        // A valid image whose IHDR CRC is broken is refused, not decoded.
+        let mut valid = encode_test_png(2, 2);
+        assert!(decode_png_rgba(&valid).is_some());
+        valid[29] ^= 0xff;
+        assert!(decode_png_rgba(&valid).is_none());
     }
 
     #[test]
