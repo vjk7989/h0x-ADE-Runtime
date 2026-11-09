@@ -99,3 +99,9 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+# Thin LTO, one codegen unit, stripped symbols. No panic=abort.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
