@@ -359,6 +359,89 @@ mod tests {
     }
 
     #[test]
+    fn response_of_exactly_the_cap_completes_and_one_more_byte_is_refused() {
+        let json = serde_json::to_string(&SuccessResponse {
+            id: "request-a".into(),
+            result: ResponseResult::Ok {},
+        })
+        .unwrap();
+        let mut response = json.into_bytes();
+        response.resize(MAX_ENDPOINT_RESPONSE_BYTES, b' ');
+        let split = MAX_ENDPOINT_RESPONSE_BYTES / 3;
+
+        let mut commands = commands_with_in_flight();
+        assert!(commands
+            .receive_chunk(
+                &endpoint(),
+                1,
+                "boot-a",
+                "request-a",
+                false,
+                response[..split].to_vec()
+            )
+            .unwrap()
+            .is_none());
+        let completed = commands
+            .receive_chunk(
+                &endpoint(),
+                1,
+                "boot-a",
+                "request-a",
+                true,
+                response[split..].to_vec(),
+            )
+            .unwrap()
+            .expect("a response of exactly the cap completes");
+        assert!(completed.result.is_ok());
+        assert!(!has_in_flight(&commands));
+
+        let mut commands = commands_with_in_flight();
+        assert!(commands
+            .receive_chunk(&endpoint(), 1, "boot-a", "request-a", false, response)
+            .unwrap()
+            .is_none());
+        let Err(error) =
+            commands.receive_chunk(&endpoint(), 1, "boot-a", "request-a", true, vec![b' '])
+        else {
+            panic!("the byte past the cap must be refused even on the final chunk");
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(!has_in_flight(&commands));
+        // A late chunk for the refused request finds no command and is ignored.
+        assert!(commands
+            .receive_chunk(&endpoint(), 1, "boot-a", "request-a", true, vec![b'}'])
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn single_oversize_chunk_is_refused_but_uncorrelated_oversize_chunk_is_ignored() {
+        let oversize = vec![b'x'; MAX_ENDPOINT_RESPONSE_BYTES + 1];
+        let mut commands = commands_with_in_flight();
+        assert!(commands
+            .receive_chunk(
+                &endpoint(),
+                1,
+                "boot-a",
+                "request-other",
+                false,
+                oversize.clone()
+            )
+            .unwrap()
+            .is_none());
+        assert!(has_in_flight(&commands));
+        // An empty chunk never trips the cap.
+        assert!(commands
+            .receive_chunk(&endpoint(), 1, "boot-a", "request-a", false, Vec::new())
+            .unwrap()
+            .is_none());
+        assert!(commands
+            .receive_chunk(&endpoint(), 1, "boot-a", "request-a", true, oversize)
+            .is_err());
+        assert!(!has_in_flight(&commands));
+    }
+
+    #[test]
     fn chunked_response_completion_is_correlated_and_clears_the_lane() {
         let mut commands = commands_with_in_flight();
         let response = serde_json::to_string(&SuccessResponse {

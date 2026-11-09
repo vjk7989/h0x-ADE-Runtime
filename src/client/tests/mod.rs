@@ -227,6 +227,71 @@ fn full_surface_grid_must_match_declared_size() {
     assert!(!surface_grid_is_consistent(&surface));
 }
 
+#[test]
+fn kitty_file_medium_detection_reads_headers_not_payloads() {
+    use frame_output::kitty_graphics_has_file_medium as has_file;
+    // A direct transmission whose payload spells a file medium is still direct.
+    assert!(!has_file(b"\x1b_Ga=T,t=d,i=1;t=f,t=s,t=t\x1b\\"));
+    assert!(!has_file(b"\x1b_Gt=d\x1b\\"));
+    // Only the lowercase `t` key names the medium; any other value than `d` is refused.
+    assert!(!has_file(b"\x1b_Ga=T,T=f,i=1;AAAA\x1b\\"));
+    assert!(has_file(b"\x1b_Ga=T,t=F,i=1;AAAA\x1b\\"));
+    assert!(has_file(b"\x1b_Ga=T,t=,i=1;AAAA\x1b\\"));
+    assert!(has_file(b"\x1b_Ga=T,t=dd,i=1;AAAA\x1b\\"));
+    // A repeated key cannot hide a file medium behind an earlier `t=d`.
+    assert!(has_file(b"\x1b_Ga=T,t=d,t=f,i=1;AAAA\x1b\\"));
+    // One file command among several direct ones taints the whole frame.
+    assert!(has_file(
+        b"\x1b_Ga=T,t=d,i=1;AAAA\x1b\\text\x1b_Ga=T,t=f,i=2;L3RtcC94\x1b\\\x1b_Ga=p,i=1\x1b\\"
+    ));
+    // Truncated introducers at the end of the buffer are not a command.
+    assert!(!has_file(b"text\x1b_G"));
+    assert!(!has_file(b"\x1b"));
+    assert!(!has_file(b"\x1b_Xt=f\x1b\\"));
+}
+
+#[test]
+fn full_surface_grid_rejects_one_cell_too_many_or_too_few() {
+    let cell = || protocol::CellData {
+        symbol: " ".into(),
+        fg: 0,
+        bg: 0,
+        modifier: 0,
+        skip: false,
+        hyperlink: None,
+    };
+    let mut surface = protocol::PaneSurfaceFrame {
+        boot_id: "boot".into(),
+        projection_revision: 1,
+        surface_revision: 1,
+        frame: protocol::FrameData {
+            cells: (0..6).map(|_| cell()).collect(),
+            width: 3,
+            height: 2,
+            cursor: None,
+            hyperlinks: Vec::new(),
+            graphics: Vec::new(),
+        },
+        panes: Vec::new(),
+        splits: Vec::new(),
+        popup: None,
+        graphics: Default::default(),
+    };
+    assert!(surface_grid_is_consistent(&surface));
+    surface.frame.cells.push(cell());
+    assert!(!surface_grid_is_consistent(&surface));
+    surface.frame.cells.truncate(5);
+    assert!(!surface_grid_is_consistent(&surface));
+    // A zero dimension never accepts cells.
+    surface.frame.cells.truncate(1);
+    surface.frame.width = 0;
+    surface.frame.height = 1;
+    assert!(!surface_grid_is_consistent(&surface));
+    surface.frame.width = 1;
+    surface.frame.height = 0;
+    assert!(!surface_grid_is_consistent(&surface));
+}
+
 fn restore_env_var(key: &str, value: Option<OsString>) {
     if let Some(value) = value {
         std::env::set_var(key, value);
