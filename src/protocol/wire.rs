@@ -957,6 +957,9 @@ pub struct ClientShellSnapshot {
 pub struct ClientShellApiConfirmation {
     pub id: u64,
     pub prompt: String,
+    /// The local process that sent the request.
+    #[serde(default)]
+    pub caller: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

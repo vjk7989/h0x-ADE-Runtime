@@ -27,6 +27,8 @@ pub struct ApiRequestMessage {
     pub request: Request,
     pub respond_to: std::sync::mpsc::Sender<String>,
     pub response_write_complete: Option<std::sync::mpsc::Receiver<()>>,
+    /// The local peer that sent the request, when the platform can tell.
+    pub caller: Option<String>,
 }
 
 pub type ApiRequestSender = mpsc::UnboundedSender<ApiRequestMessage>;

@@ -367,6 +367,30 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_api_confirmation_caller_round_trips_and_defaults_to_empty() {
+        let mut with_caller = snapshot();
+        with_caller.api_confirmation = Some(crate::protocol::ClientShellApiConfirmation {
+            id: 7,
+            prompt: "Enable plugin demo".into(),
+            caller: "pid 42 (node)".into(),
+        });
+        let ServerMessage::EndpointControl { data, .. } = snapshot_message(&with_caller).unwrap()
+        else {
+            panic!("snapshot should use endpoint control");
+        };
+        let decoded: ClientShellSnapshot = serde_json::from_str(&data).unwrap();
+        assert_eq!(decoded, with_caller);
+
+        // A server from before the caller field sends only id and prompt.
+        let mut legacy = serde_json::from_str::<serde_json::Value>(&data).unwrap();
+        legacy["api_confirmation"] = serde_json::json!({"id": 7, "prompt": "Enable plugin demo"});
+        let decoded: ClientShellSnapshot = serde_json::from_value(legacy).unwrap();
+        let confirmation = decoded.api_confirmation.unwrap();
+        assert_eq!(confirmation.id, 7);
+        assert_eq!(confirmation.caller, "");
+    }
+
+    #[test]
     fn legacy_hello_defaults_to_an_active_surface() {
         let mut value = serde_json::to_value(hello()).unwrap();
         value.as_object_mut().unwrap().remove("surface_active");
