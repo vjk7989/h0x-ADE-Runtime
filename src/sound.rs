@@ -397,6 +397,27 @@ mod tests {
     }
 
     #[test]
+    fn pre_planted_sound_directory_is_refused_and_left_alone() {
+        let next = SOUND_TMP_COUNTER.load(Ordering::Relaxed);
+        let planted =
+            std::env::temp_dir().join(format!("h0x-sound-{}-{next}.dir", std::process::id()));
+        std::fs::create_dir_all(&planted).unwrap();
+        std::fs::write(planted.join("sound.mp3"), b"planted").unwrap();
+
+        assert!(create_private_sound_file().is_err());
+        assert_eq!(
+            std::fs::read(planted.join("sound.mp3")).unwrap(),
+            b"planted",
+            "the planted directory is neither reused nor removed"
+        );
+        let (dir, _, file) = create_private_sound_file().unwrap();
+        drop(file);
+        assert_ne!(dir, planted, "the next playback uses a fresh directory");
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(planted);
+    }
+
+    #[test]
     fn sound_file_lives_in_a_fresh_private_directory() {
         let (dir, path, file) = create_private_sound_file().unwrap();
         drop(file);

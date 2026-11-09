@@ -798,3 +798,31 @@ fn config_include_naming_a_network_path_is_never_touched() {
         .all(|dep| !dep.0.to_string_lossy().contains("evil-host")));
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn config_include_and_include_if_naming_verbatim_unc_paths_are_never_touched() {
+    let root = temp_test_dir("network-include-verbatim");
+    write_fake_tracked_repo(&root);
+    std::fs::write(
+        root.join(".git/config"),
+        "[include]\n\tpath = //?/UNC/evil-host/share/a.cfg\n\
+         [includeIf \"onbranch:main\"]\n\tpath = //evil-host/share/b.cfg\n",
+    )
+    .unwrap();
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut user_paths = vec![std::path::PathBuf::from("//?/UNC/evil-host/share/user.cfg")];
+    #[cfg(windows)]
+    user_paths.extend([
+        std::path::PathBuf::from(r"\\?\UNC\evil-host\share\user.cfg"),
+        std::path::PathBuf::from(r"\\?\unc\evil-host\share\user.cfg"),
+        std::path::PathBuf::from(r"\\evil-host\share\user.cfg"),
+    ]);
+    let context =
+        read_config_with_user_paths(&git_worktree_info(&root).unwrap(), "main", user_paths);
+
+    assert!(context
+        .2
+        .iter()
+        .all(|dep| !dep.0.to_string_lossy().contains("evil-host")));
+    std::fs::remove_dir_all(root).unwrap();
+}

@@ -139,6 +139,32 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_text_control_range_boundaries_and_joined_emoji() {
+        assert_eq!(sanitize_text(""), "");
+        // C1 is U+0080..=U+009F; NBSP just past it is printable and kept.
+        assert_eq!(sanitize_text("a\u{80}b\u{9f}c\u{a0}d"), "abc\u{a0}d");
+        // ZWJ and tag characters are format characters, so joined emoji fall apart.
+        assert_eq!(
+            sanitize_text("\u{1f469}\u{200d}\u{1f4bb} \u{1f3f4}\u{e0067}\u{e007f}"),
+            "\u{1f469}\u{1f4bb} \u{1f3f4}"
+        );
+        assert_eq!(sanitize_text("\u{feff}\u{2028}\u{2029}\u{ad}"), "");
+    }
+
+    #[test]
+    fn kitty_notification_strips_controls_from_title_and_body() {
+        let sequence = String::from_utf8(build_osc99_notification(
+            "t\u{9b}1\u{202e}",
+            Some("b\u{1b}]\u{9c}\u{2066}"),
+        ))
+        .unwrap();
+        assert_eq!(
+            sequence,
+            "\x1b]99;i=1:d=0;t1\x1b\\\x1b]99;i=1:p=body;b]\x1b\\"
+        );
+    }
+
+    #[test]
     fn kitty_notification_uses_structured_title_and_body() {
         let sequence = String::from_utf8(build_osc99_notification("pi finished", Some("ws · 1")))
             .expect("utf8");

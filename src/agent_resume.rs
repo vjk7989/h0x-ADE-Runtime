@@ -387,6 +387,19 @@ mod tests {
     }
 
     #[test]
+    fn session_id_boundaries_and_shell_metacharacters() {
+        assert!(AgentSessionRef::id("").is_none());
+        assert!(AgentSessionRef::id("-").is_none());
+        assert!(AgentSessionRef::id("a\nb").is_none());
+        assert!(AgentSessionRef::id("a\u{85}b").is_none());
+        assert!(AgentSessionRef::id("x".repeat(MAX_SESSION_ID_LEN)).is_some());
+        assert!(AgentSessionRef::id("x".repeat(MAX_SESSION_ID_LEN + 1)).is_none());
+        // Quoting is the shell layer's job; such ids stay valid and are quoted there.
+        assert!(AgentSessionRef::id("'''").is_some());
+        assert!(AgentSessionRef::id("$(id);`id`").is_some());
+    }
+
+    #[test]
     fn reported_resume_argv_requires_a_plain_command_name() {
         assert!(validate_resume_argv(&argv(&[
             "prime-agent",

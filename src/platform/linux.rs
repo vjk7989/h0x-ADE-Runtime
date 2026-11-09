@@ -2238,6 +2238,40 @@ mod tests {
     }
 
     #[test]
+    fn desktop_notification_escapes_markup_in_the_body_only() {
+        let _guard = env_lock().lock().unwrap();
+        unsafe {
+            std::env::remove_var("WAYLAND_DISPLAY");
+            std::env::set_var("DISPLAY", ":0");
+        }
+
+        let path =
+            std::env::temp_dir().join(format!("h0x-notify-send-markup-{}", std::process::id()));
+        let script = "printf '%s\\n' \"$@\" > \"$H0X_NOTIFY_ARGS\"";
+        let shown = show_desktop_notification_with_command(
+            "a <b> & c",
+            Some("<a href=\"x\">&amp;</a>"),
+            |_| {
+                let mut cmd = Command::new("sh");
+                cmd.arg("-c")
+                    .arg(script)
+                    .arg("notify-send")
+                    .env("H0X_NOTIFY_ARGS", &path);
+                cmd
+            },
+        )
+        .expect("notification command should run");
+
+        assert!(shown);
+        let args = std::fs::read_to_string(&path).expect("args file");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            args,
+            "--app-name\nHyperOx\n--\na <b> & c\n&lt;a href=\"x\"&gt;&amp;amp;&lt;/a&gt;\n"
+        );
+    }
+
+    #[test]
     fn scrollback_editor_argv_preserves_unix_editor_shell_semantics() {
         let path = std::path::Path::new("/tmp/h0x scrollback.txt");
         let argv = scrollback_editor_argv(path).unwrap();

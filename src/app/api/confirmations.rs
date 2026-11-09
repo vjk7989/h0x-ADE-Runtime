@@ -216,3 +216,41 @@ impl App {
         self.api_confirmations.len() != before
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{caller_key, denial_key, UNKNOWN_CALLER};
+
+    #[test]
+    fn denial_key_is_the_program_for_every_caller_shape() {
+        for (caller, key) in [
+            ("pid 5 (node)", "node"),
+            ("pid 7 (node), parent pid 3 (bash)", "node"),
+            ("pid 7 (node), parent pid 3", "node"),
+            ("pid 5 (a b.exe)", "a b.exe"),
+            (
+                "pid 5 (Program Files (x86) tool.exe)",
+                "Program Files (x86) tool.exe",
+            ),
+            ("pid 5 ( spaced )", "spaced"),
+        ] {
+            assert_eq!(denial_key(caller), key, "{caller}");
+        }
+    }
+
+    #[test]
+    fn callers_without_a_program_name_share_the_unidentified_key() {
+        for caller in [
+            "pid 5",
+            "pid 5 ()",
+            "pid 5 (   )",
+            "",
+            "node",
+            "pid5 (node)",
+        ] {
+            assert_eq!(denial_key(caller), UNKNOWN_CALLER, "{caller:?}");
+        }
+        assert_eq!(denial_key(&caller_key(None)), UNKNOWN_CALLER);
+        assert_eq!(denial_key(&caller_key(Some("   "))), UNKNOWN_CALLER);
+    }
+}

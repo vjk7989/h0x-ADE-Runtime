@@ -989,4 +989,31 @@ mod tests {
             Some("claude '--resume' 'it''s \u{2019}\u{2019}x\u{2018}\u{2018} $env:X `id`'")
         );
     }
+
+    #[test]
+    fn shell_command_from_argv_keeps_metacharacters_and_every_quote_inert() {
+        let argv = vec![
+            "codex".to_string(),
+            "resume".to_string(),
+            "$(rm -rf x);`id`\nnext&|".to_string(),
+            "'\u{2018}\u{2019}\u{201a}\u{201b}".to_string(),
+            String::new(),
+            "abc-123".to_string(),
+        ];
+
+        assert_eq!(
+            shell_command_from_argv(&argv, true).as_deref(),
+            Some(
+                "codex resume '$(rm -rf x);`id`\nnext&|' \
+                 '''\u{2018}\u{2018}\u{2019}\u{2019}\u{201a}\u{201a}\u{201b}\u{201b}' '' abc-123"
+            )
+        );
+        assert_eq!(
+            shell_command_from_argv(&argv, false).as_deref(),
+            Some(
+                "codex resume '$(rm -rf x);`id`\nnext&|' \
+                 ''\\''\u{2018}\u{2019}\u{201a}\u{201b}' '' abc-123"
+            )
+        );
+    }
 }
