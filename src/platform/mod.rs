@@ -586,6 +586,15 @@ mod windows;
 #[cfg(target_os = "windows")]
 pub use windows::*;
 
+/// Whether `path` is owned by the account running h0x (git's safe.directory
+/// rule). Anything unreadable counts as not owned.
+#[cfg(unix)]
+pub(crate) fn path_owned_by_current_user(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    std::fs::metadata(path).is_ok_and(|metadata| metadata.uid() == unsafe { libc::geteuid() })
+}
+
 #[cfg(not(windows))]
 pub(crate) use process_cwd as pane_process_cwd;
 

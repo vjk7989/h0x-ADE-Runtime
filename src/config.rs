@@ -48,7 +48,7 @@ pub(crate) use self::{
         MAX_TAB_BAR_RIGHT_ENTRIES,
     },
     theme::canonical_theme_name,
-    window_title::{sanitize_window_title_text, window_title_diagnostics},
+    window_title::{is_title_format_char, sanitize_window_title_text, window_title_diagnostics},
 };
 
 pub(crate) use self::{keybinds::CommandKeybindType, model::KeysConfig};

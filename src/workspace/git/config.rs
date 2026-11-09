@@ -43,6 +43,9 @@ struct ConfigReader {
 
 impl ConfigReader {
     fn read(&mut self, path: &Path) -> (PathBuf, Option<String>) {
+        if super::discovery::is_network_path(path) {
+            return (path.to_path_buf(), None);
+        }
         let logical = path.to_path_buf();
         let path = canonicalize_best_effort_path(path);
         self.deps
