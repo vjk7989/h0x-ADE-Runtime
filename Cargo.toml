@@ -1,6 +1,6 @@
 [package]
 name = "h0x"
-version = "0.9.11"
+version = "0.9.12"
 edition = "2021"
 build = "build.rs"
 description = "HyperOx: terminal runtime for coding agents"
