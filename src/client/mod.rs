@@ -124,7 +124,7 @@ pub use errors::ClientError;
 #[cfg(test)]
 use frame_output::{clear_received_kitty_graphics, kitty_graphics_image_ids};
 use frame_output::{
-    contains_kitty_graphics_bytes, record_received_kitty_graphics,
+    contains_kitty_graphics_bytes, kitty_graphics_has_file_medium, record_received_kitty_graphics,
     write_encoded_frame_with_graphics,
 };
 pub(crate) use handshake::probe_endpoint_negotiation;
@@ -410,6 +410,24 @@ fn server_graphics_files_allowed(
     remote_client_process: bool,
 ) -> bool {
     endpoint_id.is_local() && !remote_client_process
+}
+
+/// Full surfaces get the same grid check deltas get: the cell buffer must match the declared
+/// width and height exactly.
+fn surface_grid_is_consistent(surface: &protocol::PaneSurfaceFrame) -> bool {
+    usize::from(surface.frame.width) * usize::from(surface.frame.height)
+        == surface.frame.cells.len()
+}
+
+/// Raw terminal frames are only negotiated for a local, non-shell attach. Anything else (a
+/// remote endpoint, the `--remote` thin client, or a SemanticFrame connection) must not reach
+/// the host terminal, bypassing the client's clipboard, title and graphics gates.
+fn terminal_frames_allowed(
+    endpoint_id: &endpoint::ClientEndpointId,
+    remote_client_process: bool,
+    semantic_frame: bool,
+) -> bool {
+    endpoint_id.is_local() && !remote_client_process && !semantic_frame
 }
 
 #[cfg(unix)]
@@ -1547,6 +1565,9 @@ async fn run_client_loop(
                         )));
                     }
                     ServerMessage::PaneSurface(surface) => {
+                        if !surface_grid_is_consistent(&surface) {
+                            continue;
+                        }
                         if activation_message {
                             let progress = pending_activation.as_mut().map(|pending| {
                                 pending.receive_surface(&endpoint_id, generation, surface)
@@ -1624,6 +1645,32 @@ async fn run_client_loop(
                         );
                         crate::render_prof::flush_if_due();
                     }
+                    ServerMessage::Terminal(_)
+                        if !terminal_frames_allowed(
+                            &endpoint_id,
+                            is_remote_client,
+                            state.shell.is_some(),
+                        ) =>
+                    {
+                        let message = "server sent an unnegotiated raw terminal frame";
+                        if handle_endpoint_attention(
+                            &mut state,
+                            &mut write_stream,
+                            &mut endpoint_commands,
+                            &mut supervisors,
+                            &mut pending_activation,
+                            &endpoint_id,
+                            generation,
+                            now,
+                            message.into(),
+                        ) {
+                            clear_endpoint_host_effects(
+                                &mut state,
+                                &host_mouse_capture_active,
+                                &host_sgr_pixels_active,
+                            );
+                        }
+                    }
                     ServerMessage::Terminal(frame) => {
                         if state.kitty_graphics_enabled
                             && contains_kitty_graphics_bytes(&frame.bytes)
@@ -1635,6 +1682,11 @@ async fn run_client_loop(
                         let _ = stdout.flush();
                     }
                     ServerMessage::Graphics { bytes } => {
+                        if !server_graphics_files_allowed(&endpoint_id, is_remote_client)
+                            && kitty_graphics_has_file_medium(&bytes)
+                        {
+                            continue;
+                        }
                         if state.kitty_graphics_enabled {
                             record_received_kitty_graphics(&bytes);
                             let mut stdout = io::stdout();

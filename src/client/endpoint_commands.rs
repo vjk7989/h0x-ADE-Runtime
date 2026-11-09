@@ -11,6 +11,8 @@ use super::shell::ClientShellEndpointError;
 
 const ENDPOINT_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_RETIRED_REQUESTS_PER_ENDPOINT: usize = 128;
+/// Aggregate cap for one chunked endpoint response; a remote endpoint cannot grow it unboundedly.
+const MAX_ENDPOINT_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
 struct QueuedCommand {
     generation: u64,
@@ -225,6 +227,13 @@ impl EndpointCommands {
         {
             return Ok(None);
         }
+        if in_flight.response.len().saturating_add(data.len()) > MAX_ENDPOINT_RESPONSE_BYTES {
+            lane.in_flight = None;
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "endpoint response exceeds the size limit",
+            ));
+        }
         in_flight.response.extend(data);
         if !final_chunk {
             return Ok(None);
@@ -328,6 +337,25 @@ mod tests {
             .lanes
             .get(&endpoint())
             .is_some_and(|lane| lane.in_flight.is_some())
+    }
+
+    #[test]
+    fn oversize_aggregate_response_is_refused_and_clears_the_lane() {
+        let mut commands = commands_with_in_flight();
+        let chunk = vec![b'x'; MAX_ENDPOINT_RESPONSE_BYTES / 2];
+        for _ in 0..2 {
+            assert!(commands
+                .receive_chunk(&endpoint(), 1, "boot-a", "request-a", false, chunk.clone())
+                .unwrap()
+                .is_none());
+        }
+        let Err(error) =
+            commands.receive_chunk(&endpoint(), 1, "boot-a", "request-a", false, vec![b'x'])
+        else {
+            panic!("oversize response must be refused");
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(!has_in_flight(&commands));
     }
 
     #[test]

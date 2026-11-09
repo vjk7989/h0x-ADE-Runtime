@@ -167,6 +167,66 @@ fn server_graphics_files_require_local_filesystem_not_just_local_terminal() {
     assert!(!server_graphics_files_allowed(&ssh, true));
 }
 
+#[test]
+fn raw_terminal_frames_are_only_allowed_for_local_non_semantic_attach() {
+    let local = endpoint::ClientEndpointId::Local;
+    let ssh = endpoint::ClientEndpointId::Ssh(
+        endpoint::ProfileId::parse("0123456789abcdef0123456789abcdef").unwrap(),
+    );
+    assert!(terminal_frames_allowed(&local, false, false));
+    assert!(!terminal_frames_allowed(&local, false, true));
+    assert!(!terminal_frames_allowed(&local, true, false));
+    assert!(!terminal_frames_allowed(&ssh, false, false));
+    assert!(!terminal_frames_allowed(&ssh, true, true));
+}
+
+#[test]
+fn kitty_file_medium_detection_covers_every_non_direct_medium() {
+    use frame_output::kitty_graphics_has_file_medium as has_file;
+    assert!(!has_file(b""));
+    assert!(!has_file(b"plain text"));
+    assert!(!has_file(b"\x1b_Ga=T,f=100,t=d,i=1;AAAA\x1b\\"));
+    assert!(!has_file(b"\x1b_Ga=T,f=100,i=1;t=f\x1b\\"));
+    assert!(has_file(b"\x1b_Ga=T,f=100,t=f,i=1;L2V0Yy9wYXNzd2Q=\x1b\\"));
+    assert!(has_file(b"\x1b_Ga=T,t=t,i=1;AAAA\x1b\\"));
+    assert!(has_file(b"\x1b_Ga=T,t=s,i=1;AAAA\x1b\\"));
+    assert!(has_file(
+        b"\x1b_Ga=T,t=d,i=1;AAAA\x1b\\\x1b_Ga=T,t=f,i=2;AAAA\x1b\\"
+    ));
+    // An unterminated command is still inspected.
+    assert!(has_file(b"\x1b_Ga=T,t=f,i=1;AAAA"));
+}
+
+#[test]
+fn full_surface_grid_must_match_declared_size() {
+    let mut surface = protocol::PaneSurfaceFrame {
+        boot_id: "boot".into(),
+        projection_revision: 1,
+        surface_revision: 1,
+        frame: protocol::FrameData {
+            cells: Vec::new(),
+            width: 0,
+            height: 0,
+            cursor: None,
+            hyperlinks: Vec::new(),
+            graphics: Vec::new(),
+        },
+        panes: Vec::new(),
+        splits: Vec::new(),
+        popup: None,
+        graphics: Default::default(),
+    };
+    assert!(surface_grid_is_consistent(&surface));
+    surface.frame.width = u16::MAX;
+    surface.frame.height = u16::MAX;
+    assert!(!surface_grid_is_consistent(&surface));
+    surface.frame.width = 1;
+    surface.frame.height = 0;
+    assert!(surface_grid_is_consistent(&surface));
+    surface.frame.height = 1;
+    assert!(!surface_grid_is_consistent(&surface));
+}
+
 fn restore_env_var(key: &str, value: Option<OsString>) {
     if let Some(value) = value {
         std::env::set_var(key, value);

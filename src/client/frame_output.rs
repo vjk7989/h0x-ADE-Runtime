@@ -128,6 +128,33 @@ pub(super) fn clear_received_kitty_graphics(mut writer: impl io::Write) -> io::R
     writer.flush()
 }
 
+/// True when any kitty graphics command in `bytes` names a non-direct transmission medium
+/// (`t=f`, `t=t`, `t=s`), which would make the host terminal read a local path.
+pub(super) fn kitty_graphics_has_file_medium(bytes: &[u8]) -> bool {
+    let mut index = 0usize;
+    while let Some(start) = find_subslice(&bytes[index..], b"\x1b_G") {
+        let command_start = index + start + 3;
+        let end = find_subslice(&bytes[command_start..], b"\x1b\\")
+            .unwrap_or(bytes.len() - command_start);
+        let command = &bytes[command_start..command_start + end];
+        let header_end = command
+            .iter()
+            .position(|byte| *byte == b';')
+            .unwrap_or(command.len());
+        if command[..header_end]
+            .split(|byte| *byte == b',')
+            .any(|part| {
+                part.strip_prefix(b"t=")
+                    .is_some_and(|medium| medium != b"d")
+            })
+        {
+            return true;
+        }
+        index = command_start + end;
+    }
+    false
+}
+
 pub(super) fn kitty_graphics_image_ids(bytes: &[u8]) -> Vec<u32> {
     let mut ids = Vec::new();
     let mut index = 0usize;
