@@ -7,7 +7,7 @@ pub(crate) fn default_window_title() -> String {
 
 /// Unicode format characters (category Cf) plus the line/paragraph separators:
 /// bidi overrides and isolates, zero-width marks, BOM, tag characters.
-fn is_title_format_char(ch: char) -> bool {
+pub(crate) fn is_title_format_char(ch: char) -> bool {
     matches!(
         ch,
         '\u{ad}'

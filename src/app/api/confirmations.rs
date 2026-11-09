@@ -9,7 +9,7 @@ use crate::app::App;
 use super::responses::encode_error;
 
 const API_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(120);
-/// After a deny, the same caller is refused for this long.
+/// After a deny, the same program (by executable) is refused for this long.
 const API_CONFIRMATION_DENY_COOLDOWN: Duration = Duration::from_secs(300);
 /// Requests beyond this many waiting confirmations are refused at once.
 const API_CONFIRMATION_MAX_PENDING: usize = 4;
@@ -73,6 +73,19 @@ fn caller_key(caller: Option<&str>) -> String {
     }
 }
 
+/// The cooldown key for a caller description (`pid N (exe)`, optionally followed by parent
+/// details): the executable, so a new process of the same program shares its predecessor's
+/// cooldown. Anything without a program name shares one key.
+fn denial_key(caller: &str) -> String {
+    let exe = caller
+        .strip_prefix("pid ")
+        .and_then(|rest| rest.split_once(" ("))
+        .map(|(_, rest)| rest.split("), parent pid ").next().unwrap_or(rest))
+        .map(|name| name.trim_end_matches(')').trim())
+        .filter(|name| !name.is_empty());
+    exe.map_or_else(|| UNKNOWN_CALLER.to_owned(), str::to_owned)
+}
+
 impl App {
     /// The confirmation prompt for a socket request that installs hooks or plugin code,
     /// or the error response when such a request cannot run at all.
@@ -123,7 +136,7 @@ impl App {
         });
         if self
             .api_confirmation_denials
-            .contains_key(&caller_key(caller))
+            .contains_key(&denial_key(&caller_key(caller)))
         {
             return Some("denied recently; try again later");
         }
@@ -176,7 +189,8 @@ impl App {
         if allow {
             return Some(pending.msg);
         }
-        self.api_confirmation_denials.insert(pending.caller, now);
+        self.api_confirmation_denials
+            .insert(denial_key(&pending.caller), now);
         let _ = pending.msg.respond_to.send(encode_error(
             pending.msg.request.id,
             "denied_by_user",

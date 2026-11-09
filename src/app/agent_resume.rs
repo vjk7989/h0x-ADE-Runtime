@@ -238,7 +238,10 @@ impl App {
             return false;
         }
 
-        let Some(resume_command) = shell_command_from_argv(&plan.argv) else {
+        let powershell_pane = crate::pane::uses_windows_powershell_pane_shell(
+            crate::pane::PaneShellConfig::new(&self.state.default_shell, self.state.shell_mode),
+        );
+        let Some(resume_command) = shell_command_from_argv(&plan.argv, powershell_pane) else {
             tracing::warn!(
                 pane = pane_id.raw(),
                 terminal = %terminal_id,
@@ -353,13 +356,17 @@ fn stable_terminal_inner_rect(pane_inner: Rect) -> Rect {
     )
 }
 
-fn shell_command_from_argv(argv: &[String]) -> Option<String> {
+fn shell_command_from_argv(argv: &[String], powershell: bool) -> Option<String> {
+    let quote = if powershell {
+        crate::platform::quote_powershell_arg
+    } else {
+        shell_quote
+    };
     let mut parts = argv.iter();
-    let first = shell_quote(parts.next()?);
-    let mut command = first;
+    let mut command = quote(parts.next()?);
     for part in parts {
         command.push(' ');
-        command.push_str(&shell_quote(part));
+        command.push_str(&quote(part));
     }
     Some(command)
 }
@@ -962,9 +969,24 @@ mod tests {
         ];
 
         assert_eq!(
-            shell_command_from_argv(&argv).as_deref(),
+            shell_command_from_argv(&argv, false).as_deref(),
             Some("claude --resume 'session with '\\'' quote'")
         );
-        assert_eq!(shell_command_from_argv(&[]), None);
+        assert_eq!(shell_command_from_argv(&[], false), None);
+        assert_eq!(shell_command_from_argv(&[], true), None);
+    }
+
+    #[test]
+    fn shell_command_from_argv_quotes_for_powershell() {
+        let argv = vec![
+            "claude".to_string(),
+            "--resume".to_string(),
+            "it's \u{2019}x\u{2018} $env:X `id`".to_string(),
+        ];
+
+        assert_eq!(
+            shell_command_from_argv(&argv, true).as_deref(),
+            Some("claude '--resume' 'it''s \u{2019}\u{2019}x\u{2018}\u{2018} $env:X `id`'")
+        );
     }
 }

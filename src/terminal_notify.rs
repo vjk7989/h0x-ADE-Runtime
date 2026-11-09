@@ -84,11 +84,11 @@ fn build_osc99_notification(title: &str, body: Option<&str>) -> Vec<u8> {
 fn sanitize_text(text: impl AsRef<str>) -> String {
     text.as_ref()
         .chars()
-        .filter(|ch| *ch != '\u{1b}' && *ch != '\u{7}' && *ch != '\u{9c}')
         .map(|ch| match ch {
             '\n' | '\r' | '\t' => ' ',
             _ => ch,
         })
+        .filter(|ch| !ch.is_control() && !crate::config::is_title_format_char(*ch))
         .collect()
 }
 
@@ -125,6 +125,17 @@ mod tests {
     #[test]
     fn sanitize_text_strips_control_bytes() {
         assert_eq!(sanitize_text("a\n\tb\u{1b}c\u{7}"), "a  bc");
+    }
+
+    #[test]
+    fn sanitize_text_strips_c1_controls_and_format_characters() {
+        assert_eq!(
+            sanitize_text("a\u{9d}b\u{85}c\u{202e}d\u{200b}e\u{2066}f\u{7f}g"),
+            "abcdefg"
+        );
+        let osc =
+            String::from_utf8(build_osc9_notification("x\u{9c}y", Some("\u{202e}z"))).unwrap();
+        assert_eq!(osc, "\x1b]9;xy: z\x1b\\");
     }
 
     #[test]

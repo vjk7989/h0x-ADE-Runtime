@@ -776,3 +776,25 @@ fn git_status_fingerprint_honors_negative_fetch_refspec() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn config_include_naming_a_network_path_is_never_touched() {
+    let root = temp_test_dir("network-include");
+    write_fake_tracked_repo(&root);
+    std::fs::write(
+        root.join(".git/config"),
+        "[include]\n\tpath = //evil-host/share/x.cfg\n",
+    )
+    .unwrap();
+    let context = read_config_with_user_paths(
+        &git_worktree_info(&root).unwrap(),
+        "main",
+        vec![std::path::PathBuf::from("//evil-host/share/user.cfg")],
+    );
+
+    assert!(context
+        .2
+        .iter()
+        .all(|dep| !dep.0.to_string_lossy().contains("evil-host")));
+    std::fs::remove_dir_all(root).unwrap();
+}

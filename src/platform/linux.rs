@@ -1006,9 +1006,17 @@ fn show_desktop_notification_with_command(
     let mut cmd = command("notify-send");
     cmd.arg("--app-name").arg("HyperOx").arg("--").arg(title);
     if let Some(body) = body.filter(|body| !body.is_empty()) {
-        cmd.arg(body);
+        cmd.arg(escape_notification_markup(body));
     }
     run_notification_command(cmd)
+}
+
+/// Notification daemons render the body as Pango markup, so pane-controlled text must not
+/// be able to inject tags or links.
+fn escape_notification_markup(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn run_notification_command(mut command: Command) -> std::io::Result<bool> {
@@ -2217,6 +2225,16 @@ mod tests {
         let args = std::fs::read_to_string(&path).expect("args file");
         let _ = std::fs::remove_file(&path);
         assert_eq!(args, "--app-name\nHyperOx\n--\n-danger\nbody\n");
+    }
+
+    #[test]
+    fn notification_body_markup_is_escaped_for_pango() {
+        assert_eq!(
+            escape_notification_markup("a & <b>x</b> <a href=\"u\">&amp;"),
+            "a &amp; &lt;b&gt;x&lt;/b&gt; &lt;a href=\"u\"&gt;&amp;amp;"
+        );
+        assert_eq!(escape_notification_markup(""), "");
+        assert_eq!(escape_notification_markup("plain"), "plain");
     }
 
     #[test]

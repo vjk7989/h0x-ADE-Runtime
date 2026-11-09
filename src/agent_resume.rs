@@ -350,7 +350,10 @@ pub(crate) fn is_official_agent_source(source: &str, agent: &str) -> bool {
 }
 
 fn valid_session_id(value: &str) -> bool {
-    !value.is_empty() && value.len() <= MAX_SESSION_ID_LEN && !value.chars().any(char::is_control)
+    !value.is_empty()
+        && value.len() <= MAX_SESSION_ID_LEN
+        && !value.starts_with('-')
+        && !value.chars().any(char::is_control)
 }
 
 fn valid_session_path(value: &str) -> bool {
@@ -374,6 +377,13 @@ mod tests {
 
     fn argv(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| part.to_string()).collect()
+    }
+
+    #[test]
+    fn session_ids_starting_with_a_dash_are_refused() {
+        assert!(AgentSessionRef::id("-x").is_none());
+        assert!(AgentSessionRef::id("--help").is_none());
+        assert!(AgentSessionRef::id("x-y").is_some());
     }
 
     #[test]
