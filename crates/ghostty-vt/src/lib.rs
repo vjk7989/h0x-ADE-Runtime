@@ -1074,13 +1074,9 @@ impl Terminal {
     pub fn enable_kitty_graphics(&mut self) -> Result<(), Error> {
         install_png_decoder_once();
         let storage_limit = KITTY_IMAGE_STORAGE_LIMIT_BYTES;
-        let enable_medium = true;
-        let temp_dir = std::env::temp_dir();
-        let temp_dir = temp_dir.to_string_lossy();
-        let temp_dir = ffi::GhosttyString {
-            ptr: temp_dir.as_ptr().cast(),
-            len: temp_dir.len(),
-        };
+        // File, temp-file and shared-memory media would let pane output make the
+        // server open arbitrary local paths; only direct (inline) data is allowed.
+        let enable_medium = false;
         unsafe {
             ffi::ghostty_terminal_set(
                 self.raw,
@@ -1097,7 +1093,7 @@ impl Terminal {
             ffi::ghostty_terminal_set(
                 self.raw,
                 ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE,
-                (&temp_dir as *const ffi::GhosttyString).cast(),
+                std::ptr::null(),
             )
             .into_result()?;
             ffi::ghostty_terminal_set(
@@ -1120,6 +1116,41 @@ impl Terminal {
             .into_result()?;
         }
         self.set_kitty_source_forwarding(true)?;
+        Ok(())
+    }
+
+    /// Re-enable the file, temp-file and shared-memory media that
+    /// `enable_kitty_graphics` refuses. Only tests of the local-file image path
+    /// call this; panes never do.
+    #[doc(hidden)]
+    pub fn enable_kitty_local_media(&mut self) -> Result<(), Error> {
+        let enable_medium = true;
+        let temp_dir = std::env::temp_dir();
+        let temp_dir = temp_dir.to_string_lossy();
+        let temp_dir = ffi::GhosttyString {
+            ptr: temp_dir.as_ptr().cast(),
+            len: temp_dir.len(),
+        };
+        unsafe {
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_FILE,
+                (&enable_medium as *const bool).cast(),
+            )
+            .into_result()?;
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE,
+                (&temp_dir as *const ffi::GhosttyString).cast(),
+            )
+            .into_result()?;
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM,
+                (&enable_medium as *const bool).cast(),
+            )
+            .into_result()?;
+        }
         Ok(())
     }
 
@@ -3896,12 +3927,11 @@ mod tests {
         assert!(terminal.kitty_image_placements().unwrap().is_empty());
     }
 
-    #[cfg(unix)]
     #[test]
-    fn kitty_file_image_survives_source_mutation_and_unlink() {
+    fn kitty_file_temp_file_and_shared_memory_media_are_refused() {
         use base64::Engine as _;
-        let path = std::path::PathBuf::from(format!(
-            "/var/tmp/h0x-kitty-source-{}-{}",
+        let path = std::env::temp_dir().join(format!(
+            "h0x-kitty-source-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -3911,18 +3941,115 @@ mod tests {
         std::fs::write(&path, [255, 0, 0, 255]).unwrap();
         let mut terminal = Terminal::new(10, 5, 0).unwrap();
         terminal.enable_kitty_graphics().unwrap();
-        terminal.write(
-            format!(
-                "\x1b_Ga=T,f=32,t=f,i=7,p=3,s=1,v=1,c=1,r=1,q=2;{}\x1b\\",
-                base64::engine::general_purpose::STANDARD.encode(path.to_str().unwrap())
-            )
-            .as_bytes(),
-        );
-        std::fs::write(&path, [0, 0, 255, 255]).unwrap();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(path.to_str().unwrap());
+        for medium in ["f", "t", "s"] {
+            terminal.write(
+                format!("\x1b_Ga=T,f=32,t={medium},i=7,p=3,s=1,v=1,c=1,r=1,q=2;{encoded}\x1b\\")
+                    .as_bytes(),
+            );
+            assert!(
+                terminal.kitty_image_placements().unwrap().is_empty(),
+                "medium t={medium} must be refused"
+            );
+        }
+        // The refused file must be untouched (temp-file medium would delete it).
+        assert!(path.exists());
         std::fs::remove_file(&path).unwrap();
+        // Direct (inline) data still works.
+        terminal.write(b"\x1b_Ga=T,f=32,t=d,i=8,p=3,s=1,v=1,c=1,r=1,q=2;/wAA/w==\x1b\\");
+        assert_eq!(terminal.kitty_image_placements().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn kitty_file_medium_refuses_directories_fifos_and_windows_paths_without_blocking() {
+        use base64::Engine as _;
+        let dir = std::env::temp_dir().join(format!(
+            "h0x-kitty-refused-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Opening a FIFO with no writer blocks forever; a refused medium never opens it.
+        #[cfg(unix)]
+        let fifo = {
+            let fifo = dir.join("fifo");
+            let c_path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+            assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+            Some(fifo.to_string_lossy().into_owned())
+        };
+        #[cfg(not(unix))]
+        let fifo: Option<String> = None;
+        let paths = [
+            dir.to_string_lossy().into_owned(),
+            r"C:\Windows\System32\drivers\etc\hosts".to_string(),
+            r"\\?\C:\pagefile.sys".to_string(),
+            String::new(),
+        ]
+        .into_iter()
+        .chain(fifo);
+
+        let mut terminal = Terminal::new(10, 5, 0).unwrap();
+        terminal.enable_kitty_graphics().unwrap();
+        for (index, path) in paths.enumerate() {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&path);
+            for medium in ["f", "t", "s"] {
+                terminal.write(
+                    format!(
+                        "\x1b_Ga=T,f=100,t={medium},i={},c=1,r=1,q=2;{encoded}\x1b\\",
+                        index + 1
+                    )
+                    .as_bytes(),
+                );
+                assert!(
+                    terminal.kitty_image_placements().unwrap().is_empty(),
+                    "t={medium} path {path:?} must be refused"
+                );
+            }
+        }
+
+        assert!(dir.is_dir());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn kitty_direct_medium_still_places_a_large_chunked_image() {
+        use base64::Engine as _;
+        let (width, height) = (256u32, 256u32);
+        let pixels: Vec<u8> = (0..width * height)
+            .flat_map(|index| [(index % 251) as u8, (index / 256) as u8, 7, 255])
+            .collect();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&pixels);
+        let chunks: Vec<&str> = encoded
+            .as_bytes()
+            .chunks(4096)
+            .map(|chunk| std::str::from_utf8(chunk).unwrap())
+            .collect();
+        assert!(chunks.len() > 1);
+
+        let mut terminal = Terminal::new(10, 5, 0).unwrap();
+        terminal.enable_kitty_graphics().unwrap();
+        for (index, chunk) in chunks.iter().enumerate() {
+            let more = u8::from(index + 1 < chunks.len());
+            let control = if index == 0 {
+                format!("a=T,f=32,t=d,i=9,s={width},v={height},c=4,r=4,q=2,m={more}")
+            } else {
+                format!("m={more}")
+            };
+            terminal.write(format!("\x1b_G{control};{chunk}\x1b\\").as_bytes());
+        }
+
         let placements = terminal.kitty_image_placements().unwrap();
         assert_eq!(placements.len(), 1);
-        assert_eq!(placements[0].data, [255, 0, 0, 255]);
+        assert_eq!(placements[0].image_id, 9);
+        assert_eq!(
+            (placements[0].image_width, placements[0].image_height),
+            (width, height)
+        );
+        assert_eq!(placements[0].data, pixels);
+        assert!(placements[0].source_file.is_none());
     }
 
     #[test]
@@ -4154,9 +4281,34 @@ mod tests {
     }
 
     #[test]
-    fn kitty_graphics_local_media_are_enabled() {
+    fn kitty_graphics_local_media_are_disabled_by_default() {
         let mut terminal = Terminal::new(10, 5, 0).unwrap();
         terminal.enable_kitty_graphics().unwrap();
+
+        assert!(!terminal
+            .get_bool(ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_FILE)
+            .unwrap());
+        assert!(!terminal
+            .get_bool(ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_SHARED_MEM)
+            .unwrap());
+        let mut temp_dir = ffi::GhosttyString::default();
+        unsafe {
+            ffi::ghostty_terminal_get(
+                terminal.raw,
+                ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_TEMP_FILE,
+                (&mut temp_dir as *mut ffi::GhosttyString).cast(),
+            )
+            .into_result()
+            .unwrap();
+            assert!(borrowed_bytes(temp_dir).unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn kitty_graphics_local_media_can_be_enabled_for_tests() {
+        let mut terminal = Terminal::new(10, 5, 0).unwrap();
+        terminal.enable_kitty_graphics().unwrap();
+        terminal.enable_kitty_local_media().unwrap();
 
         assert!(terminal
             .get_bool(ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_FILE)
@@ -4192,6 +4344,7 @@ mod tests {
 
         let mut terminal = Terminal::new(10, 5, 0).unwrap();
         terminal.enable_kitty_graphics().unwrap();
+        terminal.enable_kitty_local_media().unwrap();
         terminal.resize(10, 5, 8, 16).unwrap();
         let encoded_path =
             base64::engine::general_purpose::STANDARD.encode(path.as_os_str().as_encoded_bytes());
@@ -4227,6 +4380,7 @@ mod tests {
 
         let mut terminal = Terminal::new(10, 5, 0).unwrap();
         terminal.enable_kitty_graphics().unwrap();
+        terminal.enable_kitty_local_media().unwrap();
         terminal.resize(10, 5, 8, 16).unwrap();
         let payload =
             base64::engine::general_purpose::STANDARD.encode(path.to_str().unwrap().as_bytes());

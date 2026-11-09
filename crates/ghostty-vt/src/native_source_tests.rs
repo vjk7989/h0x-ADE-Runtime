@@ -4,6 +4,7 @@ use base64::Engine as _;
 fn terminal() -> Terminal {
     let mut terminal = Terminal::new(20, 10, 0).unwrap();
     terminal.enable_kitty_graphics().unwrap();
+    terminal.enable_kitty_local_media().unwrap();
     terminal.resize(20, 10, 8, 16).unwrap();
     terminal
 }

@@ -260,6 +260,9 @@ pub struct TerminalConfig {
     pub new_cwd: NewTerminalCwdConfig,
     /// Render Kitty graphics in compatible outer terminals. Default: true.
     pub kitty_graphics: Option<bool>,
+    /// Let programs in panes (including remote hosts) write to the system clipboard
+    /// with OSC 52. Default: false.
+    pub clipboard_write: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1868,6 +1871,17 @@ mouse_scroll_lines = 1
 mouse_scroll_lines = 0
 "#;
         assert!(toml::from_str::<Config>(toml).is_err());
+    }
+
+    #[test]
+    fn terminal_clipboard_write_defaults_off_and_parses() {
+        assert!(!Config::default().terminal.clipboard_write);
+        let config: Config = toml::from_str("[terminal]\nclipboard_write = true\n").unwrap();
+        assert!(config.terminal.clipboard_write);
+        let config: Config = toml::from_str("[terminal]\nclipboard_write = false\n").unwrap();
+        assert!(!config.terminal.clipboard_write);
+        let config: Config = toml::from_str("[terminal]\nkitty_graphics = true\n").unwrap();
+        assert!(!config.terminal.clipboard_write);
     }
 
     #[test]

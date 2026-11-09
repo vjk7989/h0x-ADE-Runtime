@@ -1094,6 +1094,48 @@ delivery = "system"
     }
 
     #[test]
+    fn clipboard_write_reload_follows_edits_and_falls_back_to_off() {
+        let _guard = crate::config::test_config_env_lock().lock().unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "h0x-config-clipboard-write-{}.toml",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        std::env::set_var(CONFIG_PATH_ENV_VAR, &path);
+
+        // Missing file, missing [terminal] table, wrong type and broken TOML are all off.
+        let missing_file = Config::load().config.terminal.clipboard_write;
+        std::fs::write(&path, "[ui]\nmouse = true\n").unwrap();
+        let missing_table = Config::load().config.terminal.clipboard_write;
+        std::fs::write(&path, "[terminal]\nclipboard_write = \"yes\"\n").unwrap();
+        let string_value = Config::load();
+        std::fs::write(&path, "[terminal]\nclipboard_write = 1\n").unwrap();
+        let integer_value = Config::load().config.terminal.clipboard_write;
+        std::fs::write(&path, "[terminal\nclipboard_write = true\n").unwrap();
+        let malformed = Config::load().config.terminal.clipboard_write;
+        // Each load reads the file again, so an edit applies without a restart.
+        std::fs::write(&path, "[terminal]\nclipboard_write = true\n").unwrap();
+        let enabled = Config::load().config.terminal.clipboard_write;
+        std::fs::write(&path, "[terminal]\nclipboard_write = false\n").unwrap();
+        let disabled_again = Config::load().config.terminal.clipboard_write;
+
+        std::env::remove_var(CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_file(path);
+
+        assert!(!missing_file);
+        assert!(!missing_table);
+        assert!(!string_value.config.terminal.clipboard_write);
+        assert!(
+            !string_value.diagnostics.is_empty(),
+            "a wrong-typed clipboard_write must be reported"
+        );
+        assert!(!integer_value);
+        assert!(!malformed);
+        assert!(enabled);
+        assert!(!disabled_again);
+    }
+
+    #[test]
     fn remove_keybinding_config_sections_removes_keys_tables_only() {
         let content = r#"onboarding = false
 
