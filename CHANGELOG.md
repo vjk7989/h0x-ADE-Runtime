@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## [0.9.10] - 2026-11-09
+
+Security release from a full audit.
+
+### Changed
+- Programs in panes can no longer write to the system clipboard (OSC 52) unless you turn it on with `[terminal] clipboard_write = true`.
+- Approving a plugin or integration now needs Tab (to "Allow") and then Enter; the prompt ignores input for its first second, shows which program asked, and refuses the same program for 5 minutes after a Deny.
+- Kitty graphics no longer load images from local files; images sent inline still work (`kitten icat` file mode is off).
+- The agent-detection catalog is downloaded as a signed release file and checked before use.
+- Updates and remote installs download only from GitHub, over https.
+
+### Fixed
+- Pasted text can no longer leave bracketed-paste mode.
+- Window titles from remote servers lose control and hidden formatting characters.
+- PowerShell commands quote paths with curly quotes correctly.
+- Windows: a local connection is only trusted if the other side runs as you at the same or a higher integrity level.
+- Docs: plugin example links point to the real upstream examples; agent-skill links use the `main` branch.
+
 ## [0.9.9] - 2026-11-05
 
 ### Changed
