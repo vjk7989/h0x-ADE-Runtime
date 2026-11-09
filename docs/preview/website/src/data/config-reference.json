@@ -446,6 +446,12 @@
           "type": "boolean",
           "default": "true",
           "description": "Render pane images in Kitty graphics-compatible outer terminals. Applications use the standard Kitty graphics protocol through pane terminal output; the external socket pane-overlay API is no longer available. Set false to disable graphics rendering. Restart the server or reattach the client after changing it. In remote sessions, server configuration controls Kitty graphics parsing while local client configuration controls outer-terminal output."
+        },
+        {
+          "key": "terminal.clipboard_write",
+          "type": "boolean",
+          "default": "false",
+          "description": "Let programs in panes, including remote hosts, write to the system clipboard with OSC 52."
         }
       ]
     },

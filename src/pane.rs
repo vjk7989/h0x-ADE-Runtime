@@ -76,6 +76,18 @@ pub(crate) const MIN_PANE_COLS: u16 = 4;
 const PANE_COLORTERM: &str = "truecolor";
 const FISH_HANDLE_REFLOW_ENV_VAR: &str = "fish_handle_reflow";
 
+/// Drop ESC and the C1 controls (U+0080..=U+009F) from text that is wrapped in
+/// bracketed-paste markers, so it cannot end the paste (`ESC [ 201 ~`, or the
+/// single-character CSI U+009B) and have the rest run as typed input.
+pub(crate) fn strip_paste_escapes(text: &str) -> std::borrow::Cow<'_, str> {
+    let is_escape = |ch: char| ch == '\u{1b}' || ('\u{80}'..='\u{9f}').contains(&ch);
+    if text.contains(is_escape) {
+        std::borrow::Cow::Owned(text.chars().filter(|ch| !is_escape(*ch)).collect())
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
 fn terminal_compression_permits() -> Arc<tokio::sync::Semaphore> {
     static PERMITS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
     PERMITS
@@ -3708,6 +3720,7 @@ impl PaneRuntime {
         let text = crate::platform::prepare_paste_text_for_pty(text);
         let bracketed = self.bracketed_paste_enabled();
         let payload = if bracketed {
+            let text = strip_paste_escapes(&text);
             format!("\x1b[200~{text}\x1b[201~")
         } else {
             text
@@ -3893,6 +3906,7 @@ impl PaneRuntime {
     pub(crate) fn test_enable_kitty_source_forwarding(&self) {
         let mut core = self.terminal.ghostty.core.lock().unwrap();
         core.terminal.enable_kitty_graphics().unwrap();
+        core.terminal.enable_kitty_local_media().unwrap();
         core.terminal.set_kitty_source_forwarding(true).unwrap();
     }
 
@@ -5485,6 +5499,96 @@ mod tests {
             tokio::time::timeout(std::time::Duration::from_millis(10), rx.recv())
                 .await
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn strip_paste_escapes_removes_esc_and_every_c1_control() {
+        use super::strip_paste_escapes;
+        assert_eq!(strip_paste_escapes(""), "");
+        assert_eq!(strip_paste_escapes("plain\ttext\r\n"), "plain\ttext\r\n");
+        assert_eq!(strip_paste_escapes("a\x1b[201~b"), "a[201~b");
+        // Nested/doubled ESC cannot reassemble a marker.
+        assert_eq!(strip_paste_escapes("\x1b\x1b[201~"), "[201~");
+        assert_eq!(strip_paste_escapes("a\u{9b}201~b\u{80}\u{9f}c"), "a201~bc");
+        // U+00A0 and non-ASCII text just outside the C1 range survive.
+        assert_eq!(strip_paste_escapes("\u{a0}é日本"), "\u{a0}é日本");
+        assert_eq!(strip_paste_escapes("\u{1b}"), "");
+    }
+
+    #[tokio::test]
+    async fn bracketed_paste_cannot_be_ended_by_pasted_text() {
+        let (runtime, mut rx) = PaneRuntime::test_with_channel(80, 24);
+        runtime.test_process_pty_bytes(b"\x1b[?2004h");
+        runtime
+            .try_send_paste("x\x1b[201~rm -rf /\u{9b}201~".to_string())
+            .unwrap();
+        assert_eq!(
+            rx.recv().await,
+            Some(Bytes::from_static(b"\x1b[200~x[201~rm -rf /201~\x1b[201~"))
+        );
+    }
+
+    #[test]
+    fn strip_paste_escapes_keeps_c1_neighbours_and_is_idempotent() {
+        use super::strip_paste_escapes;
+        // DEL (U+007F) and U+00A0 sit just outside the stripped range; C0 other than ESC stays.
+        assert_eq!(
+            strip_paste_escapes("\u{7f}\u{80}\u{a0}\u{1a}"),
+            "\u{7f}\u{a0}\u{1a}"
+        );
+        // Clean text, including a Windows path, is passed through without copying.
+        let clean = r"C:\Users\me\x1b[201~.txt";
+        assert!(matches!(
+            strip_paste_escapes(clean),
+            std::borrow::Cow::Borrowed(text) if text == clean
+        ));
+        let dirty = "\u{1b}\u{1b}[201~\u{9b}201~\u{1b}\u{9b}";
+        let once = strip_paste_escapes(dirty).into_owned();
+        assert_eq!(once, "[201~201~");
+        assert_eq!(strip_paste_escapes(&once), once);
+    }
+
+    #[tokio::test]
+    async fn non_bracketed_paste_is_sent_unchanged() {
+        let (runtime, mut rx) = PaneRuntime::test_with_channel(80, 24);
+        runtime
+            .try_send_paste("x\x1b[201~y\u{9b}z".to_string())
+            .unwrap();
+        assert_eq!(
+            rx.recv().await,
+            Some(Bytes::from("x\x1b[201~y\u{9b}z".as_bytes()))
+        );
+    }
+
+    #[tokio::test]
+    async fn large_bracketed_paste_keeps_a_single_end_marker() {
+        let (runtime, mut rx) = PaneRuntime::test_with_channel(80, 24);
+        runtime.test_process_pty_bytes(b"\x1b[?2004h");
+        // ~1 MiB with an end marker every 64 KiB, half ESC-based and half single-char CSI.
+        let mut text = String::new();
+        for index in 0..16 {
+            text.push_str(&"a".repeat(64 * 1024));
+            text.push_str(if index % 2 == 0 {
+                "\x1b[201~"
+            } else {
+                "\u{9b}201~"
+            });
+        }
+        runtime.try_send_paste(text).unwrap();
+        let payload = rx.recv().await.expect("paste payload");
+        let payload = std::str::from_utf8(&payload).unwrap();
+        assert!(payload.starts_with("\x1b[200~"));
+        assert!(payload.ends_with("\x1b[201~"));
+        assert_eq!(payload.matches('\u{1b}').count(), 2);
+        assert!(!payload.contains('\u{9b}'));
+        assert_eq!(
+            payload.len(),
+            "\x1b[200~".len()
+                + 16 * 64 * 1024
+                + 8 * "[201~".len()
+                + 8 * "201~".len()
+                + "\x1b[201~".len()
         );
     }
 

@@ -5,13 +5,45 @@ pub(crate) fn default_window_title() -> String {
     "{hostname}: {workspace}".to_string()
 }
 
+/// Unicode format characters (category Cf) plus the line/paragraph separators:
+/// bidi overrides and isolates, zero-width marks, BOM, tag characters.
+fn is_title_format_char(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{ad}'
+            | '\u{600}'..='\u{605}'
+            | '\u{61c}'
+            | '\u{6dd}'
+            | '\u{70f}'
+            | '\u{8e2}'
+            | '\u{180e}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{2028}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206f}'
+            | '\u{feff}'
+            | '\u{fff9}'..='\u{fffb}'
+            | '\u{110bd}'
+            | '\u{110cd}'
+            | '\u{1bca0}'..='\u{1bca3}'
+            | '\u{1d173}'..='\u{1d17a}'
+            | '\u{e0001}'
+            | '\u{e0020}'..='\u{e007f}'
+    )
+}
+
 pub(crate) fn sanitize_window_title_text(value: &str) -> Option<String> {
-    let sanitized = value
+    let filtered = value
         .chars()
         .filter(|ch| !matches!(*ch, '\u{1b}' | '\u{7}' | '\u{9c}') && !ch.is_control())
+        .filter(|ch| !is_title_format_char(*ch))
+        .collect::<String>();
+    let sanitized = filtered
+        .trim()
+        .chars()
         .take(MAX_WINDOW_TITLE_CHARS)
         .collect::<String>()
-        .trim()
+        .trim_end()
         .to_string();
     (!sanitized.is_empty()).then_some(sanitized)
 }
@@ -200,6 +232,33 @@ mod tests {
         assert_eq!(
             template.parts(),
             [WindowTitlePart::Token(WindowTitleToken::Tab)]
+        );
+    }
+
+    #[test]
+    fn sanitize_drops_format_characters_and_trims_before_the_cap() {
+        // Bidi overrides, isolates, marks, zero-width, BOM, tags, LS/PS.
+        assert_eq!(
+            sanitize_window_title_text("a\u{202e}b\u{2066}c\u{2069}d\u{200e}e\u{200f}f\u{2028}g\u{2029}h\u{feff}i\u{200b}j\u{e0041}k"),
+            Some("abcdefghijk".to_string())
+        );
+        assert_eq!(sanitize_window_title_text("\u{202e}\u{200b}\u{2028}"), None);
+        // Ordinary non-ASCII text survives.
+        assert_eq!(
+            sanitize_window_title_text("日本 é \u{a0}x"),
+            Some("日本 é \u{a0}x".to_string())
+        );
+        // Leading whitespace does not eat into the cap: trim happens first.
+        let padded = format!("{}{}", " ".repeat(50), "x".repeat(MAX_WINDOW_TITLE_CHARS));
+        assert_eq!(
+            sanitize_window_title_text(&padded),
+            Some("x".repeat(MAX_WINDOW_TITLE_CHARS))
+        );
+        // Format chars removed before trim: they cannot hide padding either.
+        let hidden = format!("\u{200b}  {}", "y".repeat(MAX_WINDOW_TITLE_CHARS + 5));
+        assert_eq!(
+            sanitize_window_title_text(&hidden),
+            Some("y".repeat(MAX_WINDOW_TITLE_CHARS))
         );
     }
 }
