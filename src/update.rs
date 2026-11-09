@@ -471,6 +471,51 @@ impl Drop for DownloadedUpdate {
     }
 }
 
+/// The only hosts a release asset may be downloaded from or redirected to
+/// (the same list the app and core use).
+const ASSET_HOSTS: [&str; 3] = [
+    "github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+];
+
+/// `https://<allowed host>/...`, the host exactly: no userinfo, no port.
+/// Unit tests also serve fixtures from `file://` URLs.
+pub(crate) fn asset_url_allowed(url: &str) -> bool {
+    #[cfg(test)]
+    if url.starts_with("file://") {
+        return true;
+    }
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    ASSET_HOSTS.contains(&authority)
+}
+
+/// Downloads `url` to `path` from an allowed host only, following at most 5
+/// redirects; the URL curl landed on must be allowed too.
+pub(crate) fn download_asset(url: &str, path: &Path) -> Result<(), String> {
+    if !asset_url_allowed(url) {
+        return Err(format!("{url}: not an https GitHub release URL"));
+    }
+    let output = crate::noninteractive_process::curl_command()
+        .args(["-sfL", "--max-time", "120", "--max-redirs", "5"])
+        .args(["--write-out", "%{url_effective}", "-o"])
+        .arg(path)
+        .arg(url)
+        .output()
+        .map_err(|e| format!("download failed: {e}"))?;
+    if !output.status.success() {
+        return Err("download failed".into());
+    }
+    let landed = String::from_utf8_lossy(&output.stdout);
+    if !asset_url_allowed(landed.trim()) {
+        return Err(format!("{}: redirected off GitHub", landed.trim()));
+    }
+    Ok(())
+}
+
 /// Download a release to a prepared executable temp file without touching the running server.
 #[cfg(not(windows))]
 fn download_update(release: &ReleaseInfo) -> Result<DownloadedUpdate, String> {
@@ -494,16 +539,9 @@ fn download_update(release: &ReleaseInfo) -> Result<DownloadedUpdate, String> {
     let tmp_path = parent.join(format!(".h0x-update-{}.tmp", std::process::id()));
 
     // Download the exact asset URL (pinned to the release we checked)
-    let status = crate::noninteractive_process::curl_command()
-        .args(["-sfL", "--max-time", "120", "-o"])
-        .arg(&tmp_path)
-        .arg(&release.download_url)
-        .status()
-        .map_err(|e| format!("download failed: {e}"))?;
-
-    if !status.success() {
+    if let Err(e) = download_asset(&release.download_url, &tmp_path) {
         let _ = fs::remove_file(&tmp_path);
-        return Err("download failed".into());
+        return Err(e);
     }
 
     if let Err(e) = verify_downloaded_release(&tmp_path, &release.download_url) {
@@ -585,15 +623,7 @@ fn download_windows_update(release: &ReleaseInfo) -> Result<DownloadedWindowsUpd
     fs::write(&update.installer_path, WINDOWS_INSTALLER)
         .map_err(|err| format!("failed to prepare Windows installer: {err}"))?;
 
-    let status = crate::noninteractive_process::curl_command()
-        .args(["-sfL", "--max-time", "120", "-o"])
-        .arg(&update.package_path)
-        .arg(&release.download_url)
-        .status()
-        .map_err(|err| format!("download failed: {err}"))?;
-    if !status.success() {
-        return Err("download failed".into());
-    }
+    download_asset(&release.download_url, &update.package_path)?;
     // A refused package is deleted when `update` drops.
     verify_downloaded_release(&update.package_path, &release.download_url)?;
     crate::checksum::verify_sha256(&update.package_path, expected_sha256)
@@ -3438,5 +3468,102 @@ IFqphZJnxMfop/njTTwRD6j1P5ikDAd9OZSS9uMjHwZWa7JEZ4vY4zYXfUQYiLlvVXPeyZC8ySf+Vx16
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod asset_url_tests {
+    use super::asset_url_allowed;
+
+    #[test]
+    fn allows_only_exact_github_https_hosts() {
+        for url in [
+            "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v1/h0x",
+            "https://objects.githubusercontent.com/github-production-release-asset/1?sp=r",
+            "https://release-assets.githubusercontent.com/x#frag",
+            "https://github.com",
+        ] {
+            assert!(asset_url_allowed(url), "{url}");
+        }
+        for url in [
+            "",
+            "http://github.com/x",
+            "ftp://github.com/x",
+            "https://github.com.evil.example/x",
+            "https://evilgithub.com/x",
+            "https://github.com@evil.example/",
+            "https://evil.example@github.com/",
+            "https://github.com:8443/x",
+            "https://github.com./x",
+            "https://GITHUB.COM/x",
+            "https://example.com/?u=https://github.com/",
+            "//github.com/x",
+        ] {
+            assert!(!asset_url_allowed(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn download_asset_refuses_other_hosts_before_running_curl() {
+        let path = std::env::temp_dir().join("h0x-asset-refused.tmp");
+        for url in ["http://github.com/x", "https://github.com@evil.example/x"] {
+            let err = super::download_asset(url, &path).expect_err(url);
+            assert!(err.contains("not an https GitHub release URL"), "{err}");
+            assert!(!path.exists());
+        }
+    }
+
+    #[test]
+    fn rejects_lookalike_and_smuggled_github_hosts() {
+        let long_host = format!("https://{}.github.com/x", "a".repeat(10_000));
+        for url in [
+            " ",
+            "https://",
+            "https:///x",
+            " https://github.com/x",
+            "https://github.com\n",
+            "https://github.com\t/x",
+            "HTTPS://github.com/x",
+            "https://GitHub.com/x",
+            "https://github.com:443/x",
+            "https://github.com:/x",
+            "https://github.com%40evil.example/x",
+            "https://github.com\\@evil.example/x",
+            "https://evil.example\\github.com/x",
+            "https://user:pass@github.com/x",
+            "https://@github.com/x",
+            "https://[::1]/x",
+            "https://[2606:50c0:8000::153]/x",
+            "https://140.82.112.3/x",
+            "https://xn--githb-zxa.com/x",
+            "https://gith\u{0443}b.com/x",
+            "https://github\u{3002}com/x",
+            "https://www.github.com/x",
+            "https://api.github.com/x",
+            "https://githubusercontent.com/x",
+            "https://evil.objects.githubusercontent.com/x",
+            "https://raw.githubusercontent.com/x",
+            "https:\\\\github.com\\x",
+            "https:/github.com/x",
+            "file:/github.com/x",
+            long_host.as_str(),
+        ] {
+            assert!(!asset_url_allowed(url), "{url:?}");
+        }
+    }
+
+    #[test]
+    fn allows_github_hosts_regardless_of_path_query_or_length() {
+        let long_path = format!("https://github.com/{}", "a".repeat(100_000));
+        for url in [
+            "https://github.com/",
+            "https://github.com?x=1",
+            "https://github.com#@evil.example",
+            "https://github.com/x?u=https://evil.example/",
+            "https://objects.githubusercontent.com/@evil.example",
+            long_path.as_str(),
+        ] {
+            assert!(asset_url_allowed(url), "{url:?}");
+        }
     }
 }
