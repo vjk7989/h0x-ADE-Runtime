@@ -202,6 +202,14 @@ jobs:
             --artifacts . \
             --output dist/latest.json
 
+      # The agent-detection catalog is a signed release asset: the runtime fetches
+      # `agent-detection.toml` and the manifests it lists from the latest release
+      # and applies them only with the release key's signature.
+      - name: Stage the agent-detection catalog
+        run: |
+          mkdir -p dist
+          cp distribution/agent-detection/index.toml dist/agent-detection.toml
+
       # Every uploaded asset gets `<asset>.minisig`; `h0x update` refuses the
       # manifest and the binary without the release key's signature.
       - name: Sign assets
@@ -212,7 +220,7 @@ jobs:
           [ -n "$MINISIGN_SECRET_KEY" ] || { echo "MINISIGN_SECRET_KEY is not set" >&2; exit 1; }
           (umask 077 && printf '%s\n' "$MINISIGN_SECRET_KEY" > "$RUNNER_TEMP/minisign.key")
           # The key has no password; an empty line answers a prompt if one comes.
-          for f in h0x-*/h0x-* distribution/install.sh distribution/install.ps1 distribution/install.cmd dist/latest.json; do
+          for f in h0x-*/h0x-* distribution/install.sh distribution/install.ps1 distribution/install.cmd dist/latest.json dist/agent-detection.toml distribution/agent-detection/*.toml; do
             printf '\n' | minisign -S -s "$RUNNER_TEMP/minisign.key" -m "$f"
           done
 
@@ -236,5 +244,8 @@ jobs:
             h0x-*/*.minisig
             distribution/*.minisig
             dist/*.minisig
+            dist/agent-detection.toml
+            distribution/agent-detection/*.toml
+            distribution/agent-detection/*.minisig
             distribution/install.cmd
             dist/latest.json
