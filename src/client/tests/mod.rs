@@ -251,6 +251,19 @@ fn kitty_file_medium_detection_reads_headers_not_payloads() {
 }
 
 #[test]
+fn kitty_file_medium_split_across_graphics_frames_is_detected() {
+    use frame_output::kitty_graphics_has_file_medium as has_file;
+    // The host terminal parses one byte stream, so two Graphics frames join into `t=f`.
+    let first: &[u8] = b"\x1b_Ga=T,t";
+    let second: &[u8] = b"=f,i=1;L2V0Yy9wYXNzd2Q=\x1b\\";
+    assert!(has_file(&[first, second].concat()));
+    assert!(
+        has_file(first) || has_file(second),
+        "a file medium split across frames must not pass both frames"
+    );
+}
+
+#[test]
 fn full_surface_grid_rejects_one_cell_too_many_or_too_few() {
     let cell = || protocol::CellData {
         symbol: " ".into(),
