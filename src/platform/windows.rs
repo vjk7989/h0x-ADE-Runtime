@@ -318,6 +318,71 @@ fn user_sid(token_user: &[usize]) -> windows_sys::Win32::Security::PSID {
     }
 }
 
+/// Whether `path` is owned by the account running h0x (git's safe.directory
+/// rule). Anything unreadable counts as not owned.
+pub(crate) fn path_owned_by_current_user(path: &std::path::Path) -> bool {
+    use std::os::windows::ffi::OsStrExt as _;
+    use windows_sys::Win32::Security::{
+        Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT},
+        EqualSid, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+    };
+
+    let Ok(ours) = token_user(unsafe { GetCurrentProcess() }) else {
+        return false;
+    };
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    let mut owner = null_mut();
+    let mut descriptor: PSECURITY_DESCRIPTOR = null_mut();
+    let status = unsafe {
+        GetNamedSecurityInfoW(
+            wide.as_ptr(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            &mut descriptor,
+        )
+    };
+    if status != 0 {
+        return false;
+    }
+    let same = !owner.is_null()
+        && (unsafe { EqualSid(owner, user_sid(&ours)) } != 0
+            || (current_token_elevated() && owner_is_administrators(owner)));
+    unsafe { LocalFree(descriptor) };
+    same
+}
+
+/// An elevated process creates files owned by BUILTIN\Administrators, not by its user.
+fn current_token_elevated() -> bool {
+    use windows_sys::Win32::Security::{TokenElevation, TOKEN_ELEVATION};
+
+    token_information(unsafe { GetCurrentProcess() }, TokenElevation).is_ok_and(|buffer| {
+        // SAFETY: buffer holds an aligned TOKEN_ELEVATION written by GetTokenInformation.
+        unsafe { (*buffer.as_ptr().cast::<TOKEN_ELEVATION>()).TokenIsElevated != 0 }
+    })
+}
+
+fn owner_is_administrators(owner: windows_sys::Win32::Security::PSID) -> bool {
+    use windows_sys::Win32::Security::{
+        CreateWellKnownSid, EqualSid, WinBuiltinAdministratorsSid, SECURITY_MAX_SID_SIZE,
+    };
+
+    let mut sid = [0usize; (SECURITY_MAX_SID_SIZE as usize).div_ceil(size_of::<usize>())];
+    let mut size = SECURITY_MAX_SID_SIZE;
+    unsafe {
+        CreateWellKnownSid(
+            WinBuiltinAdministratorsSid,
+            null_mut(),
+            sid.as_mut_ptr().cast(),
+            &mut size,
+        ) != 0
+            && EqualSid(owner, sid.as_mut_ptr().cast()) != 0
+    }
+}
+
 pub(crate) fn local_server_security_descriptor(
 ) -> std::io::Result<interprocess::os::windows::security_descriptor::SecurityDescriptor> {
     use windows_sys::Win32::Security::{

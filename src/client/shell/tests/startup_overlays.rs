@@ -1446,6 +1446,63 @@ fn expire_api_confirmation_guard(state: &mut ClientShellState) {
         - std::time::Duration::from_millis(10);
 }
 
+#[test]
+fn api_confirmation_from_a_remote_endpoint_is_labelled_with_that_endpoint() {
+    let frame_text = |state: &mut ClientShellState| {
+        let frame = state.compose(106, 24).expect("confirmation frame");
+        frame
+            .cells
+            .chunks(frame.width as usize)
+            .map(|row| {
+                row.iter()
+                    .map(|cell| cell.symbol.as_str())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut state = api_confirmation_state();
+    let local = frame_text(&mut state);
+    assert!(local.contains("A program asked HyperOx through the local API:"));
+
+    let profile = crate::client::endpoint::SavedSshEndpoint {
+        id: crate::client::endpoint::ProfileId::parse("0123456789abcdef0123456789abcdef").unwrap(),
+        label: "build-box".into(),
+        target: "dev@build.example".into(),
+        session: "agents".into(),
+        enabled: true,
+    };
+    let remote = crate::client::endpoint::ClientEndpointId::Ssh(profile.id.clone());
+    state.set_endpoint_catalog(&[profile]);
+    state.set_endpoint_status(
+        &remote,
+        crate::client::endpoint::ClientEndpointStatus::Online,
+    );
+    let mut projection = snapshot();
+    projection.boot_id = "remote-boot".into();
+    projection.api_confirmation = Some(crate::protocol::ClientShellApiConfirmation {
+        id: 4,
+        prompt: "Enable plugin remote-demo".into(),
+        caller: "pid 9 (sh)".into(),
+    });
+    state.set_endpoint_snapshot(&remote, Box::new(projection));
+    assert!(state.activate_endpoint_projection(&remote));
+    let mut remote_surface = surface();
+    remote_surface.boot_id = "remote-boot".into();
+    state.set_pane_surface(remote_surface);
+    assert!(matches!(
+        state.overlay.as_ref(),
+        Some(ClientShellOverlay::ApiConfirmation(current)) if current.pending.id == 4
+    ));
+
+    let text = frame_text(&mut state);
+    assert!(
+        text.contains("A program asked HyperOx on build-box through its API:"),
+        "{text}"
+    );
+    assert!(!text.contains("local API"), "{text}");
+}
+
 fn api_confirmation_state() -> ClientShellState {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     let mut projected = snapshot();

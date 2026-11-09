@@ -366,6 +366,45 @@ fn api_confirmation_after_a_deny_refuses_the_same_caller_only() {
 }
 
 #[test]
+fn api_confirmation_deny_cooldown_survives_a_new_process_of_the_same_program() {
+    let mut server = test_headless_server();
+    attach_shell_client(&mut server);
+    let first = socket_request_from(&mut server, integration_install(), Some("pid 1 (node)"));
+    let id = pending_id(&server);
+    assert!(answer(&mut server, SHELL_CLIENT, id, false));
+    let _ = first.recv_timeout(Duration::from_secs(1)).unwrap();
+
+    for again in ["pid 99 (node)", "pid 7 (node), parent pid 3 (bash)"] {
+        let rx = socket_request_from(&mut server, integration_install(), Some(again));
+        assert_eq!(
+            error_of(&rx.recv_timeout(Duration::from_secs(1)).unwrap()).1,
+            "denied recently; try again later",
+            "{again}"
+        );
+    }
+    let other = socket_request_from(&mut server, integration_install(), Some("pid 99 (python)"));
+    assert!(other.try_recv().is_err(), "a different program still waits");
+    shutdown_test_runtimes(&mut server);
+}
+
+#[test]
+fn api_confirmation_callers_without_a_program_name_share_one_cooldown() {
+    let mut server = test_headless_server();
+    attach_shell_client(&mut server);
+    let first = socket_request_from(&mut server, integration_install(), Some("pid 5"));
+    let id = pending_id(&server);
+    assert!(answer(&mut server, SHELL_CLIENT, id, false));
+    let _ = first.recv_timeout(Duration::from_secs(1)).unwrap();
+
+    let rx = socket_request_from(&mut server, integration_install(), Some("pid 6"));
+    assert_eq!(
+        error_of(&rx.recv_timeout(Duration::from_secs(1)).unwrap()).1,
+        "denied recently; try again later"
+    );
+    shutdown_test_runtimes(&mut server);
+}
+
+#[test]
 fn api_confirmation_deny_cooldown_expires_at_five_minutes() {
     let mut server = test_headless_server();
     attach_shell_client(&mut server);
@@ -412,7 +451,8 @@ fn api_confirmation_queue_is_capped_and_extra_requests_are_refused_at_once() {
     // Answering one frees a slot.
     let id = pending_id(&server);
     assert!(answer(&mut server, SHELL_CLIENT, id, false));
-    let sixth = socket_request_from(&mut server, integration_install(), Some("pid 10 (x)"));
+    // The denied program (x) is in its cooldown, so a free slot is shown with another program.
+    let sixth = socket_request_from(&mut server, integration_install(), Some("pid 10 (y)"));
     assert!(sixth.try_recv().is_err());
     shutdown_test_runtimes(&mut server);
 }

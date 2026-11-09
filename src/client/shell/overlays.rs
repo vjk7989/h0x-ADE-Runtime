@@ -63,7 +63,14 @@ pub(crate) fn render_client_overlay(
         }
         ClientShellOverlay::Rename(v) => render_rename_overlay(b, v, p),
         ClientShellOverlay::ConfirmClose(v) => render_confirm_close_overlay(b, v, p),
-        ClientShellOverlay::ApiConfirmation(v) => render_api_confirmation_overlay(b, v, p),
+        ClientShellOverlay::ApiConfirmation(v) => {
+            let remote_label = endpoints
+                .iter()
+                .find(|endpoint| &endpoint.endpoint_id == active_endpoint_id)
+                .filter(|endpoint| !endpoint.endpoint_id.is_local())
+                .map(|endpoint| endpoint.label.as_str());
+            render_api_confirmation_overlay(b, v, remote_label, p)
+        }
         ClientShellOverlay::Help(v) => render_help_overlay(b, v, k, p),
         ClientShellOverlay::Navigator(v) => {
             render_navigator_overlay(b, v, endpoints, active_endpoint_id, p)
@@ -1254,19 +1261,30 @@ fn render_help_overlay(
         ..OverlayRender::default()
     })
 }
+/// The line naming whose API the confirmation is about; a remote endpoint is named so
+/// its prompt is not mistaken for a request to this machine.
+fn api_confirmation_heading(remote_label: Option<&str>) -> String {
+    match remote_label {
+        Some(label) => format!(" A program asked HyperOx on {label} through its API:"),
+        None => " A program asked HyperOx through the local API:".to_owned(),
+    }
+}
+
 fn render_api_confirmation_overlay(
     b: &mut Buffer,
     c: &ClientApiConfirmationOverlay,
+    remote_label: Option<&str>,
     p: &Palette,
 ) -> Option<OverlayRender> {
     let q = popup(b.area, 72, 7)?;
+    let heading = api_confirmation_heading(remote_label);
     let i = panel(b, q, p.red, p.panel_bg)?;
     put_text(
         b,
         i.x,
         i.y,
         i.width,
-        " A program asked HyperOx through the local API:",
+        &heading,
         Style::default()
             .fg(p.red)
             .bg(p.panel_bg)
@@ -1380,4 +1398,21 @@ fn render_confirm_close_overlay(
         cursor: None,
         ..OverlayRender::default()
     })
+}
+
+#[cfg(test)]
+mod api_confirmation_heading_tests {
+    use super::api_confirmation_heading;
+
+    #[test]
+    fn remote_prompt_names_the_endpoint_and_local_does_not() {
+        assert_eq!(
+            api_confirmation_heading(Some("build-box")),
+            " A program asked HyperOx on build-box through its API:"
+        );
+        assert_eq!(
+            api_confirmation_heading(None),
+            " A program asked HyperOx through the local API:"
+        );
+    }
 }

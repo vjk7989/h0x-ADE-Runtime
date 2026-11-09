@@ -84,11 +84,11 @@ fn build_osc99_notification(title: &str, body: Option<&str>) -> Vec<u8> {
 fn sanitize_text(text: impl AsRef<str>) -> String {
     text.as_ref()
         .chars()
-        .filter(|ch| *ch != '\u{1b}' && *ch != '\u{7}' && *ch != '\u{9c}')
         .map(|ch| match ch {
             '\n' | '\r' | '\t' => ' ',
             _ => ch,
         })
+        .filter(|ch| !ch.is_control() && !crate::config::is_title_format_char(*ch))
         .collect()
 }
 
@@ -125,6 +125,51 @@ mod tests {
     #[test]
     fn sanitize_text_strips_control_bytes() {
         assert_eq!(sanitize_text("a\n\tb\u{1b}c\u{7}"), "a  bc");
+    }
+
+    #[test]
+    fn sanitize_text_strips_every_shared_format_range() {
+        assert_eq!(
+            sanitize_text("a\u{890}b\u{891}c\u{13430}d\u{1343f}e"),
+            "abcde"
+        );
+    }
+
+    #[test]
+    fn sanitize_text_strips_c1_controls_and_format_characters() {
+        assert_eq!(
+            sanitize_text("a\u{9d}b\u{85}c\u{202e}d\u{200b}e\u{2066}f\u{7f}g"),
+            "abcdefg"
+        );
+        let osc =
+            String::from_utf8(build_osc9_notification("x\u{9c}y", Some("\u{202e}z"))).unwrap();
+        assert_eq!(osc, "\x1b]9;xy: z\x1b\\");
+    }
+
+    #[test]
+    fn sanitize_text_control_range_boundaries_and_joined_emoji() {
+        assert_eq!(sanitize_text(""), "");
+        // C1 is U+0080..=U+009F; NBSP just past it is printable and kept.
+        assert_eq!(sanitize_text("a\u{80}b\u{9f}c\u{a0}d"), "abc\u{a0}d");
+        // ZWJ and tag characters are format characters, so joined emoji fall apart.
+        assert_eq!(
+            sanitize_text("\u{1f469}\u{200d}\u{1f4bb} \u{1f3f4}\u{e0067}\u{e007f}"),
+            "\u{1f469}\u{1f4bb} \u{1f3f4}"
+        );
+        assert_eq!(sanitize_text("\u{feff}\u{2028}\u{2029}\u{ad}"), "");
+    }
+
+    #[test]
+    fn kitty_notification_strips_controls_from_title_and_body() {
+        let sequence = String::from_utf8(build_osc99_notification(
+            "t\u{9b}1\u{202e}",
+            Some("b\u{1b}]\u{9c}\u{2066}"),
+        ))
+        .unwrap();
+        assert_eq!(
+            sequence,
+            "\x1b]99;i=1:d=0;t1\x1b\\\x1b]99;i=1:p=body;b]\x1b\\"
+        );
     }
 
     #[test]
