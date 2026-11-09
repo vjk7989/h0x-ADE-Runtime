@@ -483,9 +483,22 @@ impl ClientShellState {
     ) {
         use crossterm::event::KeyModifiers;
 
-        if matches!(self.overlay, Some(ClientShellOverlay::ApiConfirmation(_))) {
+        if let Some(ClientShellOverlay::ApiConfirmation(confirmation)) = self.overlay.as_mut() {
+            // Allow is only reachable by moving to its button first; a stray Enter denies.
             match key.code {
-                KeyCode::Enter | KeyCode::Char('y') => self.answer_api_confirmation(true, outcome),
+                KeyCode::Tab
+                | KeyCode::BackTab
+                | KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Up
+                | KeyCode::Down => {
+                    confirmation.allow_focused = !confirmation.allow_focused;
+                    outcome.repaint = true;
+                }
+                KeyCode::Enter => {
+                    let allow = confirmation.allow_focused;
+                    self.answer_api_confirmation(allow, outcome);
+                }
                 KeyCode::Esc | KeyCode::Char('n') => self.answer_api_confirmation(false, outcome),
                 _ => {}
             }
@@ -1093,12 +1106,12 @@ impl ClientShellState {
     }
 
     pub(super) fn answer_api_confirmation(&mut self, allow: bool, outcome: &mut ClientShellInput) {
-        let Some(ClientShellOverlay::ApiConfirmation(pending)) = self.overlay.take() else {
+        let Some(ClientShellOverlay::ApiConfirmation(confirmation)) = self.overlay.take() else {
             return;
         };
         outcome.repaint = true;
         let answer = crate::protocol::endpoint::EndpointApiConfirmationAnswer {
-            id: pending.id,
+            id: confirmation.pending.id,
             allow,
         };
         if let Ok(data) = serde_json::to_string(&answer) {

@@ -2350,7 +2350,10 @@ impl HeadlessServer {
                     return false;
                 }
                 // Allowed requests run as the user's own client request.
-                if let Some(msg) = self.app.answer_api_confirmation(answer.id, answer.allow) {
+                if let Some(msg) =
+                    self.app
+                        .answer_api_confirmation(answer.id, answer.allow, Instant::now())
+                {
                     self.handle_api_request_with_shutdown_check_inner(msg, false, true);
                 }
                 true
@@ -2942,8 +2945,20 @@ impl HeadlessServer {
         // plugin code wait for the user's answer in an attached client (ADR-049).
         if !client_local {
             if let Some(prompt) = self.app.api_confirmation_prompt(&msg.request) {
+                let has_client = latest_shell_client(&self.clients).is_some();
+                let refusal = match prompt {
+                    Ok(_) if has_client => self
+                        .app
+                        .api_confirmation_refusal(msg.caller.as_deref(), Instant::now()),
+                    _ => None,
+                };
                 let response = match prompt {
-                    Ok(prompt) if latest_shell_client(&self.clients).is_some() => {
+                    Ok(_) if refusal.is_some() => crate::server::client_commands::error_response(
+                        msg.request.id.clone(),
+                        "confirmation_refused",
+                        refusal.unwrap_or_default(),
+                    ),
+                    Ok(prompt) if has_client => {
                         self.app.queue_api_confirmation(prompt, msg, Instant::now());
                         return true;
                     }
