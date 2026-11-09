@@ -257,10 +257,52 @@ fn kitty_file_medium_split_across_graphics_frames_is_detected() {
     let first: &[u8] = b"\x1b_Ga=T,t";
     let second: &[u8] = b"=f,i=1;L2V0Yy9wYXNzd2Q=\x1b\\";
     assert!(has_file(&[first, second].concat()));
-    assert!(
-        has_file(first) || has_file(second),
-        "a file medium split across frames must not pass both frames"
+    // Per-frame detection cannot see a split header; the per-connection guard holds the
+    // unfinished APC back so the host never receives a completable `t` header.
+    let mut guard = frame_output::KittyApcGuard::default();
+    let mut written = guard.filter(first);
+    written.extend(guard.filter(second));
+    assert!(!has_file(&written));
+    assert!(!written.windows(2).any(|pair| pair == b"t="));
+}
+
+#[test]
+fn kitty_apc_guard_holds_unfinished_sequences_and_passes_clean_ones() {
+    let mut guard = frame_output::KittyApcGuard::default();
+    // Complete direct transmission passes untouched.
+    let clean: &[u8] = b"\x1b_Ga=T,f=100,t=d,i=1;AAAA\x1b\\";
+    assert_eq!(guard.filter(clean), clean);
+    // Split on every byte boundary inside a file-medium command: nothing leaks.
+    let file: &[u8] = b"x\x1b_Ga=T,t=f,i=1;L2V0Yy9wYXNzd2Q=\x1b\\y";
+    for split in 1..file.len() {
+        let mut guard = frame_output::KittyApcGuard::default();
+        let mut out = guard.filter(&file[..split]);
+        out.extend(guard.filter(&file[split..]));
+        assert!(!out.windows(3).any(|w| w == b"t=f"), "split at {split}");
+    }
+    // A dangling ESC is held until the next frame decides what it is.
+    let mut guard = frame_output::KittyApcGuard::default();
+    assert_eq!(guard.filter(b"ab\x1b"), b"ab");
+    assert_eq!(guard.filter(b"[0m"), b"\x1b[0m");
+    // Legitimate split direct transmission is delivered whole once complete.
+    let mut guard = frame_output::KittyApcGuard::default();
+    assert!(guard.filter(b"\x1b_Ga=T,t=d,").is_empty());
+    assert_eq!(
+        guard.filter(b"i=1;AAAA\x1b\\"),
+        b"\x1b_Ga=T,t=d,i=1;AAAA\x1b\\"
     );
+}
+
+#[test]
+fn surface_graphics_with_file_medium_or_unfinished_apc_are_unsafe() {
+    use frame_output::surface_graphics_are_safe as safe;
+    assert!(safe(b""));
+    assert!(safe(b"\x1b_Ga=T,t=d,i=1;AAAA\x1b\\"));
+    assert!(!safe(b"\x1b_Ga=T,t=f,i=1;AAAA\x1b\\"));
+    assert!(!safe(b"\x1b_Ga=T,t"));
+    assert!(!safe(b"ok\x1b_G"));
+    assert!(!safe(b"ok\x1b"));
+    assert!(!safe(b"ok\x1b_"));
 }
 
 #[test]

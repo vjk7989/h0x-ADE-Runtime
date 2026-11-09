@@ -124,8 +124,8 @@ pub use errors::ClientError;
 #[cfg(test)]
 use frame_output::{clear_received_kitty_graphics, kitty_graphics_image_ids};
 use frame_output::{
-    contains_kitty_graphics_bytes, kitty_graphics_has_file_medium, record_received_kitty_graphics,
-    write_encoded_frame_with_graphics,
+    contains_kitty_graphics_bytes, record_received_kitty_graphics, surface_graphics_are_safe,
+    write_encoded_frame_with_graphics, KittyApcGuard,
 };
 pub(crate) use handshake::probe_endpoint_negotiation;
 use handshake::{
@@ -514,6 +514,10 @@ async fn run_client_loop(
         shell: config.shell_config.map(shell::ClientShellState::new),
     };
     let mut federated = endpoint_catalog.has_enabled_ssh();
+    let mut graphics_guards: std::collections::HashMap<
+        (endpoint::ClientEndpointId, u64),
+        KittyApcGuard,
+    > = std::collections::HashMap::new();
     if let Some(shell) = state.shell.as_mut() {
         shell.set_host_reports_key_releases(config.host_escape_disambiguation_active);
         shell.set_host_erase_byte(crate::platform::terminal_erase_byte());
@@ -1564,9 +1568,14 @@ async fn run_client_loop(
                             io::Error::new(io::ErrorKind::InvalidData, message),
                         )));
                     }
-                    ServerMessage::PaneSurface(surface) => {
+                    ServerMessage::PaneSurface(mut surface) => {
                         if !surface_grid_is_consistent(&surface) {
                             continue;
+                        }
+                        if !server_graphics_files_allowed(&endpoint_id, is_remote_client)
+                            && !surface_graphics_are_safe(&surface.frame.graphics)
+                        {
+                            surface.frame.graphics.clear();
                         }
                         if activation_message {
                             let progress = pending_activation.as_mut().map(|pending| {
@@ -1682,11 +1691,19 @@ async fn run_client_loop(
                         let _ = stdout.flush();
                     }
                     ServerMessage::Graphics { bytes } => {
-                        if !server_graphics_files_allowed(&endpoint_id, is_remote_client)
-                            && kitty_graphics_has_file_medium(&bytes)
+                        let bytes = if server_graphics_files_allowed(&endpoint_id, is_remote_client)
                         {
-                            continue;
-                        }
+                            bytes
+                        } else {
+                            let safe = graphics_guards
+                                .entry((endpoint_id.clone(), generation))
+                                .or_default()
+                                .filter(&bytes);
+                            if safe.is_empty() {
+                                continue;
+                            }
+                            safe
+                        };
                         if state.kitty_graphics_enabled {
                             record_received_kitty_graphics(&bytes);
                             let mut stdout = io::stdout();
