@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## [0.9.13] - 2026-11-10
+
+### Changed
+- Release builds use thin link-time optimization, a single code-generation unit and stripped symbols, for smaller and faster binaries.
+
 ## [0.9.12] - 2026-11-09
 
 Dependency security release.
