@@ -5809,10 +5809,16 @@ mod tests {
 
         let backend = ratatui::backend::TestBackend::new(20, 1);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        // Inspect the rendered frame itself: ratatui-core 0.1.2's diff never emits the
+        // trailing column of a wide cell, so the backend buffer keeps its blank default there.
+        let mut rendered = None;
         terminal
-            .draw(|frame| pane.render(frame, Rect::new(0, 0, 20, 1), false))
+            .draw(|frame| {
+                pane.render(frame, Rect::new(0, 0, 20, 1), false);
+                rendered = Some(frame.buffer_mut().clone());
+            })
             .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = rendered.unwrap();
 
         assert_eq!(buffer[(0, 0)].symbol(), "ｶ\u{ff9e}");
         assert_eq!(
