@@ -1,23 +1,42 @@
 {
-  "version": "0.9.10",
+  "version": "0.9.12",
   "protocol": 22,
   "endpoint_generation": 1,
-  "notes": "Security release from a full audit.\n\n### Changed\n- Programs in panes can no longer write to the system clipboard (OSC 52) unless you turn it on with `[terminal] clipboard_write = true`.\n- Approving a plugin or integration now needs Tab (to \"Allow\") and then Enter; the prompt ignores input for its first second, shows which program asked, and refuses the same program for 5 minutes after a Deny.\n- Kitty graphics no longer load images from local files; images sent inline still work (`kitten icat` file mode is off).\n- The agent-detection catalog is downloaded as a signed release file and checked before use.\n- Updates and remote installs download only from GitHub, over https.\n\n### Fixed\n- Pasted text can no longer leave bracketed-paste mode.\n- Window titles from remote servers lose control and hidden formatting characters.\n- PowerShell commands quote paths with curly quotes correctly.\n- Windows: a local connection is only trusted if the other side runs as you at the same or a higher integrity level.\n- Docs: plugin example links point to the real upstream examples; agent-skill links use the `main` branch.",
+  "notes": "Dependency security release.\n\n### Fixed\n- Updated anyhow, rand, tokio and lru (via ratatui-core 0.1.2) past RUSTSEC-2026-0190, RUSTSEC-2026-0097, RUSTSEC-2026-0386 and RUSTSEC-2026-0253.\n\n### Changed\n- Halfwidth katakana with voiced marks (for example \u00ef\u00bd\u00b6\u00ef\u00be\u017e) now take 2 columns in the sidebar, tabs and overlays, matching how the terminal draws them.",
   "assets": {
-    "linux-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.10/h0x-linux-x86_64",
-    "linux-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.10/h0x-linux-aarch64",
-    "macos-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.10/h0x-macos-x86_64",
-    "macos-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.10/h0x-macos-aarch64",
-    "windows-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.10/h0x-windows-x86_64.zip"
+    "linux-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.12/h0x-linux-x86_64",
+    "linux-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.12/h0x-linux-aarch64",
+    "macos-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.12/h0x-macos-x86_64",
+    "macos-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.12/h0x-macos-aarch64",
+    "windows-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.12/h0x-windows-x86_64.zip"
   },
   "sha256": {
-    "linux-x86_64": "e65f1b7b6e1321149e546a51dd52954142e6d0bafe3cca736f9053339ebbf4d2",
-    "linux-aarch64": "577b366e93ba7d89a98d0b1d71bd8c0741b4be95363d49740abaa4762008f80e",
-    "macos-x86_64": "f1f4a8ebde540c141944b87ca0d69772132c4ee3bc93e1a0b0168cfdd2ee5c33",
-    "macos-aarch64": "4dc8c47b680605d1f10774ba13c3ef79eba19cd7ee18d93a829d95aee39d7596",
-    "windows-x86_64": "109a53ee3e998e1a196574e122c73a71294f1173f744017f313d155c45af37c7"
+    "linux-x86_64": "9c9b72eceecb37f950c96fba363d9de42650a7f4a6b444a488ac057e0e259517",
+    "linux-aarch64": "93621c473820a4150fad5f7cdacca160cd37c45d6cffabe1f5b8284a5581dc2c",
+    "macos-x86_64": "b19839ccf474f0ac8229fe3c107c0878a53529a40f832c457f2c61f3db80cce2",
+    "macos-aarch64": "af6fcfe0bc49069d92e6ebd18166bb408971fe1fb51af4bf8dfa767ddf433f59",
+    "windows-x86_64": "c4743b4a7110cbd561cfcbca4787718e84c09b855a9b18243f88658df5acaf89"
   },
   "releases": {
+    "0.9.12": {
+      "notes": "Dependency security release.\n\n### Fixed\n- Updated anyhow, rand, tokio and lru (via ratatui-core 0.1.2) past RUSTSEC-2026-0190, RUSTSEC-2026-0097, RUSTSEC-2026-0386 and RUSTSEC-2026-0253.\n\n### Changed\n- Halfwidth katakana with voiced marks (for example \u00ef\u00bd\u00b6\u00ef\u00be\u017e) now take 2 columns in the sidebar, tabs and overlays, matching how the terminal draws them.",
+      "protocol": 22,
+      "endpoint_generation": 1,
+      "assets": {
+        "linux-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.12/h0x-linux-x86_64",
+        "linux-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.12/h0x-linux-aarch64",
+        "macos-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.12/h0x-macos-x86_64",
+        "macos-aarch64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.12/h0x-macos-aarch64",
+        "windows-x86_64": "https://github.com/vjk7989/h0x-ADE-Runtime/releases/download/v0.9.12/h0x-windows-x86_64.zip"
+      },
+      "sha256": {
+        "linux-x86_64": "9c9b72eceecb37f950c96fba363d9de42650a7f4a6b444a488ac057e0e259517",
+        "linux-aarch64": "93621c473820a4150fad5f7cdacca160cd37c45d6cffabe1f5b8284a5581dc2c",
+        "macos-x86_64": "b19839ccf474f0ac8229fe3c107c0878a53529a40f832c457f2c61f3db80cce2",
+        "macos-aarch64": "af6fcfe0bc49069d92e6ebd18166bb408971fe1fb51af4bf8dfa767ddf433f59",
+        "windows-x86_64": "c4743b4a7110cbd561cfcbca4787718e84c09b855a9b18243f88658df5acaf89"
+      }
+    },
     "0.9.10": {
       "notes": "Security release from a full audit.\n\n### Changed\n- Programs in panes can no longer write to the system clipboard (OSC 52) unless you turn it on with `[terminal] clipboard_write = true`.\n- Approving a plugin or integration now needs Tab (to \"Allow\") and then Enter; the prompt ignores input for its first second, shows which program asked, and refuses the same program for 5 minutes after a Deny.\n- Kitty graphics no longer load images from local files; images sent inline still work (`kitten icat` file mode is off).\n- The agent-detection catalog is downloaded as a signed release file and checked before use.\n- Updates and remote installs download only from GitHub, over https.\n\n### Fixed\n- Pasted text can no longer leave bracketed-paste mode.\n- Window titles from remote servers lose control and hidden formatting characters.\n- PowerShell commands quote paths with curly quotes correctly.\n- Windows: a local connection is only trusted if the other side runs as you at the same or a higher integrity level.\n- Docs: plugin example links point to the real upstream examples; agent-skill links use the `main` branch.",
       "protocol": 22,
