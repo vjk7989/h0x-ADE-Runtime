@@ -79,14 +79,13 @@ fn play_file(path: &Path) -> Result<(), String> {
 
 fn play_bytes(data: &[u8]) -> Result<(), String> {
     // Write to a temp file because the supported audio players need a file path.
-    let tmp = temp_sound_path();
-    let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
-    file.write_all(data).map_err(|e| e.to_string())?;
+    let (dir, tmp, mut file) = create_private_sound_file().map_err(|e| e.to_string())?;
+    let written = file.write_all(data).map_err(|e| e.to_string());
     drop(file);
 
-    let result = run_player(&tmp);
+    let result = written.and_then(|()| run_player(&tmp));
 
-    let _ = std::fs::remove_file(&tmp);
+    let _ = std::fs::remove_dir_all(&dir);
 
     match result {
         Ok(output) if output.status.success() => Ok(()),
@@ -102,6 +101,32 @@ fn playback_error(output: &Output) -> String {
         format!("player exited with {}", output.status)
     } else {
         format!("player exited with {}: {stderr}", output.status)
+    }
+}
+
+/// A fresh directory only this account can enter, holding a new file: another local user
+/// cannot pre-create or swap a predictable path in the shared temp dir.
+fn create_private_sound_file() -> std::io::Result<(PathBuf, PathBuf, std::fs::File)> {
+    let dir = temp_sound_path().with_extension("dir");
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(0o700);
+    }
+    builder.create(&dir)?;
+    let path = dir.join("sound.mp3");
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(file) => Ok((dir, path, file)),
+        Err(err) => {
+            let _ = std::fs::remove_dir_all(&dir);
+            Err(err)
+        }
     }
 }
 
@@ -369,6 +394,54 @@ mod tests {
     #[test]
     fn temp_sound_paths_are_unique() {
         assert_ne!(temp_sound_path(), temp_sound_path());
+    }
+
+    #[test]
+    fn pre_planted_sound_directory_is_refused_and_left_alone() {
+        let next = SOUND_TMP_COUNTER.load(Ordering::Relaxed);
+        let planted =
+            std::env::temp_dir().join(format!("h0x-sound-{}-{next}.dir", std::process::id()));
+        std::fs::create_dir_all(&planted).unwrap();
+        std::fs::write(planted.join("sound.mp3"), b"planted").unwrap();
+
+        assert!(create_private_sound_file().is_err());
+        assert_eq!(
+            std::fs::read(planted.join("sound.mp3")).unwrap(),
+            b"planted",
+            "the planted directory is neither reused nor removed"
+        );
+        let (dir, _, file) = create_private_sound_file().unwrap();
+        drop(file);
+        assert_ne!(dir, planted, "the next playback uses a fresh directory");
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(planted);
+    }
+
+    #[test]
+    fn sound_file_lives_in_a_fresh_private_directory() {
+        let (dir, path, file) = create_private_sound_file().unwrap();
+        drop(file);
+        assert_eq!(path.parent(), Some(dir.as_path()));
+        assert_ne!(
+            create_private_sound_file().unwrap().0,
+            dir,
+            "every playback gets its own directory"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+            assert_eq!(mode & 0o077, 0, "directory is private: {mode:o}");
+        }
+        assert!(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .is_err(),
+            "an existing file is never reused"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[cfg(not(any(windows, target_os = "macos")))]
