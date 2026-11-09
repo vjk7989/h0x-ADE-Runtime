@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## [0.9.12] - 2026-11-09
+
+Dependency security release.
+
+### Fixed
+- Updated anyhow, rand, tokio and lru (via ratatui-core 0.1.2) past RUSTSEC-2026-0190, RUSTSEC-2026-0097, RUSTSEC-2026-0386 and RUSTSEC-2026-0253.
+
+### Changed
+- Halfwidth katakana with voiced marks (for example ｶﾞ) now take 2 columns in the sidebar, tabs and overlays, matching how the terminal draws them.
+
 ## [0.9.11] - 2026-11-09
 
 Security release from the second audit (Cloudflare security-audit tool).
