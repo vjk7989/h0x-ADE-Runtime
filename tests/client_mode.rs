@@ -2258,3 +2258,138 @@ fn client_receives_notify_on_agent_state_change() {
 
     cleanup_spawned_h0x(spawned, base);
 }
+
+#[test]
+fn client_shell_never_writes_an_unnegotiated_raw_terminal_frame_to_the_host() {
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let api_socket = base.join("h0x.sock");
+    fs::create_dir_all(config_home.join(app_dir_name())).unwrap();
+    fs::create_dir_all(&runtime_dir).unwrap();
+    fs::write(
+        config_home.join(app_dir_name()).join("config.toml"),
+        "onboarding = false\n[terminal]\nclipboard_write = false\n",
+    )
+    .unwrap();
+    // A fake endpoint stands where the server's client socket would be.
+    let listener = std::os::unix::net::UnixListener::bind(base.join("h0x-client.sock")).unwrap();
+    listener.set_nonblocking(true).unwrap();
+
+    let client = spawn_client_process(&config_home, &runtime_dir, &api_socket);
+    let output = spawn_pty_drain(
+        client
+            ._master
+            .as_ref()
+            .expect("client master")
+            .try_clone_reader()
+            .expect("clone client PTY reader"),
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut stream = loop {
+        match listener.accept() {
+            Ok((stream, _)) => break stream,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(
+                    Instant::now() < deadline,
+                    "client never connected; output: {:?}",
+                    read_output(&output)
+                );
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => panic!("accept failed: {error}"),
+        }
+    };
+    stream.set_nonblocking(false).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut len = [0u8; 4];
+    stream.read_exact(&mut len).unwrap();
+    let mut hello = vec![0u8; u32::from_le_bytes(len) as usize];
+    stream.read_exact(&mut hello).unwrap();
+
+    fn varint(value: usize) -> Vec<u8> {
+        if value < 251 {
+            vec![value as u8]
+        } else {
+            let mut encoded = vec![251u8];
+            encoded.extend_from_slice(&(value as u16).to_le_bytes());
+            encoded
+        }
+    }
+    fn bytes_field(bytes: &[u8]) -> Vec<u8> {
+        let mut encoded = varint(bytes.len());
+        encoded.extend_from_slice(bytes);
+        encoded
+    }
+    fn send(stream: &mut UnixStream, payload: &[u8]) {
+        stream
+            .write_all(&(payload.len() as u32).to_le_bytes())
+            .unwrap();
+        stream.write_all(payload).unwrap();
+        stream.flush().unwrap();
+    }
+
+    let welcome = serde_json::json!({
+        "generation": CURRENT_PROTOCOL,
+        "server_version": "0.0.0-fake",
+        "snapshot_codec": "shell.snapshot.v1",
+        "surface_codec": "shell.surface.v1",
+        "input_codec": "shell.input.semantic.v1",
+        "blob_codec": "shell.blob.v1",
+        "methods": [],
+        "capabilities": []
+    })
+    .to_string();
+    let mut payload = varint(support::SERVER_MESSAGE_ENDPOINT_CONTROL as usize);
+    payload.extend(bytes_field(b"endpoint.welcome.v1"));
+    payload.extend(bytes_field(welcome.as_bytes()));
+    send(&mut stream, &payload);
+
+    // ServerMessage::Terminal (variant 1): seq, width, height, full, bytes.
+    let raw: &[u8] = b"\x1b]52;c;aDB4LWNsaXBib2FyZC1tYXJrZXI=\x07\
+\x1b]2;h0x-title-marker\x07\
+\x1b_Ga=T,t=f,f=100,i=7;L2V0Yy9wYXNzd2Q=\x1b\\\
+h0x-raw-text-marker";
+    let mut payload = vec![1u8, 1, 80, 24, 1];
+    payload.extend(bytes_field(raw));
+    send(&mut stream, &payload);
+
+    let noticed = wait_until(Duration::from_secs(10), Duration::from_millis(20), || {
+        let bytes = output
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .bytes
+            .clone();
+        String::from_utf8_lossy(&bytes).contains("unnegotiated")
+            || terminal_screen::text(&bytes, 80, 24).contains("unnegotiated")
+    });
+    let bytes = output
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .bytes
+        .clone();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(
+        noticed,
+        "client must report the unnegotiated frame; output: {text:?}"
+    );
+    for leaked in [
+        "]52;",
+        "h0x-title-marker",
+        "t=f",
+        "L2V0Yy9wYXNzd2Q=",
+        "h0x-raw-text-marker",
+    ] {
+        assert!(
+            !text.contains(leaked),
+            "{leaked:?} from a raw terminal frame reached the host terminal: {text:?}"
+        );
+    }
+
+    drop(stream);
+    cleanup_spawned_h0x(client, base);
+}

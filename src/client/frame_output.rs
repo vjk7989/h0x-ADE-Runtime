@@ -128,6 +128,33 @@ pub(super) fn clear_received_kitty_graphics(mut writer: impl io::Write) -> io::R
     writer.flush()
 }
 
+/// True when any kitty graphics command in `bytes` names a non-direct transmission medium
+/// (`t=f`, `t=t`, `t=s`), which would make the host terminal read a local path.
+pub(super) fn kitty_graphics_has_file_medium(bytes: &[u8]) -> bool {
+    let mut index = 0usize;
+    while let Some(start) = find_subslice(&bytes[index..], b"\x1b_G") {
+        let command_start = index + start + 3;
+        let end = find_subslice(&bytes[command_start..], b"\x1b\\")
+            .unwrap_or(bytes.len() - command_start);
+        let command = &bytes[command_start..command_start + end];
+        let header_end = command
+            .iter()
+            .position(|byte| *byte == b';')
+            .unwrap_or(command.len());
+        if command[..header_end]
+            .split(|byte| *byte == b',')
+            .any(|part| {
+                part.strip_prefix(b"t=")
+                    .is_some_and(|medium| medium != b"d")
+            })
+        {
+            return true;
+        }
+        index = command_start + end;
+    }
+    false
+}
+
 pub(super) fn kitty_graphics_image_ids(bytes: &[u8]) -> Vec<u32> {
     let mut ids = Vec::new();
     let mut index = 0usize;
@@ -160,6 +187,61 @@ fn kitty_graphics_command_image_id(command: &[u8]) -> Option<u32> {
         }
     }
     None
+}
+
+/// Start of a trailing kitty APC that is not yet terminated, including a dangling `ESC` or
+/// `ESC _` that could still become one. The host terminal parses one byte stream, so such a
+/// tail can be completed by the next frame.
+fn unfinished_kitty_tail_start(bytes: &[u8]) -> Option<usize> {
+    let mut index = 0usize;
+    while let Some(start) = find_subslice(&bytes[index..], b"\x1b_G") {
+        let command_start = index + start + 3;
+        let Some(end) = find_subslice(&bytes[command_start..], b"\x1b\\") else {
+            return Some(index + start);
+        };
+        index = command_start + end + 2;
+    }
+    let rest = &bytes[index..];
+    if rest.ends_with(b"\x1b_") {
+        Some(bytes.len() - 2)
+    } else if rest.ends_with(b"\x1b") {
+        Some(bytes.len() - 1)
+    } else {
+        None
+    }
+}
+
+/// A self-contained graphics block from a surface frame: no file medium and no unfinished APC.
+pub(super) fn surface_graphics_are_safe(bytes: &[u8]) -> bool {
+    !kitty_graphics_has_file_medium(bytes) && unfinished_kitty_tail_start(bytes).is_none()
+}
+
+/// Per-connection scanner for `Graphics` frames from an endpoint whose filesystem must not be
+/// read. An unfinished kitty APC is held back until a later frame completes it, so a header
+/// such as `t=f` cannot be assembled by the host terminal from two frames.
+#[derive(Default)]
+pub(super) struct KittyApcGuard {
+    pending: Vec<u8>,
+}
+
+const MAX_PENDING_KITTY_APC: usize = 1024 * 1024;
+
+impl KittyApcGuard {
+    /// Returns the bytes that are safe to write now; a file-medium command is dropped.
+    pub(super) fn filter(&mut self, bytes: &[u8]) -> Vec<u8> {
+        let mut combined = std::mem::take(&mut self.pending);
+        combined.extend_from_slice(bytes);
+        if let Some(start) = unfinished_kitty_tail_start(&combined) {
+            let tail = combined.split_off(start);
+            if tail.len() <= MAX_PENDING_KITTY_APC {
+                self.pending = tail;
+            }
+        }
+        if kitty_graphics_has_file_medium(&combined) {
+            combined.clear();
+        }
+        combined
+    }
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
