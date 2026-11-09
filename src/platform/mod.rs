@@ -187,7 +187,7 @@ pub(crate) fn spawn_server_signal_monitor(
 #[cfg(not(unix))]
 pub(crate) fn ignore_server_hangup() {}
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub(crate) fn local_stream_peer_description(_stream: &crate::ipc::LocalStream) -> Option<String> {
     None
 }
@@ -655,7 +655,20 @@ pub(crate) fn quote_powershell_arg(value: &str) -> String {
     {
         return value.to_string();
     }
-    format!("'{}'", value.replace('\'', "''"))
+    format!("'{}'", escape_powershell_single_quotes(value))
+}
+
+/// PowerShell treats ' and the curly U+2018 U+2019 U+201A U+201B as single
+/// quotes inside a single-quoted string; each one is doubled.
+pub(crate) fn escape_powershell_single_quotes(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        out.push(ch);
+        if matches!(ch, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 pub(crate) fn quote_windows_command_line_arg(value: &str) -> String {
@@ -790,6 +803,73 @@ fn child_exit_classification_only_checkpoints_interruptions() {
     #[cfg(unix)]
     assert!(ChildExitReason::Handoff.requires_session_checkpoint());
     assert!(!ChildExitReason::WaitFailed.requires_session_checkpoint());
+}
+
+#[cfg(test)]
+#[test]
+fn powershell_single_quote_escape_round_trips_every_quote_kind() {
+    const QUOTES: [char; 5] = ['\'', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'];
+    // PowerShell's single-quoted string reader: any quote character followed by
+    // any quote character is one literal quote; a lone one ends the string.
+    let read_back = |escaped: &str| -> Option<String> {
+        let mut out = String::new();
+        let mut chars = escaped.chars();
+        while let Some(ch) = chars.next() {
+            if QUOTES.contains(&ch) {
+                let next = chars.next().filter(|next| QUOTES.contains(next))?;
+                out.push(next);
+            } else {
+                out.push(ch);
+            }
+        }
+        Some(out)
+    };
+
+    assert_eq!(escape_powershell_single_quotes(""), "");
+    assert_eq!(
+        escape_powershell_single_quotes("'\u{2018}\u{2019}\u{201A}\u{201B}"),
+        "''\u{2018}\u{2018}\u{2019}\u{2019}\u{201A}\u{201A}\u{201B}\u{201B}"
+    );
+    // Double quotes, primes and grave accents are not single quotes.
+    let not_quotes = "\"\u{201C}\u{201D}\u{201E}\u{2032}`´ $(whoami) `n\r\n;&|";
+    assert_eq!(escape_powershell_single_quotes(not_quotes), not_quotes);
+
+    let long_path = format!("C:\\{}\\h.ps1", "O\u{2019}Brien\\".repeat(4096));
+    for value in [
+        "",
+        "'",
+        "\u{2019}'",
+        "'\u{2018}\u{2019}\u{201A}\u{201B}'\u{201B}\u{201A}\u{2019}\u{2018}",
+        "\u{1F600}'\u{1F600}\u{2019}\u{1F600}",
+        "a`'b$('x')\u{2018}\n\u{201B};exit",
+        "C:\\Users\\O'Brien\\\u{201A}hooks\\h.ps1",
+        "\\\\?\\UNC\\server\\share\u{2019}s\\h.ps1",
+        long_path.as_str(),
+    ] {
+        let escaped = escape_powershell_single_quotes(value);
+        assert_eq!(read_back(&escaped).as_deref(), Some(value), "{value:?}");
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn quote_powershell_arg_wraps_and_doubles_curly_quotes() {
+    assert_eq!(quote_powershell_arg(""), "''");
+    assert_eq!(quote_powershell_arg("plain-arg"), "plain-arg");
+    assert_eq!(quote_powershell_arg("-flag"), "'-flag'");
+    assert_eq!(quote_powershell_arg("'"), "''''");
+    assert_eq!(
+        quote_powershell_arg("O\u{2019}Brien"),
+        "'O\u{2019}\u{2019}Brien'"
+    );
+    assert_eq!(
+        quote_powershell_arg("C:\\Users\\a\u{201A}b\u{201B}\\x"),
+        "'C:\\Users\\a\u{201A}\u{201A}b\u{201B}\u{201B}\\x'"
+    );
+    assert_eq!(
+        quote_powershell_arg("\u{2018}; Remove-Item C:\\ -Recurse; \u{2018}"),
+        "'\u{2018}\u{2018}; Remove-Item C:\\ -Recurse; \u{2018}\u{2018}'"
+    );
 }
 
 #[cfg(all(test, unix))]

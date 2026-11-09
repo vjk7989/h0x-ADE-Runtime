@@ -2664,15 +2664,9 @@ fn download_release_asset(platform: &RemotePlatform) -> io::Result<InstallSource
 
     let dir = private_download_dir(&asset_key)?;
     let path = dir.join("h0x.tmp");
-    let status = crate::noninteractive_process::curl_command()
-        .args(["-sfL", "--max-time", "120", "-o"])
-        .arg(&path)
-        .arg(&asset.url)
-        .status()
-        .map_err(|err| io::Error::new(err.kind(), format!("download failed: {err}")))?;
-    if !status.success() {
+    if let Err(err) = crate::update::download_asset(&asset.url, &path) {
         let _ = fs::remove_dir_all(&dir);
-        return Err(io::Error::other("download failed"));
+        return Err(io::Error::other(err));
     }
     if let Err(err) = crate::update::verify_downloaded_release(&path, &asset.url) {
         let _ = fs::remove_dir_all(&dir);

@@ -35,7 +35,7 @@ pub(crate) fn hook_command(hook_path: &Path, action: Option<&str>) -> String {
 
 #[cfg(any(windows, test))]
 pub(crate) fn powershell_encoded_hook_command(hook_path: &Path, action: &str) -> String {
-    let path = hook_path.display().to_string().replace('\'', "''");
+    let path = crate::platform::escape_powershell_single_quotes(&hook_path.display().to_string());
     let script = format!("& '{path}' {action}");
     let encoded_script = script
         .encode_utf16()
