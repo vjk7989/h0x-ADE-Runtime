@@ -23,41 +23,11 @@ pub(crate) struct PendingApiConfirmation {
     deadline: Instant,
 }
 
-/// Unicode category Cf characters that can reorder or hide text (bidi controls, zero-width
-/// characters, tags, ...).
-fn is_format_char(c: char) -> bool {
-    matches!(
-        u32::from(c),
-        0x00AD
-            | 0x0600..=0x0605
-            | 0x061C
-            | 0x06DD
-            | 0x070F
-            | 0x0890..=0x0891
-            | 0x08E2
-            | 0x180E
-            | 0x200B..=0x200F
-            | 0x2028..=0x2029
-            | 0x202A..=0x202E
-            | 0x2060..=0x2064
-            | 0x2066..=0x206F
-            | 0xFEFF
-            | 0xFFF9..=0xFFFB
-            | 0x110BD
-            | 0x110CD
-            | 0x13430..=0x1343F
-            | 0x1BCA0..=0x1BCA3
-            | 0x1D173..=0x1D17A
-            | 0xE0001
-            | 0xE0020..=0xE007F
-    )
-}
-
 fn printable(value: &str) -> String {
     value
         .chars()
         .map(|c| {
-            if c.is_control() || is_format_char(c) {
+            if c.is_control() || crate::config::is_title_format_char(c) {
                 '?'
             } else {
                 c
@@ -83,7 +53,17 @@ fn denial_key(caller: &str) -> String {
         .map(|(_, rest)| rest.split("), parent pid ").next().unwrap_or(rest))
         .map(|name| name.trim_end_matches(')').trim())
         .filter(|name| !name.is_empty());
-    exe.map_or_else(|| UNKNOWN_CALLER.to_owned(), str::to_owned)
+    exe.map_or_else(
+        || UNKNOWN_CALLER.to_owned(),
+        |name| {
+            // Windows program names are case-insensitive.
+            if cfg!(windows) {
+                name.to_lowercase()
+            } else {
+                name.to_owned()
+            }
+        },
+    )
 }
 
 impl App {
@@ -234,8 +214,23 @@ mod tests {
             ),
             ("pid 5 ( spaced )", "spaced"),
         ] {
+            // Windows program names are case-insensitive, so the key is lowercased there.
+            let key = if cfg!(windows) {
+                key.to_lowercase()
+            } else {
+                key.to_owned()
+            };
             assert_eq!(denial_key(caller), key, "{caller}");
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn denial_key_ignores_program_name_case_on_windows() {
+        assert_eq!(
+            denial_key("pid 5 (Node.EXE)"),
+            denial_key("pid 9 (node.exe)")
+        );
     }
 
     #[test]

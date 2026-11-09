@@ -128,6 +128,14 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_text_strips_every_shared_format_range() {
+        assert_eq!(
+            sanitize_text("a\u{890}b\u{891}c\u{13430}d\u{1343f}e"),
+            "abcde"
+        );
+    }
+
+    #[test]
     fn sanitize_text_strips_c1_controls_and_format_characters() {
         assert_eq!(
             sanitize_text("a\u{9d}b\u{85}c\u{202e}d\u{200b}e\u{2066}f\u{7f}g"),

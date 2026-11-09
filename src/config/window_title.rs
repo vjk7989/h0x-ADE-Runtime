@@ -5,7 +5,8 @@ pub(crate) fn default_window_title() -> String {
     "{hostname}: {workspace}".to_string()
 }
 
-/// Unicode format characters (category Cf) plus the line/paragraph separators:
+/// The one list of Unicode format characters (category Cf) plus the line/paragraph
+/// separators, shared by titles, notifications and confirmation prompts:
 /// bidi overrides and isolates, zero-width marks, BOM, tag characters.
 pub(crate) fn is_title_format_char(ch: char) -> bool {
     matches!(
@@ -15,6 +16,7 @@ pub(crate) fn is_title_format_char(ch: char) -> bool {
             | '\u{61c}'
             | '\u{6dd}'
             | '\u{70f}'
+            | '\u{890}'..='\u{891}'
             | '\u{8e2}'
             | '\u{180e}'
             | '\u{200b}'..='\u{200f}'
@@ -25,6 +27,7 @@ pub(crate) fn is_title_format_char(ch: char) -> bool {
             | '\u{fff9}'..='\u{fffb}'
             | '\u{110bd}'
             | '\u{110cd}'
+            | '\u{13430}'..='\u{1343f}'
             | '\u{1bca0}'..='\u{1bca3}'
             | '\u{1d173}'..='\u{1d17a}'
             | '\u{e0001}'

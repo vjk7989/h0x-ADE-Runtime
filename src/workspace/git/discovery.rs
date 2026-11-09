@@ -133,17 +133,21 @@ fn git_common_dir_for_git_dir(git_dir: &Path) -> PathBuf {
     }
 }
 
-/// UNC, device and `//host` paths: a repo's config must not make h0x touch
-/// the network or a device.
+/// UNC, device and `//host` paths (any two leading separators, either kind): a repo's
+/// config must not make h0x touch the network or a device. Canonical local paths are
+/// verbatim (`\\?\C:\...`); only `\\?\UNC\` is remote.
 pub(super) fn is_network_path(path: &Path) -> bool {
     let text = path.to_string_lossy();
-    if let Some(rest) = text.strip_prefix("\\\\?\\") {
-        // Canonical local paths are verbatim (`\\?\C:\...`); only `\\?\UNC\` is remote.
-        return rest
-            .get(..4)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("UNC\\"));
+    let bytes = text.as_bytes();
+    let separator = |byte: u8| byte == b'/' || byte == b'\\';
+    if bytes.len() < 2 || !separator(bytes[0]) || !separator(bytes[1]) {
+        return false;
     }
-    text.starts_with("\\\\") || text.starts_with("//")
+    if bytes.len() >= 4 && bytes[2] == b'?' && separator(bytes[3]) {
+        let rest = &bytes[4..];
+        return rest.len() >= 4 && rest[..3].eq_ignore_ascii_case(b"UNC") && separator(rest[3]);
+    }
+    true
 }
 
 /// Outcome of reading one Git ref file, classified without collapsing metadata
@@ -229,27 +233,65 @@ pub fn git_branch(cwd: &Path) -> Option<String> {
 }
 
 pub(super) fn git_dir_for_repo_root(repo_root: &Path) -> Option<PathBuf> {
-    let git_path = repo_root.join(".git");
-    if git_path.is_dir() {
-        return Some(git_path);
-    }
+    git_dir_for_repo_root_where(repo_root, crate::platform::path_owned_by_current_user)
+        .ok()
+        .flatten()
+}
 
-    if let Ok(gitdir) = std::fs::read_to_string(&git_path) {
-        if let Some(relative) = gitdir.trim().strip_prefix("gitdir:").map(str::trim) {
-            let resolved = Path::new(relative);
-            return Some(if resolved.is_absolute() {
-                resolved.to_path_buf()
+/// A repo marker that is on the network or belongs to another account: not trusted, and the
+/// walk up from the working directory stops there.
+struct UntrustedRepo;
+
+/// The git dir of `repo_root`, if it is one. Network and ownership checks come before any
+/// read or stat of the git dir's contents, and `.git` is only read when it is a regular
+/// file (a FIFO there must not block).
+fn git_dir_for_repo_root_where(
+    repo_root: &Path,
+    owned: impl Fn(&Path) -> bool,
+) -> Result<Option<PathBuf>, UntrustedRepo> {
+    let git_path = repo_root.join(".git");
+    if is_network_path(&git_path) {
+        return Err(UntrustedRepo);
+    }
+    if let Ok(metadata) = std::fs::metadata(&git_path) {
+        if metadata.is_dir() {
+            return if owned(&git_path) {
+                Ok(Some(git_path))
             } else {
-                repo_root.join(resolved)
-            });
+                Err(UntrustedRepo)
+            };
+        }
+        if metadata.is_file() {
+            if !owned(&git_path) {
+                return Err(UntrustedRepo);
+            }
+            if let Some(gitdir) = read_git_ref_file(&git_path) {
+                if let Some(relative) = gitdir.trim().strip_prefix("gitdir:").map(str::trim) {
+                    let resolved = Path::new(relative);
+                    let git_dir = if resolved.is_absolute() {
+                        resolved.to_path_buf()
+                    } else {
+                        repo_root.join(resolved)
+                    };
+                    return if !is_network_path(&git_dir) && owned(&git_dir) {
+                        Ok(Some(git_dir))
+                    } else {
+                        Err(UntrustedRepo)
+                    };
+                }
+            }
         }
     }
 
     if path_is_git_dir_layout(repo_root) && git_dir_is_bare(repo_root) {
-        return Some(repo_root.to_path_buf());
+        return if owned(repo_root) {
+            Ok(Some(repo_root.to_path_buf()))
+        } else {
+            Err(UntrustedRepo)
+        };
     }
 
-    None
+    Ok(None)
 }
 
 fn path_is_git_dir_layout(path: &Path) -> bool {
@@ -372,13 +414,10 @@ fn git_repo_root_where(start: &Path, owned: impl Fn(&Path) -> bool) -> Option<Pa
     };
 
     loop {
-        if let Some(git_dir) = git_dir_for_repo_root(&current) {
-            if git_dir.join("HEAD").is_file() {
-                let marker = current.join(".git");
-                let marker_ok = !marker.exists() || owned(&marker);
-                return (!is_network_path(&git_dir) && marker_ok && owned(&git_dir))
-                    .then_some(current);
-            }
+        match git_dir_for_repo_root_where(&current, &owned) {
+            Err(UntrustedRepo) => return None,
+            Ok(Some(git_dir)) if git_dir.join("HEAD").is_file() => return Some(current),
+            Ok(_) => {}
         }
         if !current.pop() {
             return None;
@@ -589,6 +628,36 @@ mod tests {
         )
         .unwrap();
         assert_eq!(git_common_dir_for_git_dir(&git_dir), git_dir);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mixed_separator_unc_paths_are_network_paths() {
+        assert!(is_network_path(Path::new("/\\host\\share")));
+        assert!(is_network_path(Path::new("\\\\/host/share")));
+        assert!(is_network_path(Path::new("\\\\host\\share")));
+        assert!(!is_network_path(Path::new("/host/share")));
+        assert!(!is_network_path(Path::new("\\host")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fifo_dot_git_in_a_parent_does_not_block_the_walk() {
+        let root = temp_test_dir("fifo-dot-git");
+        let fifo = root.join(".git");
+        let c_path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+        let nested = root.join("a/b");
+        std::fs::create_dir_all(&nested).unwrap();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(git_repo_root_where(&nested, |_| true));
+        });
+        let found = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the walk must not block on a FIFO named .git");
+        assert_ne!(found, Some(root.clone()));
         let _ = std::fs::remove_dir_all(root);
     }
 
