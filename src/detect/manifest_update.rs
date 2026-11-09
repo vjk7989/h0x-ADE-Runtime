@@ -13,9 +13,10 @@ use serde::{Deserialize, Serialize};
 use super::{agent_label, parse_agent_label, Agent};
 
 pub(crate) const MANIFEST_ENGINE_VERSION: u32 = 3;
-const DEFAULT_CATALOG_URL: &str = "https://raw.githubusercontent.com/vjk7989/h0x-ADE-Runtime/main/distribution/agent-detection/index.toml";
-#[cfg(any(debug_assertions, test))]
-const CATALOG_URL_ENV: &str = "H0X_AGENT_DETECTION_MANIFEST_CATALOG_URL";
+/// The catalog is a signed asset of the latest release: `release.yml` signs it
+/// (and every agent manifest it lists) with the release key.
+const CATALOG_URL: &str =
+    "https://github.com/vjk7989/h0x-ADE-Runtime/releases/latest/download/agent-detection.toml";
 const MAX_FETCH_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone)]
@@ -167,7 +168,15 @@ struct CatalogAgent {
 }
 
 pub(crate) fn auto_update(events: tokio::sync::mpsc::Sender<crate::events::AppEvent>) {
-    let result = check_and_update();
+    auto_update_from(events, CATALOG_URL, crate::update::RELEASE_PUBLIC_KEY);
+}
+
+fn auto_update_from(
+    events: tokio::sync::mpsc::Sender<crate::events::AppEvent>,
+    url: &str,
+    key: &str,
+) {
+    let result = check_and_update_from_url(url, key);
     let status = match result {
         Ok(output) => {
             let activated = agents_needing_cache_reload(&output);
@@ -234,11 +243,11 @@ pub(crate) struct ManifestUpdateOutput {
 }
 
 pub(crate) fn check_and_update() -> Result<ManifestUpdateOutput, String> {
-    check_and_update_from_url(&catalog_url())
+    check_and_update_from_url(CATALOG_URL, crate::update::RELEASE_PUBLIC_KEY)
 }
 
-fn check_and_update_from_url(url: &str) -> Result<ManifestUpdateOutput, String> {
-    let catalog = parse_catalog(&fetch_text(url)?)?;
+fn check_and_update_from_url(url: &str, key: &str) -> Result<ManifestUpdateOutput, String> {
+    let catalog = parse_catalog(&fetch_signed_text(url, key)?)?;
     let base_url = base_url(url)?;
     let mut status = load_status();
     let check_time = now_unix();
@@ -250,7 +259,7 @@ fn check_and_update_from_url(url: &str) -> Result<ManifestUpdateOutput, String> 
     for entry in catalog {
         let agent_id = agent_label(entry.agent).to_string();
         let manifest_url = join_url(&base_url, &entry.path)?;
-        match fetch_text(&manifest_url)
+        match fetch_signed_text(&manifest_url, key)
             .map_err(|err| format!("fetch failed: {err}"))
             .and_then(|content| process_agent_manifest(entry.agent, &content, check_time))
         {
@@ -367,10 +376,7 @@ fn parse_catalog(content: &str) -> Result<Vec<CatalogAgent>, String> {
         if entry.path.trim().is_empty() {
             return Err(format!("catalog entry {} has an empty path", entry.id));
         }
-        if entry.path.contains("://")
-            || entry.path.starts_with('/')
-            || entry.path.split('/').any(|part| part == "..")
-        {
+        if !is_safe_manifest_path(&entry.path) {
             return Err(format!(
                 "catalog entry {} has an unsafe path {}",
                 entry.id, entry.path
@@ -499,17 +505,19 @@ fn state_root() -> PathBuf {
     crate::config::state_dir().join("agent-detection")
 }
 
-fn catalog_url() -> String {
-    // The override only exists in debug/test builds; release always uses the default.
-    #[cfg(any(debug_assertions, test))]
-    if let Some(url) = std::env::var(CATALOG_URL_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        return url;
-    }
-    DEFAULT_CATALOG_URL.to_string()
+/// Fetches `url` and returns it only when `<url>.minisig` is a valid signature
+/// by `key` made for this file name; anything else is an error and the caller
+/// keeps what it had.
+fn fetch_signed_text(url: &str, key: &str) -> Result<String, String> {
+    let text = fetch_text(url)?;
+    crate::update::verify_release_signature(
+        url,
+        url.rsplit('/').next().unwrap_or(url),
+        text.as_bytes(),
+        crate::update::fetch_release_signature(url).as_deref(),
+        key,
+    )?;
+    Ok(text)
 }
 
 fn fetch_text(url: &str) -> Result<String, String> {
@@ -570,10 +578,21 @@ fn base_url(url: &str) -> Result<String, String> {
 }
 
 fn join_url(base: &str, path: &str) -> Result<String, String> {
-    if path.contains("://") || path.starts_with('/') || path.split('/').any(|part| part == "..") {
+    if !is_safe_manifest_path(path) {
         return Err(format!("unsafe manifest path {path}"));
     }
     Ok(format!("{}/{}", base.trim_end_matches('/'), path))
+}
+
+/// A manifest path is a relative `/`-separated file path inside the release
+/// directory: no backslash, query, fragment, percent escape, scheme colon or
+/// control character, no leading `/` and no `..` segment.
+fn is_safe_manifest_path(path: &str) -> bool {
+    !path.starts_with('/')
+        && !path
+            .chars()
+            .any(|ch| ch.is_control() || matches!(ch, '\\' | '?' | '#' | '%' | ':'))
+        && !path.split('/').any(|part| part == "..")
 }
 
 fn now_unix() -> u64 {
@@ -639,6 +658,221 @@ contains = ["{contains}"]
         result
     }
 
+    /// A throwaway key pair (not the release key); the signatures below are
+    /// made with it by `rsign sign -W -t "timestamp:1<TAB>file:<name>"` over the
+    /// exact bytes the tests write. `SIG_*_OTHER_KEY` is from a second throwaway key.
+    const TEST_KEY: &str = "RWRoiCZgYc65YANz+u2IxSwI5GlIK0sCuai/aFXAhHbjOk4aFQJYQ0kR";
+
+    fn file_url(web_dir: &Path) -> String {
+        format!(
+            "file:///{}",
+            web_dir
+                .join("index.toml")
+                .to_string_lossy()
+                .replace('\\', "/")
+                .trim_start_matches('/')
+        )
+    }
+
+    fn put_sig(web_dir: &Path, name: &str, sig: &str) {
+        fs::write(web_dir.join(format!("{name}.minisig")), sig).unwrap();
+    }
+
+    fn web_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("h0x-manifest-sig-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Serves a catalog with the given index and codex manifest (each with an
+    /// optional signature), with codex 9999.01.01.1 already cached, and runs one
+    /// update against `key`.
+    fn serve_and_update(
+        name: &str,
+        index: (&str, Option<&str>),
+        codex: (&str, Option<&str>),
+        key: &str,
+    ) -> Result<ManifestUpdateOutput, String> {
+        let dir = web_dir(name);
+        fs::write(dir.join("index.toml"), index.0).unwrap();
+        if let Some(sig) = index.1 {
+            put_sig(&dir, "index.toml", sig);
+        }
+        fs::write(dir.join("codex.toml"), codex.0).unwrap();
+        if let Some(sig) = codex.1 {
+            put_sig(&dir, "codex.toml", sig);
+        }
+        process_agent_manifest(
+            Agent::Codex,
+            &remote_manifest("9999.01.01.1", "initial-ready"),
+            1,
+        )
+        .unwrap();
+        let result = check_and_update_from_url(&file_url(&dir), key);
+        let _ = fs::remove_dir_all(&dir);
+        result
+    }
+
+    const INDEX_A: &str = r#"
+schema_version = 1
+
+[[agents]]
+id = "codex"
+path = "codex.toml"
+"#;
+
+    fn cached_codex_version() -> Option<String> {
+        cached_remote_version(Agent::Codex).map(|v| v.to_string())
+    }
+
+    #[test]
+    fn catalog_is_a_release_asset_not_the_main_branch() {
+        assert_eq!(
+            CATALOG_URL,
+            "https://github.com/vjk7989/h0x-ADE-Runtime/releases/latest/download/agent-detection.toml"
+        );
+    }
+
+    #[test]
+    fn signed_catalog_and_manifest_are_applied() {
+        with_state_dir("sig-good", || {
+            let manifest = remote_manifest("9999.01.01.2", "current-ready");
+            let output = serve_and_update(
+                "good",
+                (INDEX_A, Some(SIG_IDX_A)),
+                (&manifest, Some(SIG_M_CURRENT)),
+                TEST_KEY,
+            )
+            .unwrap();
+            assert_eq!(output.updated.len(), 1);
+            assert_eq!(cached_codex_version().as_deref(), Some("9999.01.01.2"));
+        });
+    }
+
+    #[test]
+    fn unsigned_or_wrongly_signed_manifest_keeps_the_cached_one() {
+        let manifest = remote_manifest("9999.01.01.2", "current-ready");
+        let tampered = format!("{manifest}# tampered\n");
+        let cases: [(&str, &str, Option<&str>); 4] = [
+            ("unsigned", &manifest, None),
+            ("other-file", &manifest, Some(SIG_M_CURRENT_OTHER_FILE)),
+            ("other-key", &manifest, Some(SIG_M_CURRENT_OTHER_KEY)),
+            ("tampered", &tampered, Some(SIG_M_CURRENT)),
+        ];
+        for (name, content, sig) in cases {
+            with_state_dir(&format!("sig-bad-{name}"), || {
+                let output =
+                    serve_and_update(name, (INDEX_A, Some(SIG_IDX_A)), (content, sig), TEST_KEY)
+                        .unwrap();
+                assert!(output.updated.is_empty(), "{name}: applied");
+                assert_eq!(
+                    cached_codex_version().as_deref(),
+                    Some("9999.01.01.1"),
+                    "{name}: cached manifest changed"
+                );
+                let status = output.status.agents.get("codex").unwrap();
+                assert_eq!(status.last_result, "failed", "{name}");
+                assert!(
+                    status
+                        .last_error
+                        .as_deref()
+                        .is_some_and(|e| e.contains("not signed by the h0x release key")),
+                    "{name}: {status:?}"
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn unsigned_or_wrongly_signed_catalog_is_refused() {
+        let manifest = remote_manifest("9999.01.01.2", "current-ready");
+        let tampered = format!("{INDEX_A}# tampered\n");
+        let cases: [(&str, &str, Option<&str>, &str); 5] = [
+            ("unsigned", INDEX_A, None, TEST_KEY),
+            ("tampered", &tampered, Some(SIG_IDX_A), TEST_KEY),
+            ("other-file", INDEX_A, Some(SIG_M_CURRENT), TEST_KEY),
+            // Signed by the test key, but the runtime trusts the release key.
+            (
+                "release-key",
+                INDEX_A,
+                Some(SIG_IDX_A),
+                crate::update::RELEASE_PUBLIC_KEY,
+            ),
+            ("garbage-sig", INDEX_A, Some("not a signature"), TEST_KEY),
+        ];
+        for (name, index, sig, key) in cases {
+            with_state_dir(&format!("sig-bad-index-{name}"), || {
+                let result =
+                    serve_and_update(name, (index, sig), (&manifest, Some(SIG_M_CURRENT)), key);
+                let err = result.expect_err(name);
+                assert!(
+                    err.contains("not signed by the h0x release key"),
+                    "{name}: {err}"
+                );
+                assert_eq!(
+                    cached_codex_version().as_deref(),
+                    Some("9999.01.01.1"),
+                    "{name}"
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn unreachable_catalog_keeps_the_cached_manifest() {
+        with_state_dir("sig-offline", || {
+            process_agent_manifest(
+                Agent::Codex,
+                &remote_manifest("9999.01.01.1", "initial-ready"),
+                1,
+            )
+            .unwrap();
+            let dir = web_dir("offline");
+            let result = check_and_update_from_url(&file_url(&dir), TEST_KEY);
+            let _ = fs::remove_dir_all(&dir);
+            assert!(result.is_err());
+            assert_eq!(cached_codex_version().as_deref(), Some("9999.01.01.1"));
+        });
+    }
+
+    const SIG_IDX_A: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YEhfHfjLZ6FVW48oF8iEOMnbXTA7bXrtYO+a8A+VkVtsdW7ipKuKpRN9qarXImmaIdP8jdT9fAxjxWmDBYMccQc=
+trusted comment: timestamp:1\tfile:index.toml
+JQNLK0lCCjzRgoYWX25VgQh4l+h5Vfo1qSYW59TTycB6VMh54dFnRukAoEHqeCbh4ZS9jAYuEmyNPuVxDXJeBQ==
+";
+    const SIG_IDX_B: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YJLRQX7aXOhwkR3WsVjZ4vuYXyu7TBj9g7UOqgP2wUCX7VFs+OcwiRMDBkrp/8VFrLXs9wLXzvif98lsm8qGkw0=
+trusted comment: timestamp:1\tfile:index.toml
+Bdq5DLXZN3PCEa+L9uPmbnX4SfGh3ilz3Ufmp+6KLbgpQdArniE2pguIbRDx+3q+CLqE2NyHrRBhk3inQIl+Cw==
+";
+    const SIG_M_READY: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YB6DHga+ln6M/zbJ+Nmad9TJ0gHWqKXFSsslar4uJ4TD0vZP8m7udtgHemLXRCJ63tjTWj8HOhMKkoOZwXy4rws=
+trusted comment: timestamp:1\tfile:codex.toml
+MSZOYJzTmi+rl95XgP2cW7F06Ky2I4IAq03/f69RSy3Jz7fc6ftgTNj2j4nsA3RPXAKY3OCt61rrDhm6pDAiBQ==
+";
+    const SIG_M_CURRENT: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YOonO5mlKw94AdaYWcUkZD9pNxLimEBSlP1v1Tk4S4KegwZ1ZSs9z43yquTMn44429/UNdhnLpavPh0iK1W/SAY=
+trusted comment: timestamp:1\tfile:codex.toml
+4AKE1VyZY1as2QPCNs/MfqHy8D+pa0ZWl2uTHFGYeChJuqpWHeLTAe+2DBFqkIHilQCijnaZnhAkbfZuafT6Bw==
+";
+    const SIG_M_CODEX_CURRENT: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YFBsnYsDTUqyyyCYPAAJlr7Ro4lrOMqQ8AlKc+AIWiZhT3lcCbyx5VKbWJFSor9X0t3uuDyJIpO39ZVcmdFl6wI=
+trusted comment: timestamp:1\tfile:codex.toml
+EsSgHusY7KNCUeQBWMnY4FGLEzB8aLN4cFRx7UkIDZ/Pm0Aib0gUDPZE83nnGh2HWLrzFK9KzSBAAHeteuMDCg==
+";
+    const SIG_M_CURRENT_OTHER_FILE: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YD73B3ZbtUekFLC95MgboZAe1TaQMIjZcoZ9tQl0LBcGin2mA+ZvrpoY/37ZgEp8ytWC13KCH2hoyUSUcTqc+AI=
+trusted comment: timestamp:1\tfile:cursor.toml
+wCqEqSpLtVnNWaPg5OnyrV9JPfdvDSOL9CUU+F/0694+aO02VkvBUtRpHhw+OB9HnFHQnYWzQKaz03vi/E46Cw==
+";
+    const SIG_M_CURRENT_OTHER_KEY: &str = "untrusted comment: signature from rsign secret key
+RURoaNYB1lrhrPjIMgHflYAQS4O6FoEWaLewWM8+jUjfmpgwfcexW1vUkEc/EtNwhtmkBg+7xJdFT3zR/Y0E7qowWQIXRBkNSwg=
+trusted comment: timestamp:1\tfile:codex.toml
+NEZO1V79BoDa0Izdjv/v9nUfrclBSwC2leSP3xVnYS9zmhhUDi7c7mHkmQe9MfiIt5gf3FgqvnmbKha1Lr7RAQ==
+";
+
     #[test]
     fn manifest_version_compares_dotted_numeric_segments() {
         assert!(
@@ -680,7 +914,6 @@ contains = ["{contains}"]
     #[test]
     fn auto_update_reloads_manifest_cache_after_remote_commit() {
         with_state_dir("auto-update-reloads-cache", || {
-            let old_catalog_url = std::env::var_os(CATALOG_URL_ENV);
             let web_dir = std::env::temp_dir()
                 .join(format!("h0x-manifest-update-web-{}", std::process::id()));
             let _ = fs::remove_dir_all(&web_dir);
@@ -701,20 +934,12 @@ path = "codex.toml"
                 remote_manifest("9999.01.01.1", "auto-update-ready"),
             )
             .unwrap();
-            std::env::set_var(
-                CATALOG_URL_ENV,
-                format!(
-                    "file:///{}",
-                    web_dir
-                        .join("index.toml")
-                        .to_string_lossy()
-                        .replace('\\', "/")
-                        .trim_start_matches('/')
-                ),
-            );
+            let url = file_url(&web_dir);
+            put_sig(&web_dir, "index.toml", SIG_IDX_A);
+            put_sig(&web_dir, "codex.toml", SIG_M_READY);
 
             let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-            auto_update(tx);
+            auto_update_from(tx, &url, TEST_KEY);
 
             let event = rx.try_recv().expect("manifest update event");
             let crate::events::AppEvent::AgentDetectionManifestsUpdated { updated, .. } = event
@@ -735,10 +960,6 @@ path = "codex.toml"
                 Some("idle")
             );
 
-            match old_catalog_url {
-                Some(value) => std::env::set_var(CATALOG_URL_ENV, value),
-                None => std::env::remove_var(CATALOG_URL_ENV),
-            }
             let _ = fs::remove_dir_all(&web_dir);
         });
     }
@@ -750,7 +971,6 @@ path = "codex.toml"
             process_agent_manifest(Agent::Codex, &initial, 1).unwrap();
             crate::detect::manifest::reload_manifests();
 
-            let old_catalog_url = std::env::var_os(CATALOG_URL_ENV);
             let web_dir = std::env::temp_dir().join(format!(
                 "h0x-manifest-update-current-web-{}",
                 std::process::id()
@@ -771,20 +991,12 @@ path = "codex.toml"
             let current = remote_manifest("9999.01.01.2", "current-ready");
             fs::write(web_dir.join("codex.toml"), &current).unwrap();
             fs::write(remote_manifest_path(Agent::Codex), current).unwrap();
-            std::env::set_var(
-                CATALOG_URL_ENV,
-                format!(
-                    "file:///{}",
-                    web_dir
-                        .join("index.toml")
-                        .to_string_lossy()
-                        .replace('\\', "/")
-                        .trim_start_matches('/')
-                ),
-            );
+            let url = file_url(&web_dir);
+            put_sig(&web_dir, "index.toml", SIG_IDX_A);
+            put_sig(&web_dir, "codex.toml", SIG_M_CURRENT);
 
             let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-            auto_update(tx);
+            auto_update_from(tx, &url, TEST_KEY);
 
             let event = rx.try_recv().expect("manifest update event");
             let crate::events::AppEvent::AgentDetectionManifestsUpdated { updated, .. } = event
@@ -801,10 +1013,6 @@ path = "codex.toml"
                 Some("idle")
             );
 
-            match old_catalog_url {
-                Some(value) => std::env::set_var(CATALOG_URL_ENV, value),
-                None => std::env::remove_var(CATALOG_URL_ENV),
-            }
             let _ = fs::remove_dir_all(&web_dir);
         });
     }
@@ -819,7 +1027,6 @@ path = "codex.toml"
             process_agent_manifest(Agent::Cursor, &initial_cursor, 1).unwrap();
             crate::detect::manifest::reload_manifests();
 
-            let old_catalog_url = std::env::var_os(CATALOG_URL_ENV);
             let web_dir = std::env::temp_dir().join(format!(
                 "h0x-manifest-update-partial-web-{}",
                 std::process::id()
@@ -849,20 +1056,12 @@ path = "missing-cursor.toml"
                 remote_manifest_for("cursor", "9999.01.01.2", "cursor-current-ready"),
             )
             .unwrap();
-            std::env::set_var(
-                CATALOG_URL_ENV,
-                format!(
-                    "file:///{}",
-                    web_dir
-                        .join("index.toml")
-                        .to_string_lossy()
-                        .replace('\\', "/")
-                        .trim_start_matches('/')
-                ),
-            );
+            let url = file_url(&web_dir);
+            put_sig(&web_dir, "index.toml", SIG_IDX_B);
+            put_sig(&web_dir, "codex.toml", SIG_M_CODEX_CURRENT);
 
             let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-            auto_update(tx);
+            auto_update_from(tx, &url, TEST_KEY);
 
             let event = rx.try_recv().expect("manifest update event");
             let crate::events::AppEvent::AgentDetectionManifestsUpdated {
@@ -887,10 +1086,6 @@ path = "missing-cursor.toml"
                 Some("idle")
             );
 
-            match old_catalog_url {
-                Some(value) => std::env::set_var(CATALOG_URL_ENV, value),
-                None => std::env::remove_var(CATALOG_URL_ENV),
-            }
             let _ = fs::remove_dir_all(&web_dir);
         });
     }
@@ -1013,4 +1208,335 @@ path = "../codex.toml"
         )
         .is_err());
     }
+
+    #[test]
+    fn catalog_rejects_absolute_foreign_host_and_empty_manifest_paths() {
+        for path in [
+            "",
+            "   ",
+            "/etc/codex.toml",
+            "//evil.example/codex.toml",
+            "https://evil.example/codex.toml",
+            "file:///etc/codex.toml",
+            "sub/../../codex.toml",
+            "sub/..",
+        ] {
+            let catalog =
+                format!("schema_version = 1\n\n[[agents]]\nid = \"codex\"\npath = \"{path}\"\n");
+            assert!(
+                parse_catalog(&catalog).is_err(),
+                "catalog accepted {path:?}"
+            );
+            if !path.trim().is_empty() {
+                assert!(
+                    join_url("https://example.invalid/download", path).is_err(),
+                    "join_url accepted {path:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn signatures_with_crlf_line_endings_are_accepted() {
+        with_state_dir("sig-crlf", || {
+            let manifest = remote_manifest("9999.01.01.2", "current-ready");
+            let index_sig = SIG_IDX_A.replace('\n', "\r\n");
+            let codex_sig = SIG_M_CURRENT.replace('\n', "\r\n");
+            let output = serve_and_update(
+                "crlf",
+                (INDEX_A, Some(&index_sig)),
+                (&manifest, Some(&codex_sig)),
+                TEST_KEY,
+            )
+            .unwrap();
+            assert_eq!(output.updated.len(), 1);
+            assert_eq!(cached_codex_version().as_deref(), Some("9999.01.01.2"));
+        });
+    }
+
+    #[test]
+    fn signed_empty_catalog_changes_nothing() {
+        let manifest = remote_manifest("9999.01.01.2", "current-ready");
+        with_state_dir("sig-empty-file", || {
+            let err = serve_and_update(
+                "empty-file",
+                ("", Some(SIG_IDX_EMPTY)),
+                (&manifest, Some(SIG_M_CURRENT)),
+                TEST_KEY,
+            )
+            .expect_err("an empty catalog file has no schema_version");
+            assert!(err.contains("catalog"), "{err}");
+            assert_eq!(cached_codex_version().as_deref(), Some("9999.01.01.1"));
+        });
+        with_state_dir("sig-no-agents", || {
+            let output = serve_and_update(
+                "no-agents",
+                ("\nschema_version = 1\n", Some(SIG_IDX_NO_AGENTS)),
+                (&manifest, Some(SIG_M_CURRENT)),
+                TEST_KEY,
+            )
+            .unwrap();
+            assert!(output.checked.is_empty());
+            assert!(output.updated.is_empty());
+            assert_eq!(cached_codex_version().as_deref(), Some("9999.01.01.1"));
+        });
+    }
+
+    #[test]
+    fn catalog_is_read_up_to_the_fetch_limit_and_refused_beyond_it() {
+        let manifest = remote_manifest("9999.01.01.2", "current-ready");
+        let padded_index = |len: usize| {
+            let mut index = format!("{INDEX_A}#");
+            while index.len() < len - 1 {
+                index.push('x');
+            }
+            index.push('\n');
+            index
+        };
+        with_state_dir("sig-size-at-limit", || {
+            let index = padded_index(MAX_FETCH_BYTES);
+            assert_eq!(index.len(), MAX_FETCH_BYTES);
+            let output = serve_and_update(
+                "size-at-limit",
+                (&index, Some(SIG_IDX_AT_LIMIT)),
+                (&manifest, Some(SIG_M_CURRENT)),
+                TEST_KEY,
+            )
+            .unwrap();
+            assert_eq!(output.updated.len(), 1);
+            assert_eq!(cached_codex_version().as_deref(), Some("9999.01.01.2"));
+        });
+        with_state_dir("sig-size-over-limit", || {
+            let index = padded_index(MAX_FETCH_BYTES + 1);
+            assert_eq!(index.len(), MAX_FETCH_BYTES + 1);
+            let result = serve_and_update(
+                "size-over-limit",
+                (&index, Some(SIG_IDX_OVER_LIMIT)),
+                (&manifest, Some(SIG_M_CURRENT)),
+                TEST_KEY,
+            );
+            assert!(result.is_err(), "{result:?}");
+            assert_eq!(cached_codex_version().as_deref(), Some("9999.01.01.1"));
+        });
+    }
+
+    #[test]
+    fn signed_but_invalid_manifest_fails_only_that_agent() {
+        let bad_regex = format!(
+            "{}regex = [\"(\"]\n",
+            remote_manifest("9999.01.01.2", "bad-regex")
+        );
+        let cursor = remote_manifest_for("cursor", "9999.01.01.2", "cursor-current-ready");
+        let cases: [(&str, &str, &str); 3] = [
+            (
+                "bad-toml",
+                "id = \"codex\"\nversion =\n",
+                SIG_M_CODEX_BAD_TOML,
+            ),
+            ("bad-regex", &bad_regex, SIG_M_CODEX_BAD_REGEX),
+            // The cursor manifest, signed as `codex.toml`: a valid signature
+            // does not let one agent's manifest stand in for another's.
+            ("other-agent", &cursor, SIG_M_CURSOR_AS_CODEX),
+        ];
+        for (name, codex, codex_sig) in cases {
+            with_state_dir(&format!("sig-invalid-{name}"), || {
+                for agent in [Agent::Codex, Agent::Cursor] {
+                    let initial =
+                        remote_manifest_for(agent_label(agent), "9999.01.01.1", "initial-ready");
+                    process_agent_manifest(agent, &initial, 1).unwrap();
+                }
+                let dir = web_dir(&format!("invalid-{name}"));
+                fs::write(dir.join("index.toml"), INDEX_TWO).unwrap();
+                put_sig(&dir, "index.toml", SIG_IDX_TWO);
+                fs::write(dir.join("codex.toml"), codex).unwrap();
+                put_sig(&dir, "codex.toml", codex_sig);
+                fs::write(dir.join("cursor.toml"), &cursor).unwrap();
+                put_sig(&dir, "cursor.toml", SIG_M_CURSOR);
+                let result = check_and_update_from_url(&file_url(&dir), TEST_KEY);
+                let _ = fs::remove_dir_all(&dir);
+
+                let output = result.unwrap();
+                let updated = output.updated.iter().map(|c| c.agent).collect::<Vec<_>>();
+                assert_eq!(updated, vec![Agent::Cursor], "{name}");
+                assert_eq!(
+                    cached_codex_version().as_deref(),
+                    Some("9999.01.01.1"),
+                    "{name}"
+                );
+                assert_eq!(
+                    cached_remote_version(Agent::Cursor)
+                        .map(|v| v.to_string())
+                        .as_deref(),
+                    Some("9999.01.01.2"),
+                    "{name}"
+                );
+                let codex_status = output.status.agents.get("codex").unwrap();
+                assert_eq!(codex_status.last_result, "failed", "{name}");
+                assert!(
+                    codex_status
+                        .last_error
+                        .as_deref()
+                        .is_some_and(|e| !e.contains("not signed")),
+                    "{name}: the signature was valid: {codex_status:?}"
+                );
+                assert_eq!(
+                    output.status.agents.get("cursor").unwrap().last_result,
+                    "updated",
+                    "{name}"
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn manifest_path_with_a_query_string_is_not_applied() {
+        with_state_dir("sig-query-path", || {
+            let initial = remote_manifest("9999.01.01.1", "initial-ready");
+            process_agent_manifest(Agent::Codex, &initial, 1).unwrap();
+            // A correctly signed `codex.toml` sits next to the catalog, but the
+            // catalog names it `codex.toml?v=1`, which is not the signed name.
+            let dir = web_dir("query-path");
+            let manifest = remote_manifest("9999.01.01.2", "current-ready");
+            fs::write(dir.join("codex.toml"), &manifest).unwrap();
+            put_sig(&dir, "codex.toml", SIG_M_CURRENT);
+            fs::write(dir.join("index.toml"), INDEX_QUERY).unwrap();
+            put_sig(&dir, "index.toml", SIG_IDX_QUERY);
+            let result = check_and_update_from_url(&file_url(&dir), TEST_KEY);
+            let _ = fs::remove_dir_all(&dir);
+
+            // The catalog parser now refuses the `?` path outright; either way
+            // nothing is applied.
+            if let Ok(output) = result {
+                assert!(output.updated.is_empty(), "applied {output:?}");
+                let status = output.status.agents.get("codex").unwrap();
+                assert_eq!(status.last_result, "failed");
+            }
+            assert_eq!(cached_codex_version().as_deref(), Some("9999.01.01.1"));
+        });
+    }
+
+    #[test]
+    fn manifest_paths_cannot_leave_the_release_directory() {
+        let manifest = remote_manifest("9999.01.01.2", "current-ready");
+        let cases: [(&str, &str, &str); 2] = [
+            // A Windows separator that `..` checks on `/` do not see.
+            ("backslash", INDEX_BACKSLASH, SIG_IDX_BACKSLASH),
+            ("query", INDEX_QUERY, SIG_IDX_QUERY),
+        ];
+        for (name, index, index_sig) in cases {
+            with_state_dir(&format!("sig-escape-{name}"), || {
+                let initial = remote_manifest("9999.01.01.1", "initial-ready");
+                process_agent_manifest(Agent::Codex, &initial, 1).unwrap();
+                let dir = web_dir(&format!("escape-{name}"));
+                let release = dir.join("release");
+                let outside = dir.join("outside");
+                // A correctly signed codex manifest both inside and outside
+                // the release directory.
+                for place in [&release, &outside] {
+                    fs::create_dir_all(place).unwrap();
+                    fs::write(place.join("codex.toml"), &manifest).unwrap();
+                    put_sig(place, "codex.toml", SIG_M_CURRENT);
+                }
+                fs::write(release.join("index.toml"), index).unwrap();
+                put_sig(&release, "index.toml", index_sig);
+                let result = check_and_update_from_url(&file_url(&release), TEST_KEY);
+                let _ = fs::remove_dir_all(&dir);
+
+                if let Ok(output) = &result {
+                    assert!(output.updated.is_empty(), "{name}: applied {output:?}");
+                    let status = output.status.agents.get("codex").unwrap();
+                    assert_eq!(status.last_result, "failed", "{name}");
+                }
+                assert_eq!(
+                    cached_codex_version().as_deref(),
+                    Some("9999.01.01.1"),
+                    "{name}"
+                );
+            });
+        }
+    }
+
+    const INDEX_TWO: &str = r#"
+schema_version = 1
+
+[[agents]]
+id = "codex"
+path = "codex.toml"
+
+[[agents]]
+id = "cursor"
+path = "cursor.toml"
+"#;
+
+    const INDEX_BACKSLASH: &str = r#"
+schema_version = 1
+
+[[agents]]
+id = "codex"
+path = '..\outside/codex.toml'
+"#;
+
+    const INDEX_QUERY: &str = r#"
+schema_version = 1
+
+[[agents]]
+id = "codex"
+path = "codex.toml?v=1"
+"#;
+
+    const SIG_IDX_TWO: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YM/YP2ux75pDoShxvEXzGf9kBxqn0Z+nnwsMOO3nViYdrpCdJLotu8bw515107bStJvB+J/r0vkXds3ehW32DAQ=
+trusted comment: timestamp:1\tfile:index.toml
+xWxPLWHLcuRQwkNLXAVVY/TymqYKV/RNa24UgPnY2OoXR/WUhP7FYTOQo0i5sqF4SL8nTNsyHBN4BxLWnGx5Dg==
+";
+    const SIG_IDX_BACKSLASH: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YM2nJU+w1rAD0TnkuXk6m/Lvdlm5bOtADioeJf4G+DJvIpzOM11NiVs+G3/LdKAbW3c1G7t+yQNpFzM70jaE6gU=
+trusted comment: timestamp:1\tfile:index.toml
+s7Bx+MosiplRvZj0lw3cXv9lpJxId93+rCPaURLMfcxXBByTO6aPpc0h0kNtvCEfTMIJZ8JxR1hRHVUHm3LnCA==
+";
+    const SIG_IDX_QUERY: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YNtSxQw0se6o9xHYMtZQF99Fx3D943sSW7Wk7PAmcDpjYH6NH8D8ZsvZoyy6PUT6zerlU8pEXidaWy8GuKZZkg8=
+trusted comment: timestamp:1\tfile:index.toml
+gnfZLXoWPWSxYxyK68vXZ6qtD/TBf/yMB7AwJAFTPXdcou2NfBVHKzvp82hNLQYawdlEgfb8VbulqAzwvzvTBQ==
+";
+    const SIG_IDX_EMPTY: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YFMBAJ8ruuPc6a3mLf5XTC/UfJ8ksyV7CxcA+eG/b3mExha35vS22Y6J/Q+/Rj/phqlnlboyk47QUsxaBcXqUws=
+trusted comment: timestamp:1\tfile:index.toml
+ZtuQCTzwjQ+3Dvo6wbrAJwcqR/46xSUAXT2CyvNt2OtOG817eu86SHJKPXAuxHDBonSjA3aybjjzxEcwZOoJDg==
+";
+    const SIG_IDX_NO_AGENTS: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YOcrrzBAU7ZPAQsroxtXI01LVL0Nd8Jl73Mj6xKuvHDNuWOw8g9V9ijNrXpnMV1/BjFTpC0NV5K1v00X4tDWzwo=
+trusted comment: timestamp:1\tfile:index.toml
+4VyVaY563a5n29EcCaXhH4MtFcP80K0+mD1ioKKFy2MOzMoeN2WZ6F7ucAcbXtWlPCbVDgfRHtM8Tq/UsHiLAg==
+";
+    const SIG_IDX_AT_LIMIT: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YDR/GhNAaNfnaq6XlXybjKgqwq5IgzNEGZYNEY5u0MJj/qQp9YSbXLmTX/baX6VEElH8rTUZLxZgZFF64reHYAo=
+trusted comment: timestamp:1\tfile:index.toml
+YpzFKNKNJ/3vj+zKjXHYYvFpVAxeSm01zjflzlb0fZj0i27tRtA5pnPgVYrI4peyRo6pnQhdWkt2XNMYxTBcDw==
+";
+    const SIG_IDX_OVER_LIMIT: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YAJMvIYneHE7YLjOr/CNZ3K/y1LU4Bn8lypJVUUeIcnLM/xU/3q8jt7PcUk0xHOV2h5rbrndhvtnLAAdVWnMVg4=
+trusted comment: timestamp:1\tfile:index.toml
+p6cpphCzVa1w8LwUQpWscLdb1uihjfnNPlzX904OBLWKY80XJSnoGvY8kklTBUnwuR/7YXXP+rXCGiNAvJE3Bg==
+";
+    const SIG_M_CODEX_BAD_TOML: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YAwrKJ6UEy7Tkjh28TFdGxmUgLQFr43nMRtgo28RlisgD+lwNN8KJc+qJ8ZRm6KqgXHSGYkxu8wxqzB00wXhrgE=
+trusted comment: timestamp:1\tfile:codex.toml
+7x5wG2ESEjQmhgzv9k9f0z2qrVyJOO7czxQEJCfgCbp8KVHic4nKJgRvNjmz9GLrEuRhOkathYtGrLL1+WXnCA==
+";
+    const SIG_M_CODEX_BAD_REGEX: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YFKSxg9VEQNr9qsGYQmHBYUmnelUk6WYmXai+Vr+WR1UW72Bsbqz5cMmAHao6sbnMAgd8x3LOm9MsK0fMiYzFQI=
+trusted comment: timestamp:1\tfile:codex.toml
+K9QRN3VWNmS/CfLacCX1Y171fJbBOvaA7HeRipY2HOH6hDHl2Leob9KT+mt1b+ZwO862rC+43EDRte/QLV2UAw==
+";
+    const SIG_M_CURSOR_AS_CODEX: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YJy7HD+8x2FmFUJqfU0EHuFHGwUrevunXaZ9fxXpdY37IEAqDm7mbc4CZyhzpFXBUFp3BOsrxBgK7TB8EFXeZQs=
+trusted comment: timestamp:1\tfile:codex.toml
+nGlbYu+aWZQYShfJh6Y9sNkNQaSGtd0rP9Ya7DzUdpw6ycLzAYeGmQ+HBTU4ysA35Y2e+zVEfOHDXWGnjrymAA==
+";
+    const SIG_M_CURSOR: &str = "untrusted comment: signature from rsign secret key
+RURoiCZgYc65YIwcVrJrrLv1wDDdXgPB5mQrOxfiTo36iS5KajYWpKx5eLlo6DgSUmnl3SdWKzvnxXwgvQxUrUeFpDubUoUiPAA=
+trusted comment: timestamp:1\tfile:cursor.toml
+MWBBe11zeMnCa+rjy2QTKodaEEAxfyHlvHZUFpWGCWEz2jYIxfgfOIc1g89dEOOUTy/cK4Q9MxntRRjfZFc2BA==
+";
 }
