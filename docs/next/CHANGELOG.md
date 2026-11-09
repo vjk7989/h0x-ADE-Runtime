@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## [0.9.11] - 2026-11-09
+
+Security release from the second audit (Cloudflare security-audit tool).
+
+### Fixed
+- A remote server can no longer write raw terminal bytes to your screen, including kitty image commands split across frames or hidden in surface graphics; image decoding and remote responses have size limits.
+- Agent resume commands are quoted for the pane's shell (PowerShell included), and session ids starting with `-` are refused.
+- The git status reader ignores repositories owned by another account and never follows network paths.
+- The plugin confirmation's 5-minute block after Deny applies per program, and a remote server's prompt shows that server's name.
+- Notification text loses control and hidden formatting characters; Linux notification bodies are escaped.
+- The notification sound is written to a private temporary folder.
+
 ## [0.9.10] - 2026-11-09
 
 Security release from a full audit.
