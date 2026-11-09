@@ -3473,6 +3473,146 @@ mod tests {
         assert!(frame.to_ratatui_buffer().is_none());
     }
 
+    fn assert_skip_flags_roundtrip(buffer: &ratatui::buffer::Buffer, expected_skip: &[bool]) {
+        use ratatui::buffer::CellDiffOption;
+
+        let frame = FrameData::from_ratatui_buffer(buffer, None);
+        let skips: Vec<bool> = frame.cells.iter().map(|cell| cell.skip).collect();
+        assert_eq!(skips, expected_skip);
+
+        let encoded = bincode::serde::encode_to_vec(&frame, bincode::config::standard()).unwrap();
+        let (decoded, _): (FrameData, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+        assert_eq!(decoded, frame);
+
+        let restored = decoded.to_ratatui_buffer().expect("should reconstruct");
+        assert_eq!(restored.area, buffer.area);
+        let restored_options: Vec<CellDiffOption> = restored
+            .content
+            .iter()
+            .map(|cell| cell.diff_option)
+            .collect();
+        let expected_options: Vec<CellDiffOption> = expected_skip
+            .iter()
+            .map(|skip| {
+                if *skip {
+                    CellDiffOption::Skip
+                } else {
+                    CellDiffOption::None
+                }
+            })
+            .collect();
+        assert_eq!(restored_options, expected_options);
+        assert_eq!(FrameData::from_ratatui_buffer(&restored, None), frame);
+    }
+
+    #[test]
+    fn frame_data_roundtrips_skip_flag_for_mixed_and_wide_cells() {
+        use ratatui::buffer::{Buffer, CellDiffOption};
+
+        let area = ratatui::layout::Rect::new(0, 0, 4, 2);
+        let mut buffer = Buffer::empty(area);
+        // Row 0: wide head, its skipped spacer tail, a skipped narrow cell, an untouched default.
+        buffer[(0, 0)].set_symbol("中");
+        buffer[(1, 0)]
+            .set_symbol("")
+            .set_diff_option(CellDiffOption::Skip);
+        buffer[(2, 0)]
+            .set_symbol("a")
+            .set_diff_option(CellDiffOption::Skip);
+        // Row 1: styled non-skip, styled skip, blank skip, and a non-skip diff option.
+        buffer[(0, 1)].set_symbol("b").fg = Color::Green;
+        buffer[(1, 1)]
+            .set_symbol("c")
+            .set_diff_option(CellDiffOption::Skip)
+            .bg = Color::Indexed(42);
+        buffer[(2, 1)]
+            .set_symbol(" ")
+            .set_diff_option(CellDiffOption::Skip);
+        buffer[(3, 1)]
+            .set_symbol("d")
+            .set_diff_option(CellDiffOption::AlwaysUpdate);
+
+        assert_skip_flags_roundtrip(
+            &buffer,
+            &[false, true, true, false, false, true, true, false],
+        );
+
+        // The host diff must still leave every decoded skip cell alone.
+        let restored = FrameData::from_ratatui_buffer(&buffer, None)
+            .to_ratatui_buffer()
+            .unwrap();
+        let written: Vec<(u16, u16)> = Buffer::empty(area)
+            .diff(&restored)
+            .into_iter()
+            .map(|(x, y, _)| (x, y))
+            .collect();
+        for skipped in [(1, 0), (2, 0), (1, 1), (2, 1)] {
+            assert!(
+                !written.contains(&skipped),
+                "wrote {skipped:?}: {written:?}"
+            );
+        }
+        assert!(written.contains(&(0, 0)) && written.contains(&(3, 1)));
+    }
+
+    #[test]
+    fn frame_data_roundtrips_skip_flag_for_empty_single_and_max_width_buffers() {
+        use ratatui::buffer::{Buffer, CellDiffOption};
+        use ratatui::layout::Rect;
+
+        assert_skip_flags_roundtrip(&Buffer::empty(Rect::new(0, 0, 0, 0)), &[]);
+
+        let mut single = Buffer::empty(Rect::new(0, 0, 1, 1));
+        assert_skip_flags_roundtrip(&single, &[false]);
+        single[(0, 0)].set_diff_option(CellDiffOption::Skip);
+        assert_skip_flags_roundtrip(&single, &[true]);
+
+        let mut wide_row = Buffer::empty(Rect::new(0, 0, u16::MAX, 1));
+        wide_row[(0, 0)].set_diff_option(CellDiffOption::Skip);
+        wide_row[(u16::MAX - 1, 0)].set_diff_option(CellDiffOption::Skip);
+        let mut expected = vec![false; usize::from(u16::MAX)];
+        expected[0] = true;
+        expected[usize::from(u16::MAX) - 1] = true;
+        assert_skip_flags_roundtrip(&wide_row, &expected);
+    }
+
+    #[test]
+    fn frame_data_decodes_wire_skip_flags_into_ratatui_skip_cells() {
+        use ratatui::buffer::CellDiffOption;
+
+        // A frame as an older peer sends it: only the bool `skip` field carries the flag.
+        let cell = |symbol: &str, skip: bool| CellData {
+            symbol: symbol.into(),
+            fg: 0,
+            bg: 0,
+            modifier: 0,
+            skip,
+            hyperlink: None,
+        };
+        let frame = FrameData {
+            cells: vec![
+                cell("中", false),
+                cell("", true),
+                cell("x", true),
+                cell("y", false),
+            ],
+            width: 2,
+            height: 2,
+            cursor: None,
+            hyperlinks: Vec::new(),
+            graphics: Vec::new(),
+        };
+
+        let restored = frame.to_ratatui_buffer().expect("should reconstruct");
+        assert_eq!(restored[(0, 0)].diff_option, CellDiffOption::None);
+        assert_eq!(restored[(1, 0)].diff_option, CellDiffOption::Skip);
+        assert_eq!(restored[(0, 1)].diff_option, CellDiffOption::Skip);
+        assert_eq!(restored[(1, 1)].diff_option, CellDiffOption::None);
+        assert_eq!(restored[(1, 0)].symbol(), "");
+        assert_eq!(FrameData::from_ratatui_buffer(&restored, None), frame);
+    }
+
     // ---- Color conversion coverage ----
 
     #[test]

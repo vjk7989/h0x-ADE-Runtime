@@ -5830,6 +5830,58 @@ mod tests {
     }
 
     #[test]
+    fn render_diff_never_writes_wide_cell_tails_to_the_host_terminal() {
+        for (text, head_x, head) in [
+            ("中Z", 0u16, "中"),
+            ("\u{1f600}Z", 0, "\u{1f600}"),
+            ("aaaaaaaaaaaaaaaaaaｶﾞ", 18, "ｶ\u{ff9e}"),
+        ] {
+            let (tx, _rx) = mpsc::channel(4);
+            let mut terminal = crate::ghostty::Terminal::new(20, 1, 0).unwrap();
+            terminal.write(text.as_bytes());
+            let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+
+            let area = Rect::new(0, 0, 20, 1);
+            let backend = ratatui::backend::TestBackend::new(20, 1);
+            let mut terminal = ratatui::Terminal::new(backend).unwrap();
+            let mut rendered = None;
+            terminal
+                .draw(|frame| {
+                    pane.render(frame, area, false);
+                    rendered = Some(frame.buffer_mut().clone());
+                })
+                .unwrap();
+            let rendered = rendered.unwrap();
+            assert_eq!(rendered[(head_x, 0)].symbol(), head, "{text:?}");
+            assert_eq!(rendered[(head_x + 1, 0)].symbol(), "", "{text:?}");
+
+            // The first draw diffs against an empty buffer; that diff is what reaches the
+            // host terminal, so the wide head must be written and its tail never.
+            let written: Vec<(u16, &str)> = ratatui::buffer::Buffer::empty(area)
+                .diff(&rendered)
+                .into_iter()
+                .map(|(x, _, cell)| (x, cell.symbol()))
+                .collect();
+            assert!(written.contains(&(head_x, head)), "{text:?}: {written:?}");
+            assert!(
+                written.iter().all(|(x, _)| *x != head_x + 1),
+                "{text:?}: wide tail must not be written over the head: {written:?}"
+            );
+            if head_x + 2 < 20 {
+                assert!(
+                    written.contains(&(head_x + 2, "Z")),
+                    "{text:?}: {written:?}"
+                );
+            }
+            assert_eq!(
+                terminal.backend().buffer()[(head_x, 0)].symbol(),
+                head,
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
     fn pane_scrollback_controls_round_trip_and_clamp_without_ui_interference() {
         let (tx, _rx) = mpsc::channel(4);
         let mut terminal = crate::ghostty::Terminal::new(80, 3, 100).unwrap();
