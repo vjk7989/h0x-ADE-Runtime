@@ -2490,4 +2490,151 @@ mod tests {
             "cells hidden by a previous halfwidth voiced kana must be redrawn when visible"
         );
     }
+
+    #[test]
+    fn remote_cell_text_reaches_the_host_terminal_without_control_sequences() {
+        use crate::protocol::{
+            read_message, write_message, ClientShellPopupSurface, PaneSurfaceFrame,
+            PaneSurfacePatch, ServerMessage, SurfaceGraphicsScene, MAX_FRAME_SIZE,
+        };
+
+        // Only our own CSI sequences and OSC 8 (closed with ESC \) may reach
+        // the host; any other ESC, a BEL, another C0 byte or a UTF-8 encoded
+        // C1 control means the remote server wrote raw terminal bytes.
+        fn assert_inert(bytes: &[u8], path: &str) {
+            for (index, byte) in bytes.iter().enumerate() {
+                let rest = &bytes[index + 1..];
+                let shown = String::from_utf8_lossy(&rest[..rest.len().min(12)]);
+                match *byte {
+                    0x1b => assert!(
+                        rest.starts_with(b"[")
+                            || rest.starts_with(b"]8;;")
+                            || rest.starts_with(b"\\"),
+                        "{path}: ESC followed by {shown:?}"
+                    ),
+                    0x00..=0x1f | 0x7f => {
+                        panic!("{path}: control byte {byte:#04x} before {shown:?}")
+                    }
+                    0xc2 => assert!(
+                        !rest
+                            .first()
+                            .is_some_and(|next| (0x80..=0x9f).contains(next)),
+                        "{path}: C1 control before {shown:?}"
+                    ),
+                    _ => {}
+                }
+            }
+        }
+
+        let hostile = || {
+            vec![
+                // Kept: a grapheme with a combining mark and a ZWJ sequence
+                // (first, because a multi-column symbol hides later cells).
+                make_cell("e\u{301}", 0, 0, 0),
+                make_cell("\u{1f469}\u{200d}\u{1f4bb}", 0, 0, 0),
+                make_cell(" ", 0, 0, 0),
+                // ESC alone, then the OSC 52 body in the next cell.
+                make_cell("\u{1b}", 0, 0, 0),
+                make_cell("]52;c;ZXZpbA==\u{7}", 0, 0, 0),
+                // A wide character whose continuation cell carries ESC.
+                make_cell("\u{4e2d}", 0, 0, 0),
+                make_cell("\u{1b}", 0, 0, 0),
+                // C1 OSC and DCS, DSR query, DEL, mixed text and controls.
+                make_cell("\u{9d}0;spoof\u{9c}", 0, 0, 0),
+                make_cell("\u{1b}P$q\"p\u{1b}\\", 0, 0, 0),
+                make_cell("\u{1b}[6n", 0, 0, 0),
+                make_cell("a\u{7f}\u{0}\r\n", 0, 0, 0),
+            ]
+        };
+        let width = 11;
+        // Full frames may carry an OSC 8 link; patches never do.
+        let frame = || {
+            let mut frame = make_frame(width, 1, hostile());
+            frame.cells[0].hyperlink = Some(0);
+            frame
+                .hyperlinks
+                .push("https://example.com/\u{9c}\u{1b}]52;c;ZXZpbA==\u{7}".into());
+            frame
+        };
+        let surface = ServerMessage::PaneSurface(PaneSurfaceFrame {
+            boot_id: "remote".into(),
+            projection_revision: 1,
+            surface_revision: 1,
+            frame: frame(),
+            panes: Vec::new(),
+            splits: Vec::new(),
+            popup: Some(Box::new(ClientShellPopupSurface {
+                terminal_id: "popup".into(),
+                title: "popup".into(),
+                width: None,
+                height: None,
+                frame: frame(),
+                mouse_reporting: false,
+                sgr_pixel_mouse: false,
+                pixel_width: 0,
+                pixel_height: 0,
+            })),
+            graphics: SurfaceGraphicsScene::default(),
+        });
+        let mut wire = Vec::new();
+        write_message(&mut wire, &surface).unwrap();
+        let ServerMessage::PaneSurface(decoded) =
+            read_message(&mut wire.as_slice(), MAX_FRAME_SIZE).unwrap()
+        else {
+            panic!("expected a pane surface");
+        };
+        let popup = decoded.popup.expect("popup").frame;
+        let composed = FrameData::from_ratatui_buffer(
+            &decoded.frame.to_ratatui_buffer().expect("surface buffer"),
+            None,
+        );
+
+        // Full redraws of the surface as received, of its popup and of the
+        // client's composed (ratatui round-tripped) frame.
+        for (path, frame) in [
+            ("surface", &decoded.frame),
+            ("popup", &popup),
+            ("composed", &composed),
+        ] {
+            assert_inert(&BlitEncoder::new().encode(frame, true).bytes, path);
+        }
+
+        // A diff against a blank frame and a retained patch on top of it.
+        let blank = make_frame(width, 1, vec![make_cell(" ", 0, 0, 0); usize::from(width)]);
+        let mut encoder = BlitEncoder::new();
+        let initial = encoder.encode(&blank, false);
+        encoder.commit(blank, initial);
+        assert_inert(&encoder.encode(&decoded.frame, false).bytes, "diff");
+
+        let patch = ServerMessage::PaneSurfacePatch(PaneSurfacePatch {
+            boot_id: "remote".into(),
+            projection_revision: 1,
+            base_surface_revision: 1,
+            surface_revision: 2,
+            rows: vec![PaneSurfacePatchRow {
+                x: 0,
+                y: 0,
+                cells: hostile(),
+            }],
+            panes: Vec::new(),
+            cursor: None,
+        });
+        let mut wire = Vec::new();
+        write_message(&mut wire, &patch).unwrap();
+        let ServerMessage::PaneSurfacePatch(decoded_patch) =
+            read_message(&mut wire.as_slice(), MAX_FRAME_SIZE).unwrap()
+        else {
+            panic!("expected a pane surface patch");
+        };
+        let encoded = encoder
+            .encode_patch(&decoded_patch.rows, None, false)
+            .expect("patch fits the retained frame");
+        assert_inert(&encoded.bytes, "patch");
+
+        // The grapheme cluster and the ZWJ sequence still reach the host.
+        let full = String::from_utf8(BlitEncoder::new().encode(&decoded.frame, true).bytes)
+            .expect("utf-8 output");
+        assert!(full.contains("e\u{301}"));
+        assert!(full.contains("\u{1f469}\u{200d}\u{1f4bb}"));
+    }
 }
