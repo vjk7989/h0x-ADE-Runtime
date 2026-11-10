@@ -5357,4 +5357,590 @@ mod tests {
         assert_eq!(basic.style.fg_color, Some(CellColor::Palette(1)));
         assert!(!basic.has_hyperlink);
     }
+
+    fn memory_usage(terminal: &Terminal) -> ffi::GhosttyTerminalMemoryUsage {
+        let mut usage = ffi::GhosttyTerminalMemoryUsage {
+            size: mem::size_of::<ffi::GhosttyTerminalMemoryUsage>(),
+            ..Default::default()
+        };
+        unsafe {
+            ffi::ghostty_terminal_get(
+                terminal.raw,
+                ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_MEMORY_USAGE,
+                (&mut usage as *mut ffi::GhosttyTerminalMemoryUsage).cast(),
+            )
+            .into_result()
+            .unwrap();
+        }
+        usage
+    }
+
+    fn set_scrollback_max_lines(terminal: &mut Terminal, lines: usize) {
+        unsafe {
+            ffi::ghostty_terminal_set(
+                terminal.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES,
+                (&lines as *const usize).cast(),
+            )
+            .into_result()
+            .unwrap();
+        }
+    }
+
+    /// Writes lines until the primary screen spills onto a second page.
+    fn write_lines_until_second_page(terminal: &mut Terminal) {
+        let mut lines = 0;
+        while memory_usage(terminal).primary_pages < 2 {
+            terminal.write(b"x\r\n");
+            lines += 1;
+            assert!(
+                lines < 100_000,
+                "the primary screen never needed a second page"
+            );
+        }
+    }
+
+    fn find_viewport_char(terminal: &Terminal, ch: char) -> Option<(u16, u32)> {
+        let cols = terminal.cols().unwrap();
+        let rows = u32::from(terminal.rows().unwrap());
+        (0..rows)
+            .flat_map(|y| (0..cols).map(move |x| (x, y)))
+            .find(|&(x, y)| {
+                terminal
+                    .viewport_graphemes_and_style(x, y)
+                    .is_ok_and(|(graphemes, _)| graphemes == [u32::from(ch)])
+            })
+    }
+
+    // GHSA-w9q4-5jvv-mcv4: a clear that prunes the cursor's page must move the
+    // cursor's style and hyperlink to the page it lands on.
+    #[test]
+    fn scroll_clear_that_prunes_the_cursor_page_keeps_cursor_style_and_hyperlink() {
+        let url = "https://example.com/w9q4";
+        let mut pruned = [false; 2];
+        for line_limit in [false, true] {
+            for clear in ["\x1b[22J", "\x1b[2J"] {
+                for extra_rows in 0..3 {
+                    let context =
+                        format!("line_limit={line_limit} clear={clear:?} extra_rows={extra_rows}");
+                    // A 1-byte limit still keeps one page, so one clear deletes the oldest page.
+                    let max_bytes = if line_limit { 10 * 1024 * 1024 } else { 1 };
+                    let mut terminal = Terminal::new(10, 3, max_bytes).unwrap();
+                    if line_limit {
+                        set_scrollback_max_lines(&mut terminal, 0);
+                    }
+                    write_lines_until_second_page(&mut terminal);
+                    terminal.write(&b"x\r\n".repeat(extra_rows));
+                    // CSI 2 J only scrolls into history when the last row is a shell prompt.
+                    terminal.write(if clear == "\x1b[2J" {
+                        b"\x1b]133;A\x07$ ".as_slice()
+                    } else {
+                        b"x".as_slice()
+                    });
+                    // The top active row is the last row of the first page.
+                    terminal.write(format!("\x1b[1;1H\x1b[1m\x1b]8;;{url}\x1b\\").as_bytes());
+                    let rows_before = terminal.total_rows().unwrap();
+                    terminal.write(format!("{clear}y").as_bytes());
+                    pruned[usize::from(line_limit)] |= terminal.total_rows().unwrap() < rows_before;
+
+                    let (x, y) = find_viewport_char(&terminal, 'y')
+                        .unwrap_or_else(|| panic!("{context}: y was not printed"));
+                    let (_, style) = terminal.viewport_graphemes_and_style(x, y).unwrap();
+                    assert!(style.bold, "{context}");
+                    assert_eq!(
+                        terminal.viewport_hyperlink_uri(x, y).unwrap().as_deref(),
+                        Some(url),
+                        "{context}"
+                    );
+
+                    terminal.write(b"\x1b]8;;\x1b\\\x1b[0mz");
+                    let (x, y) = find_viewport_char(&terminal, 'z')
+                        .unwrap_or_else(|| panic!("{context}: z was not printed"));
+                    let (_, style) = terminal.viewport_graphemes_and_style(x, y).unwrap();
+                    assert!(!style.bold, "{context}");
+                    assert_eq!(
+                        terminal.viewport_hyperlink_uri(x, y).unwrap(),
+                        None,
+                        "{context}"
+                    );
+                    terminal.write(&b"\x1b[1mx\x1b[0m\r\n".repeat(10_000));
+                    assert!(memory_usage(&terminal).primary_pages <= 3, "{context}");
+                }
+            }
+        }
+        // The line limit must reach the pruning path. A byte limit only prunes
+        // when a new page is needed, so it is checked here for consistency only.
+        assert!(pruned[1], "the line limit never pruned the cursor page");
+    }
+
+    // GHSA-qjfx-r533-6vx3: on a one-row screen, scrollback pruning must not
+    // leave the cursor on the freed page.
+    #[test]
+    fn one_row_reflow_of_a_hyperlinked_line_survives_scrollback_pruning() {
+        let url = "http://example.com/qjfx";
+        for line_limit in [true, false] {
+            let max_bytes = if line_limit { 10 * 1024 * 1024 } else { 1 };
+            let mut terminal = Terminal::new(3, 1, max_bytes).unwrap();
+            if line_limit {
+                set_scrollback_max_lines(&mut terminal, 0);
+            }
+            terminal.write(format!("\x1b[1m\x1b]8;;{url}\x1b\\{}", "a".repeat(103)).as_bytes());
+            // Reflowing wider builds a page with more rows than the line limit keeps.
+            terminal.resize(80, 1, 8, 16).unwrap();
+            for _ in 0..50 {
+                terminal.write(&[b'\n'; 1000]);
+            }
+            terminal.write(b"b");
+
+            let (x, y) = find_viewport_char(&terminal, 'b')
+                .unwrap_or_else(|| panic!("line_limit={line_limit}: b was not printed"));
+            assert_eq!(y, 0);
+            let (_, style) = terminal.viewport_graphemes_and_style(x, y).unwrap();
+            assert!(style.bold, "line_limit={line_limit}");
+            assert_eq!(
+                terminal.viewport_hyperlink_uri(x, y).unwrap().as_deref(),
+                Some(url),
+                "line_limit={line_limit}"
+            );
+            // 50,000 line feeds must not all stay in history.
+            assert!(
+                terminal.total_rows().unwrap() < 50_000,
+                "line_limit={line_limit}"
+            );
+        }
+    }
+
+    // GHSA-jqr7-69mm-v35h: narrowing a 65535-column page overflowed its row count.
+    #[test]
+    fn narrowing_a_maximum_width_terminal_keeps_a_usable_grid() {
+        assert!(Terminal::new(0, 2, 0).is_err());
+        assert!(Terminal::new(2, 0, 0).is_err());
+
+        let mut terminal = Terminal::new(u16::MAX, 2, 0).unwrap();
+        terminal.write(b"first\r\nsecond");
+        for cols in [1, 3, u16::MAX, 2] {
+            terminal.resize(cols, 2, 8, 16).unwrap();
+            assert_eq!(terminal.cols().unwrap(), cols);
+            assert_eq!(terminal.rows().unwrap(), 2);
+        }
+        assert!(terminal.resize(0, 2, 8, 16).is_err());
+        assert!(terminal.resize(2, 0, 8, 16).is_err());
+        assert_eq!(terminal.cols().unwrap(), 2);
+        assert_eq!(terminal.rows().unwrap(), 2);
+
+        terminal.write(b"\x1b[H\x1b[2Jok");
+        assert_eq!(first_rendered_row_text(&terminal), "ok");
+    }
+
+    // GHSA-3r5j-c6rj-xq2v: repeated OSC 5522 alias updates retained every copy.
+    #[test]
+    fn kitty_clipboard_alias_flood_stays_bounded_and_still_commits() {
+        use base64::Engine as _;
+        let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+        let mut terminal = Terminal::new(10, 2, 0).unwrap();
+        let responses = Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        let sink = responses.clone();
+        terminal
+            .set_write_pty_callback(move |bytes| sink.lock().unwrap().extend_from_slice(bytes))
+            .unwrap();
+
+        // The target never receives data, so commit drops every alias of it.
+        let target = encode(format!("text/{}", "x".repeat(245)).as_bytes());
+        let update = format!(
+            "\x1b]5522;type=walias:mime={target};{}\x1b\\",
+            encode(b"TEXT")
+        );
+        #[cfg(target_os = "linux")]
+        let resident = || {
+            let statm = std::fs::read_to_string("/proc/self/statm").unwrap();
+            let pages: usize = statm.split_whitespace().nth(1).unwrap().parse().unwrap();
+            pages * unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize
+        };
+
+        terminal.write(b"\x1b]5522;type=write:id=42\x1b\\");
+        #[cfg(target_os = "linux")]
+        let before = resident();
+        let batch = update.repeat(1000);
+        for _ in 0..200 {
+            terminal.write(batch.as_bytes());
+        }
+        // Distinct aliases past the per-transaction cap are ignored.
+        for i in 0..1000 {
+            let alias = encode(format!("ALIAS{i}").as_bytes());
+            terminal.write(format!("\x1b]5522;type=walias:mime={target};{alias}\x1b\\").as_bytes());
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // The unfixed parser kept ~250 bytes per update: about 50 MB here.
+            let grown = resident().saturating_sub(before);
+            assert!(
+                grown < 24 * 1024 * 1024,
+                "alias flood grew RSS by {grown} bytes"
+            );
+        }
+        assert!(terminal.take_clipboard_writes().is_empty());
+
+        terminal.write(
+            format!(
+                "\x1b]5522;type=wdata:mime={};{}\x1b\\\x1b]5522;type=wdata\x1b\\",
+                encode(b"text/plain"),
+                encode(b"Ghostty")
+            )
+            .as_bytes(),
+        );
+        assert_eq!(terminal.take_clipboard_writes(), vec![b"Ghostty".to_vec()]);
+        let output = String::from_utf8_lossy(&responses.lock().unwrap()).into_owned();
+        assert!(
+            output.contains("type=write:status=DONE:id=42"),
+            "{output:?}"
+        );
+
+        // The last alias update wins. Aliasing TEXT to text/plain gives two
+        // representations, which this crate refuses as unsupported (ENOSYS);
+        // flooding updates afterwards re-targets TEXT away from the data.
+        let to_text_plain = format!(
+            "\x1b]5522;type=walias:mime={};{}\x1b\\",
+            encode(b"text/plain"),
+            encode(b"TEXT")
+        );
+        let commit = format!(
+            "\x1b]5522;type=wdata:mime={};{}\x1b\\\x1b]5522;type=wdata\x1b\\",
+            encode(b"text/plain"),
+            encode(b"Ghostty")
+        );
+        for (id, sequence, captured, status) in [
+            (
+                43,
+                [update.repeat(100), to_text_plain.clone()],
+                false,
+                "ENOSYS",
+            ),
+            (
+                44,
+                [to_text_plain.clone(), update.repeat(100)],
+                true,
+                "DONE",
+            ),
+        ] {
+            responses.lock().unwrap().clear();
+            terminal.write(format!("\x1b]5522;type=write:id={id}\x1b\\").as_bytes());
+            terminal.write(sequence.concat().as_bytes());
+            terminal.write(commit.as_bytes());
+            assert_eq!(
+                terminal.take_clipboard_writes().len(),
+                usize::from(captured),
+                "id={id}"
+            );
+            let output = String::from_utf8_lossy(&responses.lock().unwrap()).into_owned();
+            assert!(
+                output.contains(&format!("type=write:status={status}:id={id}")),
+                "{output:?}"
+            );
+        }
+    }
+
+    // Patch 0005: the bounded variant must follow wide-character spacers exactly
+    // like upstream's unbounded selection, within one shared cell budget.
+    #[test]
+    fn bounded_word_selection_matches_unbounded_selection_across_wide_spacers() {
+        let boundaries = [u32::from(b' ')];
+        // Columns, written text, expected word, and the word's cells.
+        type Case<'a> = (u16, &'a str, &'a str, &'a [(u16, u32)]);
+        // Wide characters inside one row, and one pushed to the next row by a spacer head.
+        let cases: [Case; 2] = [
+            (
+                20,
+                " 路径ab ",
+                "路径ab",
+                &[(1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (6, 0)],
+            ),
+            (
+                5,
+                " abc路e ",
+                "abc路e",
+                &[(1, 0), (2, 0), (3, 0), (4, 0), (0, 1), (1, 1), (2, 1)],
+            ),
+        ];
+        for (cols, text, expected, word_cells) in cases {
+            let mut terminal = Terminal::new(cols, 3, 1024).unwrap();
+            terminal.write(text.as_bytes());
+            for &(x, y) in word_cells {
+                let context = format!("{text:?} at ({x}, {y})");
+                let clicked = terminal.grid_ref(ghostty_viewport_point(x, y)).unwrap();
+                let spacer_head = grid_ref_wide(&clicked).unwrap() == CellWide::SpacerHead;
+                let options = ffi::GhosttyTerminalSelectWordOptions {
+                    size: mem::size_of::<ffi::GhosttyTerminalSelectWordOptions>(),
+                    ref_: clicked,
+                    boundary_codepoints: boundaries.as_ptr(),
+                    boundary_codepoints_len: boundaries.len(),
+                };
+                let select = |budget: Option<usize>| {
+                    let mut selection = ffi::GhosttySelection::default();
+                    let result = unsafe {
+                        match budget {
+                            Some(budget) => ffi::ghostty_terminal_select_word_bounded(
+                                terminal.raw,
+                                &options,
+                                budget,
+                                &mut selection,
+                            ),
+                            None => ffi::ghostty_terminal_select_word(
+                                terminal.raw,
+                                &options,
+                                &mut selection,
+                            ),
+                        }
+                    };
+                    (result == ffi::GhosttyResult_GHOSTTY_SUCCESS).then(|| {
+                        terminal
+                            .format_selection(&selection, FormatterFormat::Plain, true, false)
+                            .unwrap()
+                    })
+                };
+
+                let unbounded = select(None);
+                assert_eq!(select(Some(8192)), unbounded, "{context}");
+                if !spacer_head {
+                    assert_eq!(unbounded.as_deref(), Some(expected), "{context}");
+                }
+                assert_eq!(select(Some(0)), None, "{context}");
+                // Every word cell plus one boundary on each side is always enough.
+                let enough = word_cells.len() + 2;
+                let mut found = None;
+                for budget in 1..=enough {
+                    let selected = select(Some(budget));
+                    if found.is_some() {
+                        assert_eq!(selected, found, "{context} budget={budget}");
+                    } else if selected.is_some() {
+                        assert_eq!(selected, unbounded, "{context} budget={budget}");
+                        found = selected;
+                    }
+                }
+                assert_eq!(found, unbounded, "{context}");
+            }
+        }
+    }
+
+    // Patch 0006: only the cursor's soft-wrapped line survives, at every edge.
+    #[test]
+    fn clear_screen_keeps_only_the_cursor_line_at_screen_edges() {
+        let viewport_text = |terminal: &Terminal| {
+            let cols = terminal.cols().unwrap();
+            let rows = u32::from(terminal.rows().unwrap());
+            terminal
+                .read_text_viewport((0, 0), (cols - 1, rows - 1), false)
+                .unwrap()
+        };
+
+        // An empty screen.
+        let mut terminal = Terminal::new(5, 3, 1024 * 1024).unwrap();
+        assert!(terminal.clear_screen());
+        assert!(viewport_text(&terminal).trim().is_empty());
+        assert_eq!(terminal.scrollback_rows().unwrap(), 0);
+
+        // A wrapped cursor line that fills every row, with history above it.
+        let mut terminal = Terminal::new(5, 3, 1024 * 1024).unwrap();
+        terminal.write(b"old\r\nold\r\nold\r\nold\r\nabcdefghijklm");
+        assert!(terminal.scrollback_rows().unwrap() > 0);
+        assert!(terminal.clear_screen());
+        assert_eq!(terminal.scrollback_rows().unwrap(), 0);
+        let text = viewport_text(&terminal);
+        assert!(text.contains("abcdefghijklm"), "{text:?}");
+        assert!(!text.contains("old"), "{text:?}");
+
+        // The cursor on the top row, with rows below it.
+        let mut terminal = Terminal::new(5, 3, 1024 * 1024).unwrap();
+        terminal.write(b"one\r\ntwo\r\nthree\x1b[1;1H");
+        assert!(terminal.clear_screen());
+        terminal.write(b"X");
+        let text = viewport_text(&terminal);
+        assert!(text.contains("Xne"), "{text:?}");
+        assert!(!text.contains("two") && !text.contains("three"), "{text:?}");
+
+        // A one-row screen.
+        let mut terminal = Terminal::new(5, 1, 1024 * 1024).unwrap();
+        terminal.write(b"a\r\nb");
+        assert!(terminal.clear_screen());
+        assert_eq!(viewport_text(&terminal).trim(), "b");
+        assert_eq!(terminal.scrollback_rows().unwrap(), 0);
+
+        // The alternate screen is refused and left untouched.
+        let mut terminal = Terminal::new(5, 3, 1024 * 1024).unwrap();
+        terminal.write(b"main\x1b[?1049halt");
+        assert!(!terminal.clear_screen());
+        assert!(viewport_text(&terminal).contains("alt"));
+    }
+
+    // Patch 0008: moving the cursor onto a page whose style set is full grows
+    // and replaces that page while the cursor holds a hyperlink.
+    #[test]
+    fn cursor_move_onto_a_page_with_a_full_style_set_keeps_the_hyperlink() {
+        let url = "https://example.com/5296";
+        let write_styled_cells = |terminal: &mut Terminal, count: u32| -> Option<u32> {
+            let mut resident = memory_usage(terminal).primary_resident_bytes;
+            let mut first_growth = None;
+            for n in 1..=count {
+                terminal.write(format!("\x1b[48;2;{};{};7mx", n & 0xff, n >> 8).as_bytes());
+                if n % 10 == 0 {
+                    terminal.write(b"\x1b[0m\r\n");
+                }
+                let now = memory_usage(terminal).primary_resident_bytes;
+                if now != resident && first_growth.is_none() {
+                    first_growth = Some(n);
+                }
+                resident = now;
+            }
+            terminal.write(b"\x1b[0m\r\n");
+            first_growth
+        };
+        // Learn how many distinct styles fill the first page's style set.
+        let mut probe = Terminal::new(10, 3, 1).unwrap();
+        let growth = write_styled_cells(&mut probe, 4096).expect("the style set never grew");
+        assert!(growth > 2);
+        let mut grew_on_move = false;
+        for styles in [growth - 2, growth - 1, growth] {
+            let mut terminal = Terminal::new(10, 3, 1).unwrap();
+            write_styled_cells(&mut terminal, styles);
+            write_lines_until_second_page(&mut terminal);
+            terminal.write(b"x\r\nx");
+            // Bold is new to the first page, so moving there must grow that page.
+            terminal.write(format!("\x1b[1m\x1b]8;;{url}\x1b\\").as_bytes());
+            let resident = memory_usage(&terminal).primary_resident_bytes;
+            terminal.write(b"\x1b[1;1Hz");
+            grew_on_move |= memory_usage(&terminal).primary_resident_bytes > resident;
+
+            let (x, y) = find_viewport_char(&terminal, 'z')
+                .unwrap_or_else(|| panic!("styles={styles}: z was not printed"));
+            let (_, style) = terminal.viewport_graphemes_and_style(x, y).unwrap();
+            assert!(style.bold, "styles={styles}");
+            assert_eq!(
+                terminal.viewport_hyperlink_uri(x, y).unwrap().as_deref(),
+                Some(url),
+                "styles={styles}"
+            );
+            terminal.write(b"\x1b]8;;\x1b\\\x1b[0m\x1b[3;1Hq");
+            assert!(
+                find_viewport_char(&terminal, 'q').is_some(),
+                "styles={styles}"
+            );
+        }
+        // At least one style count must make the cursor move grow the page.
+        assert!(grew_on_move);
+    }
+
+    // Patch 0004: hosted builds must keep the C library's calloc and free.
+    #[test]
+    fn hosted_libc_calloc_and_free_are_not_replaced_by_wuffs_stubs() {
+        drop(Terminal::new(4, 2, 0).unwrap());
+        for count in [1usize, 4096] {
+            let ptr = unsafe { libc::calloc(count, 16) }.cast::<u8>();
+            assert!(!ptr.is_null(), "calloc({count}, 16) failed");
+            let bytes = unsafe { std::slice::from_raw_parts(ptr, count * 16) };
+            assert!(bytes.iter().all(|&byte| byte == 0));
+            unsafe { libc::free(ptr.cast()) };
+        }
+    }
+
+    // Values the crate spells out by hand must match the regenerated bindings.
+    const _: () = {
+        assert!(
+            TERMINAL_DATA_COLOR_FOREGROUND
+                == ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND
+        );
+        assert!(
+            TERMINAL_DATA_COLOR_CURSOR
+                == ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_COLOR_CURSOR
+        );
+        assert!(
+            KITTY_PLACEMENT_DATA_IS_VIRTUAL
+                == ffi::GhosttyKittyGraphicsPlacementData_GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL
+        );
+        assert!(
+            KITTY_PLACEMENT_DATA_COLUMNS
+                == ffi::GhosttyKittyGraphicsPlacementData_GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_COLUMNS
+        );
+        assert!(
+            KITTY_PLACEMENT_DATA_ROWS
+                == ffi::GhosttyKittyGraphicsPlacementData_GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_ROWS
+        );
+    };
+
+    // The regenerated bindings must agree with the linked library's own layout
+    // manifest for every struct the crate builds or reads through a pointer.
+    #[test]
+    fn ffi_struct_layouts_match_the_linked_library_type_manifest() {
+        let manifest = unsafe { ffi::ghostty_type_json() };
+        assert!(!manifest.is_null());
+        let manifest = unsafe { std::ffi::CStr::from_ptr(manifest) }
+            .to_str()
+            .unwrap();
+        assert!(
+            manifest.contains("\"schema\":1,"),
+            "unknown manifest schema"
+        );
+        assert!(manifest.contains(&format!("\"pointer_size\":{},", mem::size_of::<usize>())));
+        let layout = |name: &str| {
+            let key = format!("\"{name}\":{{\"kind\":\"");
+            let start = manifest
+                .find(&key)
+                .unwrap_or_else(|| panic!("{name} is missing from the manifest"))
+                + key.len();
+            let rest = &manifest[start..];
+            assert!(
+                rest.starts_with("struct\"") || rest.starts_with("union\""),
+                "{name} is not a struct or union"
+            );
+            let number = |field: &str| -> usize {
+                let tag = format!("\"{field}\":");
+                let at = rest.find(&tag).unwrap() + tag.len();
+                let digits: String = rest[at..]
+                    .chars()
+                    .take_while(char::is_ascii_digit)
+                    .collect();
+                digits.parse().unwrap()
+            };
+            (number("size"), number("align"))
+        };
+        macro_rules! assert_layouts {
+            ($($ty:ident),+ $(,)?) => {$(
+                assert_eq!(
+                    layout(stringify!($ty)),
+                    (mem::size_of::<ffi::$ty>(), mem::align_of::<ffi::$ty>()),
+                    "{} (size, align)",
+                    stringify!($ty)
+                );
+            )+};
+        }
+        assert_layouts!(
+            GhosttyBuffer,
+            GhosttyClipboardContent,
+            GhosttyClipboardWrite,
+            GhosttyClipboardWriteReply,
+            GhosttyColorRgb,
+            GhosttyFormatterScreenExtra,
+            GhosttyFormatterTerminalExtra,
+            GhosttyFormatterTerminalOptions,
+            GhosttyGridRef,
+            GhosttyKittyGraphicsPlacementRenderInfo,
+            GhosttyMouseEncoderSize,
+            GhosttyMousePosition,
+            GhosttyPoint,
+            GhosttyPointCoordinate,
+            GhosttyPointValue,
+            GhosttyRenderStateColors,
+            GhosttyRenderStateCursor,
+            GhosttyRenderStateRowSelection,
+            GhosttySelection,
+            GhosttySizeReportSize,
+            GhosttyString,
+            GhosttyStyle,
+            GhosttyStyleColor,
+            GhosttySysImage,
+            GhosttyTerminalMemoryUsage,
+            GhosttyTerminalModeConfig,
+            GhosttyTerminalScrollViewport,
+            GhosttyTerminalScrollbar,
+            GhosttyTerminalSelectWordOptions,
+        );
+    }
 }

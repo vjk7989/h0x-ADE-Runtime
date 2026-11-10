@@ -4252,6 +4252,51 @@ mod tests {
         assert_eq!(result.reported_cwd, None);
     }
 
+    #[test]
+    fn seeding_unreadable_saved_history_degrades_without_panicking() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(20, 4, 100).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
+        pane.seed_history_ansi("");
+        assert!(pane.visible_text().trim().is_empty());
+
+        // Saved history is replayed as VT text, never as a libghostty snapshot,
+        // so a binary blob from another format must only become harmless text.
+        pane.seed_history_ansi(
+            "GHOSTTY\0SNAP\u{1}\u{2}\u{7f}\u{fffd}\x1b[99999999999999999999;99999999999999999999H\
+             \x1b[38;5;999m\x1b]8;;\x1b\\\x1b]99999;\u{0}\x07\x1bP+q\x1b\\\x1b_Gq=2;\x1b\\\x1b[?99999h",
+        );
+        {
+            let core = pane.core.lock().unwrap();
+            assert_eq!(core.terminal.cols().unwrap(), 20);
+            assert_eq!(core.terminal.rows().unwrap(), 4);
+        }
+
+        let result = pane.process_pty_bytes(PaneId::from_raw(1), 0, b"\r\nlive output", &tx);
+        assert!(result.clipboard_writes.is_empty());
+        assert!(pane.visible_text().contains("live output"));
+    }
+
+    #[test]
+    fn restored_pane_narrowed_from_maximum_width_stays_usable() {
+        let (tx, _rx) = mpsc::channel(4);
+        // A remote client can report any width; restore seeds history first.
+        let terminal = crate::ghostty::Terminal::new(u16::MAX, 3, 100).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
+        pane.seed_history_ansi("restored\r\nhistory\r\n");
+        pane.resize(3, 2, 0, 0);
+        pane.resize(3, 1, 0, 0);
+        pane.resize(3, 4, 0, 0);
+        {
+            let core = pane.core.lock().unwrap();
+            assert_eq!(core.terminal.cols().unwrap(), 4);
+            assert_eq!(core.terminal.rows().unwrap(), 3);
+        }
+
+        pane.process_pty_bytes(PaneId::from_raw(1), 0, b"\x1b[H\x1b[2Jok", &tx);
+        assert!(pane.visible_text().contains("ok"));
+    }
+
     #[cfg(windows)]
     #[test]
     fn windows_powershell_prompt_cwd_uses_latest_default_prompt_path() {

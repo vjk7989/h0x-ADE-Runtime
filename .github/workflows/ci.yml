@@ -101,14 +101,14 @@ jobs:
         id: zig-compiler
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/h0x-zig-0.16.0
-          key: zig-compiler-v1-${{ runner.os }}-${{ runner.arch }}-0.16.0
+          path: ${{ runner.temp }}/h0x-zig-0.17.0
+          key: zig-compiler-v1-${{ runner.os }}-${{ runner.arch }}-0.17.0
 
       - name: Install Zig
         if: steps.zig-compiler.outputs.cache-hit != 'true'
-        uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
-          version: 0.16.0
+          version: 0.17.0
 
       # Zig's C-header cache keys include the compiler installation path.
       - name: Stabilize Zig installation path on Unix
@@ -116,7 +116,7 @@ jobs:
         env:
           ZIG_RESTORED: ${{ steps.zig-compiler.outputs.cache-hit }}
         run: |
-          stable_zig="$RUNNER_TEMP/h0x-zig-0.16.0"
+          stable_zig="$RUNNER_TEMP/h0x-zig-0.17.0"
           if [ "$ZIG_RESTORED" != "true" ]; then
             mv "$(dirname "$(command -v zig)")" "$stable_zig"
           fi
@@ -129,7 +129,7 @@ jobs:
         env:
           ZIG_RESTORED: ${{ steps.zig-compiler.outputs.cache-hit }}
         run: |
-          $stable = Join-Path $env:RUNNER_TEMP "h0x-zig-0.16.0"
+          $stable = Join-Path $env:RUNNER_TEMP "h0x-zig-0.17.0"
           if ($env:ZIG_RESTORED -ne "true") {
             $source = Split-Path (Get-Command zig).Source
             Move-Item -LiteralPath $source -Destination $stable
@@ -141,16 +141,16 @@ jobs:
         if: steps.zig-compiler.outputs.cache-hit != 'true' && env.SAVE_CACHES == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/h0x-zig-0.16.0
-          key: zig-compiler-v1-${{ runner.os }}-${{ runner.arch }}-0.16.0
+          path: ${{ runner.temp }}/h0x-zig-0.17.0
+          key: zig-compiler-v1-${{ runner.os }}-${{ runner.arch }}-0.17.0
 
       - name: Restore Zig build cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .zig-cache
-          key: zig-build-v1-${{ runner.os }}-${{ runner.arch }}-0.16.0-${{ github.run_id }}-${{ github.run_attempt }}
+          key: zig-build-v1-${{ runner.os }}-${{ runner.arch }}-0.17.0-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            zig-build-v1-${{ runner.os }}-${{ runner.arch }}-0.16.0-
+            zig-build-v1-${{ runner.os }}-${{ runner.arch }}-0.17.0-
 
       # Zig has no download timeout: a stalled GitHub fetch hung macOS builds.
       # Fetch the packages here, with time limits and retries, before cargo's
@@ -160,7 +160,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .zig-cache
-          key: zig-pkg-v1-${{ runner.os }}-${{ runner.arch }}-0.16.0-${{ hashFiles('vendor/libghostty-vt/**/build.zig.zon') }}
+          key: zig-pkg-v1-${{ runner.os }}-${{ runner.arch }}-0.17.0-${{ hashFiles('vendor/libghostty-vt/**/build.zig.zon') }}
 
       - name: Fetch Zig packages
         shell: bash
@@ -237,7 +237,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .zig-cache
-          key: zig-build-v1-${{ runner.os }}-${{ runner.arch }}-0.16.0-${{ github.run_id }}-${{ github.run_attempt }}
+          key: zig-build-v1-${{ runner.os }}-${{ runner.arch }}-0.17.0-${{ github.run_id }}-${{ github.run_attempt }}
 
   windows-conpty-package:
     name: Windows ConPTY package
@@ -259,21 +259,21 @@ jobs:
         id: zig-compiler
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/h0x-zig-0.16.0
-          key: zig-compiler-v1-${{ runner.os }}-${{ runner.arch }}-0.16.0
+          path: ${{ runner.temp }}/h0x-zig-0.17.0
+          key: zig-compiler-v1-${{ runner.os }}-${{ runner.arch }}-0.17.0
 
       - name: Install Zig
         if: steps.zig-compiler.outputs.cache-hit != 'true'
-        uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
-          version: 0.16.0
+          version: 0.17.0
 
       - name: Stabilize Zig installation path
         shell: pwsh
         env:
           ZIG_RESTORED: ${{ steps.zig-compiler.outputs.cache-hit }}
         run: |
-          $stable = Join-Path $env:RUNNER_TEMP "h0x-zig-0.16.0"
+          $stable = Join-Path $env:RUNNER_TEMP "h0x-zig-0.17.0"
           if ($env:ZIG_RESTORED -ne "true") {
             $source = Split-Path (Get-Command zig).Source
             Move-Item -LiteralPath $source -Destination $stable
@@ -285,9 +285,9 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .zig-cache
-          key: zig-build-v1-conpty-package-windows-2022-${{ runner.arch }}-0.16.0-${{ github.run_id }}-${{ github.run_attempt }}
+          key: zig-build-v1-conpty-package-windows-2022-${{ runner.arch }}-0.17.0-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            zig-build-v1-conpty-package-windows-2022-${{ runner.arch }}-0.16.0-
+            zig-build-v1-conpty-package-windows-2022-${{ runner.arch }}-0.17.0-
 
       # Zig has no download timeout: a stalled GitHub fetch hung macOS builds.
       # Fetch the packages here, with time limits and retries, before cargo's
@@ -312,7 +312,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .zig-cache
-          key: zig-build-v1-conpty-package-windows-2022-${{ runner.arch }}-0.16.0-${{ github.run_id }}-${{ github.run_attempt }}
+          key: zig-build-v1-conpty-package-windows-2022-${{ runner.arch }}-0.17.0-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Verify invalid bundle is rejected and system override recovers
         shell: pwsh

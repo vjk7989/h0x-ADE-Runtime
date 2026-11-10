@@ -1,8 +1,8 @@
 diff --git a/vendor/libghostty-vt/include/ghostty/vt/selection.h b/vendor/libghostty-vt/include/ghostty/vt/selection.h
-index 0158965e..3e557ef0 100644
+index c90b93cd1..2746d2a48 100644
 --- a/vendor/libghostty-vt/include/ghostty/vt/selection.h
 +++ b/vendor/libghostty-vt/include/ghostty/vt/selection.h
-@@ -769,6 +769,21 @@ GHOSTTY_API GhosttyResult ghostty_terminal_select_word(
+@@ -773,6 +773,21 @@ GHOSTTY_API GhosttyResult ghostty_terminal_select_word(
                                      const GhosttyTerminalSelectWordOptions* options,
                                      GhosttySelection* out_selection);
  
@@ -25,10 +25,10 @@ index 0158965e..3e557ef0 100644
   * Derive the nearest word selection snapshot between two terminal grid refs.
   *
 diff --git a/vendor/libghostty-vt/src/lib_vt.zig b/vendor/libghostty-vt/src/lib_vt.zig
-index a0227aef..48536568 100644
+index 06252080a..100f4ae18 100644
 --- a/vendor/libghostty-vt/src/lib_vt.zig
 +++ b/vendor/libghostty-vt/src/lib_vt.zig
-@@ -331,6 +331,7 @@ comptime {
+@@ -341,6 +341,7 @@ comptime {
          @export(&c.terminal_continuation_alloc, .{ .name = "ghostty_terminal_continuation_alloc" });
          if (features.selection) {
              @export(&c.terminal_select_word, .{ .name = "ghostty_terminal_select_word" });
@@ -37,11 +37,11 @@ index a0227aef..48536568 100644
              @export(&c.terminal_select_line, .{ .name = "ghostty_terminal_select_line" });
              @export(&c.terminal_select_all, .{ .name = "ghostty_terminal_select_all" });
 diff --git a/vendor/libghostty-vt/src/terminal/Screen.zig b/vendor/libghostty-vt/src/terminal/Screen.zig
-index 208e276a..d0d2b929 100644
+index 0fd016774..1aaf93c92 100644
 --- a/vendor/libghostty-vt/src/terminal/Screen.zig
 +++ b/vendor/libghostty-vt/src/terminal/Screen.zig
-@@ -3350,6 +3350,111 @@ pub fn selectWord(
-     return .init(start, end, false);
+@@ -3548,6 +3548,94 @@ fn selectWordCodepoint(pin: Pin) ?u21 {
+     return if (cell.hasText()) cell.content.codepoint.data else null;
  }
  
 +/// Like selectWord, but returns null instead of a partial selection when the
@@ -58,14 +58,13 @@ index 208e276a..d0d2b929 100644
 +
 +    // If our cell is empty we can't select a word, because we can't select
 +    // areas where the screen is not yet written.
-+    const start_cell = pin.rowAndCell().cell;
-+    if (!start_cell.hasText()) return null;
++    const start_codepoint = selectWordCodepoint(pin) orelse return null;
 +
 +    // Determine if we are a boundary or not to determine what our boundary is.
 +    const expect_boundary = std.mem.indexOfScalar(
 +        u21,
 +        boundary_codepoints,
-+        start_cell.content.codepoint.data,
++        start_codepoint,
 +    ) != null;
 +
 +    // Go forwards to find our end boundary
@@ -75,32 +74,22 @@ index 208e276a..d0d2b929 100644
 +        while (it.next()) |p| {
 +            if (remaining == 0) return null;
 +            remaining -= 1;
-+            const rac = p.rowAndCell();
-+            const cell = rac.cell;
 +
-+            // Wide-cell spacers are part of the same displayed word.
-+            if (cell.wide == .spacer_tail or cell.wide == .spacer_head) {
-+                prev = p;
-+                if (p.x == p.node.cols() - 1 and !rac.row.wrap) break :end p;
-+                continue;
++            // Only cross a row boundary if the previous row wraps.
++            if (prev.x == prev.node.cols() - 1 and !prev.rowAndCell().row.wrap) {
++                break :end prev;
 +            }
 +
 +            // If we reached an empty cell its always a boundary
-+            if (!cell.hasText()) break :end prev;
++            const codepoint = selectWordCodepoint(p) orelse break :end prev;
 +
 +            // If we do not match our expected set, we hit a boundary
 +            const this_boundary = std.mem.indexOfScalar(
 +                u21,
 +                boundary_codepoints,
-+                cell.content.codepoint.data,
++                codepoint,
 +            ) != null;
 +            if (this_boundary != expect_boundary) break :end prev;
-+
-+            // If we are going to the next row and it isn't wrapped, we
-+            // return the previous.
-+            if (p.x == p.node.cols() - 1 and !rac.row.wrap) {
-+                break :end p;
-+            }
 +
 +            prev = p;
 +        }
@@ -116,7 +105,6 @@ index 208e276a..d0d2b929 100644
 +            if (remaining == 0) return null;
 +            remaining -= 1;
 +            const rac = p.rowAndCell();
-+            const cell = rac.cell;
 +
 +            // If we are going to the next row and it isn't wrapped, we
 +            // return the previous.
@@ -124,19 +112,14 @@ index 208e276a..d0d2b929 100644
 +                break :start prev;
 +            }
 +
-+            if (cell.wide == .spacer_tail or cell.wide == .spacer_head) {
-+                prev = p;
-+                continue;
-+            }
-+
 +            // If we reached an empty cell its always a boundary
-+            if (!cell.hasText()) break :start prev;
++            const codepoint = selectWordCodepoint(p) orelse break :start prev;
 +
 +            // If we do not match our expected set, we hit a boundary
 +            const this_boundary = std.mem.indexOfScalar(
 +                u21,
 +                boundary_codepoints,
-+                cell.content.codepoint.data,
++                codepoint,
 +            ) != null;
 +            if (this_boundary != expect_boundary) break :start prev;
 +
@@ -153,10 +136,10 @@ index 208e276a..d0d2b929 100644
  /// are determined by semantic prompt information provided by shell integration.
  /// A selection can span multiple physical lines if they are soft-wrapped.
 diff --git a/vendor/libghostty-vt/src/terminal/c/main.zig b/vendor/libghostty-vt/src/terminal/c/main.zig
-index 45b4dc47..0ba1224a 100644
+index a0c0dc33c..14f271883 100644
 --- a/vendor/libghostty-vt/src/terminal/c/main.zig
 +++ b/vendor/libghostty-vt/src/terminal/c/main.zig
-@@ -196,6 +196,7 @@ pub const terminal_continuation_write = terminal.continuation_write;
+@@ -203,6 +203,7 @@ pub const terminal_continuation_write = terminal.continuation_write;
  pub const terminal_continuation_buf = terminal.continuation_buf;
  pub const terminal_continuation_alloc = terminal.continuation_alloc;
  pub const terminal_select_word = selection.word;
@@ -165,7 +148,7 @@ index 45b4dc47..0ba1224a 100644
  pub const terminal_select_line = selection.line;
  pub const terminal_select_all = selection.all;
 diff --git a/vendor/libghostty-vt/src/terminal/c/selection.zig b/vendor/libghostty-vt/src/terminal/c/selection.zig
-index 2830149f..63873bed 100644
+index c639e8363..04be5a39f 100644
 --- a/vendor/libghostty-vt/src/terminal/c/selection.zig
 +++ b/vendor/libghostty-vt/src/terminal/c/selection.zig
 @@ -110,6 +110,33 @@ pub fn word(
