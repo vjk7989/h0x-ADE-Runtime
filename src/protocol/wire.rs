@@ -711,17 +711,29 @@ pub struct CellData {
     pub hyperlink: Option<u32>,
 }
 
-/// Replaces C0/C1 control characters and DEL in cell text received from a
-/// remote server with a space, so a malicious server cannot smuggle terminal
-/// escape sequences (OSC 52, titles, queries) through cell symbols.
+/// Cleans cell text received from a remote server. C0/C1 control characters
+/// and DEL become a space, so a malicious server cannot smuggle terminal
+/// escape sequences (OSC 52, titles, queries) through cell symbols. A cell
+/// holds one grapheme cluster: anything longer is cut to its first grapheme,
+/// and a grapheme wider than two columns becomes a space, so a symbol cannot
+/// spill over neighbouring cells and fake row content.
 fn sanitize_cell_symbol(symbol: String) -> String {
-    if symbol.chars().any(char::is_control) {
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
+
+    let symbol = if symbol.chars().any(char::is_control) {
         symbol
             .chars()
             .map(|c| if c.is_control() { ' ' } else { c })
             .collect()
     } else {
         symbol
+    };
+    match symbol.graphemes(true).next() {
+        Some(first) if first.len() == symbol.len() && first.width() <= 2 => symbol,
+        Some(first) if first.width() <= 2 => first.to_owned(),
+        Some(_) => " ".to_owned(),
+        None => symbol,
     }
 }
 
@@ -1842,9 +1854,9 @@ mod tests {
             hyperlink: None,
         };
         let cases = [
-            ("\u{1b}]52;c;ZXZpbA==\u{7}", " ]52;c;ZXZpbA== "),
-            ("\u{9d}x", " x"),
-            ("a\u{7f}", "a "),
+            ("\u{1b}]52;c;ZXZpbA==\u{7}", " "),
+            ("\u{9d}x", " "),
+            ("a\u{7f}", "a"),
             ("", ""),
             ("中", "中"),
             ("e\u{301}", "e\u{301}"),
@@ -1883,8 +1895,8 @@ mod tests {
             let control = char::from_u32(code).unwrap();
             for (input, want) in [
                 (control.to_string(), " ".to_string()),
-                (format!("a{control}b"), "a b".to_string()),
-                (format!("{control}{control}"), "  ".to_string()),
+                (format!("a{control}b"), "a".to_string()),
+                (format!("{control}{control}"), " ".to_string()),
             ] {
                 let sent = CellData {
                     symbol: input,
@@ -1948,7 +1960,7 @@ mod tests {
     }
 
     #[test]
-    fn a_very_long_remote_symbol_keeps_its_length_with_every_control_replaced() {
+    fn a_very_long_remote_symbol_with_controls_is_cut_to_one_space() {
         let unit = "\u{1b}]52;c;\u{9c}\u{4e2d}\u{7f}";
         let sent = CellData {
             symbol: unit.repeat(20_000),
@@ -1958,11 +1970,117 @@ mod tests {
             skip: false,
             hyperlink: None,
         };
-        let want = " ]52;c; \u{4e2d} ".repeat(20_000);
         for decoded in decode_cell_both_ways(&sent) {
-            assert_eq!(decoded.symbol.chars().count(), sent.symbol.chars().count());
-            assert!(!decoded.symbol.chars().any(char::is_control));
-            assert_eq!(decoded.symbol, want);
+            assert_eq!(decoded.symbol, " ");
+        }
+    }
+
+    #[test]
+    fn a_remote_cell_symbol_is_cut_to_its_first_grapheme_of_at_most_two_columns() {
+        let zwj = "\u{1f469}\u{200d}\u{1f4bb}";
+        let family = "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466}";
+        let cases = [
+            ("abc".to_string(), "a".to_string()),
+            ("e\u{301}x".to_string(), "e\u{301}".to_string()),
+            ("\u{4e2d}\u{6587}".to_string(), "\u{4e2d}".to_string()),
+            (format!("{zwj}{zwj}"), zwj.to_string()),
+            (format!("{family}z"), family.to_string()),
+            ("x".repeat(140_000), "x".to_string()),
+            ("\u{4e2d}".repeat(50_000), "\u{4e2d}".to_string()),
+        ];
+        for (input, want) in cases {
+            let sent = CellData {
+                symbol: input.clone(),
+                fg: 1,
+                bg: 2,
+                modifier: 3,
+                skip: false,
+                hyperlink: Some(4),
+            };
+            let expected = CellData {
+                symbol: want,
+                ..sent.clone()
+            };
+            for decoded in decode_cell_both_ways(&sent) {
+                assert_eq!(
+                    decoded,
+                    expected,
+                    "{:?}",
+                    input.chars().take(4).collect::<String>()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_remote_grapheme_wider_than_two_columns_becomes_a_space() {
+        // One base plus a long run of wide joined emoji is one grapheme
+        // cluster by segmentation; check whatever width it reports stays <= 2
+        // or is replaced.
+        let wide = format!("\u{1f469}{}", "\u{200d}\u{1f4bb}".repeat(50));
+        let sent = CellData {
+            symbol: wide,
+            fg: 0,
+            bg: 0,
+            modifier: 0,
+            skip: false,
+            hyperlink: None,
+        };
+        for decoded in decode_cell_both_ways(&sent) {
+            assert!(unicode_width::UnicodeWidthStr::width(decoded.symbol.as_str()) <= 2);
+        }
+    }
+
+    #[test]
+    fn remote_cell_symbol_grapheme_edge_cases() {
+        let flag = "\u{1f1fa}\u{1f1f8}";
+        let cases = [
+            // Exactly two columns is kept; a wide base keeps its combining marks.
+            ("\u{1f44d}", "\u{1f44d}"),
+            ("\u{4e2d}\u{301}", "\u{4e2d}\u{301}"),
+            ("\u{4e2d}\u{301}\u{302}x", "\u{4e2d}\u{301}\u{302}"),
+            // A width-3 cluster: one character, or a wide base with a spacing mark.
+            ("\u{17d8}", " "),
+            ("\u{4e2d}\u{903}", " "),
+            ("\u{17d8}a", " "),
+            // Zero-width symbols stay one grapheme.
+            ("\u{200b}", "\u{200b}"),
+            ("\u{200b}\u{200b}\u{200b}", "\u{200b}"),
+            ("\u{200d}", "\u{200d}"),
+            ("\u{301}", "\u{301}"),
+            // Two regional indicators are one flag; a third starts another.
+            (flag, flag),
+            ("\u{1f1fa}\u{1f1f8}\u{1f1ec}", flag),
+            ("\u{1f1fa}\u{1f1f8}\u{1f1ec}\u{1f1e7}", flag),
+            // An emoji presentation sequence is one two-column grapheme.
+            ("\u{2764}\u{fe0f}", "\u{2764}\u{fe0f}"),
+            ("\u{2764}\u{fe0f}x", "\u{2764}\u{fe0f}"),
+            // Controls become spaces before segmentation: CRLF is not kept whole.
+            ("\r\n", " "),
+            ("\u{0}", " "),
+            ("\u{7}\u{301}", " \u{301}"),
+            ("\u{1b}\u{4e2d}", " "),
+        ];
+        for (input, want) in cases {
+            let sent = CellData {
+                symbol: input.to_owned(),
+                fg: 5,
+                bg: 6,
+                modifier: 7,
+                skip: false,
+                hyperlink: Some(8),
+            };
+            let expected = CellData {
+                symbol: want.to_owned(),
+                ..sent.clone()
+            };
+            for decoded in decode_cell_both_ways(&sent) {
+                assert_eq!(decoded, expected, "{input:?}");
+                assert!(
+                    unicode_width::UnicodeWidthStr::width(decoded.symbol.as_str()) <= 2,
+                    "{input:?}"
+                );
+            }
         }
     }
 
@@ -1994,12 +2112,7 @@ mod tests {
             hyperlinks: Vec::new(),
             graphics: Vec::new(),
         };
-        let want = vec![
-            cell(" "),
-            cell("]52;c;ZXZpbA== "),
-            cell("\u{4e2d}"),
-            cell(" "),
-        ];
+        let want = vec![cell(" "), cell("]"), cell("\u{4e2d}"), cell(" ")];
 
         let surface = ServerMessage::PaneSurface(PaneSurfaceFrame {
             boot_id: "remote".into(),
@@ -3354,7 +3467,10 @@ mod tests {
                 symbol: if i % 256 < 32 {
                     " ".to_owned()
                 } else {
-                    format!("{:03}", i % 1000)
+                    // One wide grapheme (3 bytes), as a cell holds at most one.
+                    char::from_u32(0x4e00 + (i % 1000) as u32)
+                        .unwrap()
+                        .to_string()
                 },
                 fg: color_to_u32(Color::Rgb((i % 256) as u8, ((i / 256) % 256) as u8, 128)),
                 bg: color_to_u32(Color::Indexed((i % 256) as u8)),

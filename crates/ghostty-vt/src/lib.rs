@@ -197,8 +197,9 @@ pub const MODE_BRACKETED_PASTE: u16 = 2004;
 pub const MODE_SYNCHRONIZED_OUTPUT: u16 = 2026;
 pub const MODE_GRAPHEME_CLUSTER: u16 = 2027;
 pub const MODE_COLOR_SCHEME_REPORT: u16 = 2031;
-// These are documented in vendor/libghostty-vt/include/ghostty/vt/terminal.h,
-// but the generated bindings do not currently expose named constants for them.
+// Short names for the generated `ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_COLOR_*`
+// constants (vendor/libghostty-vt/include/ghostty/vt/terminal.h); a test below
+// pins them to the generated values.
 const TERMINAL_DATA_COLOR_FOREGROUND: ffi::GhosttyTerminalData = 18;
 const TERMINAL_DATA_COLOR_CURSOR: ffi::GhosttyTerminalData = 20;
 
@@ -206,9 +207,9 @@ const KITTY_IMAGE_STORAGE_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
 const APC_MAX_BYTES: usize = 16 * 1024 * 1024;
 const APC_MAX_BYTES_KITTY: usize = 16 * 1024 * 1024;
 pub const KITTY_UNICODE_PLACEHOLDER: u32 = 0x10EEEE;
-// The vendored C headers expose these placement fields, but the checked-in
-// generated bindings predate the names. Keep the explicit values aligned with
-// vendor/libghostty-vt/include/ghostty/vt/kitty_graphics.h.
+// Short names for the generated `ffi::GhosttyKittyGraphicsPlacementData_*`
+// constants (vendor/libghostty-vt/include/ghostty/vt/kitty_graphics.h); a test
+// below pins them to the generated values.
 const KITTY_PLACEMENT_DATA_IS_VIRTUAL: ffi::GhosttyKittyGraphicsPlacementData = 3;
 const KITTY_PLACEMENT_DATA_COLUMNS: ffi::GhosttyKittyGraphicsPlacementData = 10;
 const KITTY_PLACEMENT_DATA_ROWS: ffi::GhosttyKittyGraphicsPlacementData = 11;

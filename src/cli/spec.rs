@@ -116,6 +116,10 @@ fn update_command() -> Command {
     Command::new("update")
         .about("Download and install the latest version")
         .arg(flag("handoff").help("Try live handoff after installing"))
+        .arg(
+            path_option("verify", "file")
+                .help("Check a release file against the .minisig beside it, then exit"),
+        )
 }
 
 fn status_command() -> Command {

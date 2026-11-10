@@ -577,6 +577,20 @@ fn main() -> io::Result<()> {
         return client::run_client();
     }
 
+    if args.get(1).map(|s| s.as_str()) == Some("update")
+        && args.get(2).map(|s| s.as_str()) == Some("--verify")
+    {
+        let [_, _, _, file] = args.as_slice() else {
+            eprintln!("usage: h0x update --verify <file>");
+            std::process::exit(2);
+        };
+        if let Err(err) = update::verify_release_file(std::path::Path::new(file)) {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
     if args.get(1).map(|s| s.as_str()) == Some("update") {
         let options = match update::parse_self_update_args(&args[2..]) {
             Ok(options) => options,
@@ -586,7 +600,7 @@ fn main() -> io::Result<()> {
             }
             Err(err) => {
                 eprintln!("{err}");
-                eprintln!("usage: h0x update [--handoff]");
+                eprintln!("usage: h0x update [--handoff | --verify <file>]");
                 std::process::exit(2);
             }
         };
@@ -613,7 +627,7 @@ fn main() -> io::Result<()> {
         println!("       h0x --remote <ssh-target> [--session <name>]");
         println!("       h0x session attach <name>");
         println!("       h0x completion zsh");
-        println!("       h0x update [--handoff]");
+        println!("       h0x update [--handoff | --verify <file>]");
         println!("       h0x machine <subcommand> ...");
         println!("       h0x server stop");
         println!("       h0x server reload-config");

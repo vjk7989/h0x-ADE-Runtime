@@ -771,3 +771,77 @@ fn text_operands_keep_flag_shaped_words_like_the_legacy_cli() {
         assert_eq!(captured.requests.get(1), Some(&expected), "{args:?}");
     }
 }
+
+/// `h0x update --verify <file>` is what the installers run: it works offline,
+/// never talks to a server, and exits 1 for any file the release key did not sign.
+#[test]
+fn update_verify_contract_for_the_installers() {
+    let base = unique_test_dir();
+    fs::create_dir_all(&base).unwrap();
+    let name = "h0x linux \u{fc}-x86_64";
+    let asset = base.join(name);
+    fs::write(&asset, b"h0x payload\n").unwrap();
+    fs::write(base.join(format!("{name}.minisig")), "garbage\n").unwrap();
+    let asset_arg = asset.to_str().unwrap();
+    let missing = base.join("missing").join("h0x-linux-x86_64");
+    let missing_arg = missing.to_str().unwrap();
+    let base_arg = base.to_str().unwrap();
+
+    let cases: Vec<(Vec<&str>, i32, String)> = vec![
+        (
+            vec!["update", "--verify"],
+            2,
+            "usage: h0x update --verify <file>".to_owned(),
+        ),
+        (
+            vec!["update", "--verify", asset_arg, asset_arg],
+            2,
+            "usage: h0x update --verify <file>".to_owned(),
+        ),
+        (
+            vec!["update", "--verify", missing_arg],
+            1,
+            "failed to read".to_owned(),
+        ),
+        (
+            vec!["update", "--verify", base_arg],
+            1,
+            "failed to read".to_owned(),
+        ),
+        (
+            vec!["update", "--verify", ""],
+            1,
+            "has no file name".to_owned(),
+        ),
+        (
+            vec!["update", "--verify", asset_arg],
+            1,
+            format!("{name} is not signed by the h0x release key: its signature is unreadable"),
+        ),
+        // Last: the installers run `h0x update --help 2>&1` and use the installed
+        // h0x as the verifier only when this output mentions `--verify`.
+        (vec!["update", "--help"], 0, "--verify".to_owned()),
+    ];
+    for (args, code, diagnostic) in cases {
+        let captured = capture(&args, json!({"id":"unexpected","result":{"type":"ok"}}));
+        let stderr = String::from_utf8_lossy(&captured.output.stderr);
+        let stdout = String::from_utf8_lossy(&captured.output.stdout);
+        assert_eq!(
+            captured.output.status.code(),
+            Some(code),
+            "{args:?}: {stdout}{stderr}"
+        );
+        assert!(
+            format!("{stdout}{stderr}").contains(&diagnostic),
+            "{args:?}: {stdout}{stderr}"
+        );
+        assert!(
+            captured.requests.is_empty(),
+            "{args:?}: {:?}",
+            captured.requests
+        );
+    }
+    // A failed check leaves the file where it was.
+    assert_eq!(fs::read(&asset).unwrap(), b"h0x payload\n");
+    cleanup_test_base(&base);
+}

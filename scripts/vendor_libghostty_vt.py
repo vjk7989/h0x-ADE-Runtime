@@ -46,14 +46,24 @@ def require_clean_checkout(repo: Path) -> None:
 def ensure_dist_archive(source_repo: Path) -> Path:
     require_clean_checkout(source_repo)
     head = git_head(source_repo)[:9]
+    dist_dir = source_repo / "zig-out" / "dist"
+    # A tagged checkout builds `libghostty-vt-<version>.tar.gz` with no `+<sha>`
+    # to match against HEAD: drop old ones first, so one found after the build
+    # is the build's own.
+    for stale in dist_dir.glob("libghostty-vt-*.tar.gz"):
+        if "+" not in stale.name:
+            stale.unlink()
     subprocess.run(
         ["zig", "build", "dist", "-Demit-lib-vt", "-Doptimize=ReleaseFast"],
         cwd=source_repo,
         check=True,
     )
     require_clean_checkout(source_repo)
-    dist_dir = source_repo / "zig-out" / "dist"
-    archives = sorted(dist_dir.glob(f"libghostty-vt-*+{head}.tar.gz"))
+    archives = sorted(dist_dir.glob(f"libghostty-vt-*+{head}.tar.gz")) or sorted(
+        archive
+        for archive in dist_dir.glob("libghostty-vt-*.tar.gz")
+        if "+" not in archive.name
+    )
     if not archives:
         raise FileNotFoundError(
             f"no libghostty-vt dist archive for HEAD {head} found in {dist_dir}"

@@ -14,9 +14,21 @@ pub(crate) fn command(program: impl AsRef<OsStr>) -> Command {
     command
 }
 
+/// The system curl by absolute path, so a planted `curl` earlier on `PATH`
+/// never runs. Windows: `%SystemRoot%/System32/curl.exe`; elsewhere
+/// `/usr/bin/curl` (spawning fails with "not found" when it is missing).
+fn curl_program() -> std::path::PathBuf {
+    if cfg!(windows) {
+        let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:/Windows".into());
+        std::path::PathBuf::from(root).join("System32/curl.exe")
+    } else {
+        std::path::PathBuf::from("/usr/bin/curl")
+    }
+}
+
 /// curl restricted to HTTPS for the request and every redirect.
 pub(crate) fn curl_command() -> Command {
-    let mut command = command("curl");
+    let mut command = command(curl_program());
     command.args(["--proto", CURL_PROTOCOLS, "--proto-redir", "=https"]);
     command
 }
@@ -40,6 +52,18 @@ mod tests {
                 "https://example.com/"
             ]
         );
+    }
+
+    #[test]
+    fn curl_command_uses_an_absolute_system_path() {
+        let command = curl_command();
+        let program = std::path::Path::new(command.get_program());
+        assert!(program.is_absolute(), "{program:?}");
+        if cfg!(windows) {
+            assert!(program.ends_with("System32/curl.exe"), "{program:?}");
+        } else {
+            assert_eq!(program, std::path::Path::new("/usr/bin/curl"));
+        }
     }
 
     #[test]
