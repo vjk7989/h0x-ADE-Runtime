@@ -773,7 +773,7 @@ dependencies = [
 
 [[package]]
 name = "h0x"
-version = "0.9.14"
+version = "0.9.15"
 dependencies = [
  "base64",
  "bincode",

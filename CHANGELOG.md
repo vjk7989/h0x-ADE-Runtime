@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## [0.9.15] - 2026-11-11
+
+Security release from the final QA round.
+
+### Fixed
+- Built on Ghostty 1.4.0 (Zig 0.17), which fixes four terminal-engine advisories (GHSA-w9q4-5jvv-mcv4, GHSA-qjfx-r533-6vx3, GHSA-jqr7-69mm-v35h, GHSA-3r5j-c6rj-xq2v).
+- A remote server can no longer send control characters or oversized cells to your terminal; each remote cell holds one character at most two columns wide.
+- Terminal sizes requested by clients are capped at 1000×1000.
+- A forwarded SSH agent stays tied to its connection after a server restart.
+- The installers check the release signature with your installed h0x before replacing anything; plain http is allowed only for 127.0.0.1 and [::1]. New `h0x update --verify <file>`.
+- curl is run from its system path.
+
 ## [0.9.14] - 2026-11-10
 
 0.9.13 was tagged but never published: its macOS release builds stalled on a Zig package download. 0.9.14 contains everything listed under 0.9.13.
