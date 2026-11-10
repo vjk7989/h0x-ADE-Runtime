@@ -371,18 +371,25 @@ pub(crate) fn verify_downloaded_release(path: &Path, url: &str) -> Result<(), St
 pub(crate) fn verify_release_file(path: &Path) -> Result<(), String> {
     let name = path
         .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| format!("{} has no file name", path.display()))?;
+        .ok_or_else(|| format!("{} has no file name", path.display()))?
+        .to_str()
+        .ok_or_else(|| format!("{} has a file name that is not UTF-8", path.display()))?;
     let bytes = fs::read(path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
     let mut signature_path = path.as_os_str().to_owned();
     signature_path.push(".minisig");
-    verify_release_signature(
-        name,
-        name,
-        &bytes,
-        fs::read_to_string(signature_path).ok().as_deref(),
-        RELEASE_PUBLIC_KEY,
-    )
+    // Only an absent file is "no signature"; a directory, a permission error or
+    // non-UTF-8 text is a signature that cannot be read.
+    let signature = match fs::read_to_string(&signature_path) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            return Err(format!(
+                "failed to read {}: {e}",
+                Path::new(&signature_path).display()
+            ))
+        }
+    };
+    verify_release_signature(name, name, &bytes, signature.as_deref(), RELEASE_PUBLIC_KEY)
 }
 
 fn handle_manifest_announcement(version: &str, value: Option<&serde_json::Value>) {
@@ -3489,6 +3496,15 @@ IFqphZJnxMfop/njTTwRD6j1P5ikDAd9OZSS9uMjHwZWa7JEZ4vY4zYXfUQYiLlvVXPeyZC8ySf+Vx16
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn update_verify_file_names_a_non_utf8_file_name() {
+        use std::os::unix::ffi::OsStrExt;
+        let path = std::path::Path::new(std::ffi::OsStr::from_bytes(b"/tmp/h0x-\xff"));
+        let err = super::verify_release_file(path).unwrap_err();
+        assert!(err.ends_with("has a file name that is not UTF-8"), "{err}");
+    }
+
     /// `h0x update --verify <file>`: the signature sits beside the file and
     /// must be the release key's, made for this file name.
     #[test]
@@ -3507,6 +3523,16 @@ IFqphZJnxMfop/njTTwRD6j1P5ikDAd9OZSS9uMjHwZWa7JEZ4vY4zYXfUQYiLlvVXPeyZC8ySf+Vx16
         std::fs::write(dir.join("h0x-linux-x86_64.minisig"), "").unwrap();
         let empty = super::verify_release_file(&asset).unwrap_err();
         assert!(empty.contains("its signature is unreadable"), "{empty}");
+
+        // A signature that cannot be read is not "no signature".
+        std::fs::remove_file(dir.join("h0x-linux-x86_64.minisig")).unwrap();
+        std::fs::create_dir(dir.join("h0x-linux-x86_64.minisig")).unwrap();
+        let directory = super::verify_release_file(&asset).unwrap_err();
+        assert!(directory.starts_with("failed to read"), "{directory}");
+        std::fs::remove_dir(dir.join("h0x-linux-x86_64.minisig")).unwrap();
+        std::fs::write(dir.join("h0x-linux-x86_64.minisig"), [0xff, 0xfe, 0xfd]).unwrap();
+        let binary = super::verify_release_file(&asset).unwrap_err();
+        assert!(binary.starts_with("failed to read"), "{binary}");
 
         // Signed by the test key, which is not the release key.
         std::fs::write(dir.join("h0x-linux-x86_64.minisig"), SIG).unwrap();
