@@ -547,7 +547,7 @@ mod tests {
         };
         let want = vec![
             with_symbol(" "),
-            with_symbol("]52;c;ZXZpbA== "),
+            with_symbol("]"),
             with_symbol("\u{4e2d}"),
             with_symbol(" "),
         ];

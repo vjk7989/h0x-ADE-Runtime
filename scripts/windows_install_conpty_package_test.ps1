@@ -40,7 +40,7 @@ $forbiddenPowerShellCommands = @(
 if ($forbiddenPowerShellCommands.Count -ne 0) {
     throw "installer uses forbidden PowerShell network execution: $($forbiddenPowerShellCommands -join ', ')"
 }
-foreach ($functionName in @("Prepend-PathEntry", "Update-PathRegistryEntry")) {
+foreach ($functionName in @("Prepend-PathEntry", "Update-PathRegistryEntry", "Invoke-CurlDownload", "Test-ReleaseSignature")) {
     $definition = $installerAst.FindAll(
         {
             param($node)
@@ -53,6 +53,77 @@ foreach ($functionName in @("Prepend-PathEntry", "Update-PathRegistryEntry")) {
         throw "installer is missing function $functionName"
     }
     Invoke-Expression $definition.Extent.Text
+}
+
+$signatureTestDir = Join-Path ([System.IO.Path]::GetTempPath()) ("h0x-installer-signature-test-" + [System.Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $signatureTestDir | Out-Null
+try {
+    # Plain HTTP is only for a loopback test server: a look-alike host is
+    # refused before curl runs (and the signature check is never skipped for it).
+    foreach ($url in @(
+        "http://127.0.0.1.evil.example/h0x-windows-x86_64.zip",
+        "http://[::1]@evil.example/h0x-windows-x86_64.zip",
+        "http://localhost@evil.example/h0x-windows-x86_64.zip",
+        "http://127.0.0.1:80@evil.example/h0x-windows-x86_64.zip",
+        "http://localhost.evil/h0x-windows-x86_64.zip",
+        "http://localhost./h0x-windows-x86_64.zip",
+        "http://loopback/h0x-windows-x86_64.zip",
+        "http://evil.example/h0x-windows-x86_64.zip",
+        "ftp://127.0.0.1/h0x-windows-x86_64.zip",
+        "file:///C:/Windows/win.ini",
+        "not a url"
+    )) {
+        $never = Join-Path $signatureTestDir "never-downloaded"
+        $refusal = $null
+        try {
+            Invoke-CurlDownload -Uri $url -Destination $never
+        } catch {
+            $refusal = $_.Exception.Message
+        }
+        if ($null -eq $refusal -or $refusal -notlike "HyperOx download URL must use HTTPS*") {
+            throw "installer did not refuse a non-loopback plain download before curl: $url ($refusal)"
+        }
+        if (Test-Path -LiteralPath $never) {
+            throw "installer downloaded from a refused URL: $url"
+        }
+    }
+
+    # An installed h0x that knows `update --verify` decides; the downloaded
+    # package (here one that would vouch for itself) never runs.
+    $downloadedRan = Join-Path $signatureTestDir "downloaded-ran"
+    $downloaded = Join-Path $signatureTestDir "h0x-windows-x86_64.cmd"
+    Set-Content -LiteralPath $downloaded -Encoding ASCII -Value @(
+        "@echo off",
+        "echo ran> `"$downloadedRan`"",
+        "exit /b 0"
+    )
+    foreach ($verifyExit in @(1, 0)) {
+        $installed = Join-Path $signatureTestDir "installed-$verifyExit.cmd"
+        Set-Content -LiteralPath $installed -Encoding ASCII -Value @(
+            "@echo off",
+            "if `"%1 %2`"==`"update --help`" (echo usage: h0x update [--handoff] [--verify FILE] 1>&2& exit /b 2)",
+            "if `"%1 %2`"==`"update --verify`" exit /b $verifyExit",
+            "exit /b 3"
+        )
+        $failure = $null
+        try {
+            Test-ReleaseSignature -Path $downloaded -Format "exe" -TempDir $signatureTestDir -InstalledH0x $installed
+        } catch {
+            $failure = $_.Exception.Message
+        }
+        if (Test-Path -LiteralPath $downloadedRan) {
+            throw "the downloaded package checked its own signature although the installed h0x can"
+        }
+        if ($verifyExit -ne 0) {
+            if ($null -eq $failure -or $failure -notlike "*is not signed by the h0x release key*") {
+                throw "installer did not refuse a package the installed h0x rejected: $failure"
+            }
+        } elseif ($null -ne $failure) {
+            throw "installer refused a package the installed h0x verified: $failure"
+        }
+    }
+} finally {
+    Remove-Item -LiteralPath $signatureTestDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 $pathTestVariable = "H0X_INSTALLER_PATH_TEST"
