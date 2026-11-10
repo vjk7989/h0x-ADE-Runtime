@@ -104,6 +104,10 @@ just check    # formatting, lints, tests, Windows cross-compile
 
 Debug builds use the `h0x-dev` config directory and socket so they never touch a stable install on the same machine.
 
+## Info
+
+HyperOx by Buckleson Group: https://github.com/buckleson
+
 ## Part of HyperOx
 
 HyperOx is three components that share one agent model:
