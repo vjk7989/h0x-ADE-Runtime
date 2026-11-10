@@ -49,6 +49,56 @@ class VendorLibghosttyVtTests(unittest.TestCase):
                 with self.assertRaisesRegex(FileNotFoundError, "HEAD 012345678"):
                     ensure_dist_archive(repo)
 
+    def test_ensure_dist_archive_finds_a_tagged_archive_without_sha(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            dist = repo / "zig-out" / "dist"
+            dist.mkdir(parents=True)
+            # Left by an earlier build: not this one's.
+            (dist / "libghostty-vt-1.3.0.tar.gz").write_bytes(b"stale")
+            (dist / "libghostty-vt-1.3.2-main-+deadbeef0.tar.gz").write_bytes(b"stale")
+
+            def build(*_args: object, **_kwargs: object) -> None:
+                (dist / "libghostty-vt-1.4.0.tar.gz").write_bytes(b"fresh")
+
+            def git_output(command: list[str], **_kwargs: object) -> str:
+                if command[1] == "status":
+                    return ""
+                return "0123456789abcdef\n"
+
+            with (
+                mock.patch("scripts.vendor_libghostty_vt.subprocess.run", side_effect=build),
+                mock.patch(
+                    "scripts.vendor_libghostty_vt.subprocess.check_output",
+                    side_effect=git_output,
+                ),
+            ):
+                self.assertEqual(
+                    ensure_dist_archive(repo), dist / "libghostty-vt-1.4.0.tar.gz"
+                )
+
+    def test_ensure_dist_archive_refuses_a_tagged_archive_the_build_did_not_make(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            dist = repo / "zig-out" / "dist"
+            dist.mkdir(parents=True)
+            (dist / "libghostty-vt-1.3.0.tar.gz").write_bytes(b"stale")
+
+            def git_output(command: list[str], **_kwargs: object) -> str:
+                if command[1] == "status":
+                    return ""
+                return "0123456789abcdef\n"
+
+            with (
+                mock.patch("scripts.vendor_libghostty_vt.subprocess.run"),
+                mock.patch(
+                    "scripts.vendor_libghostty_vt.subprocess.check_output",
+                    side_effect=git_output,
+                ),
+            ):
+                with self.assertRaisesRegex(FileNotFoundError, "HEAD 012345678"):
+                    ensure_dist_archive(repo)
+
     def test_require_clean_checkout_rejects_tracked_and_untracked_changes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir)
