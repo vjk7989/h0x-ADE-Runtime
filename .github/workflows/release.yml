@@ -12,6 +12,8 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   RUST_TOOLCHAIN_VERSION: 1.96.1
+  # Where scripts/zig-fetch puts the packages and cargo's `zig build` finds them.
+  ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache
 
 jobs:
   build:
@@ -110,7 +112,31 @@ jobs:
         shell: bash
         run: rm -rf .zig-cache vendor/libghostty-vt/.zig-cache vendor/libghostty-vt/zig-out
 
+      # Zig has no download timeout: a stalled GitHub fetch hung macOS builds.
+      # Fetch the packages here, with time limits and retries, before cargo's
+      # build script runs `zig build`; it then finds them in the cache.
+      - name: Restore Zig packages
+        id: zig-packages
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .zig-cache
+          key: zig-pkg-v1-${{ runner.os }}-${{ runner.arch }}-0.16.0-${{ hashFiles('vendor/libghostty-vt/**/build.zig.zon') }}
+
+      - name: Fetch Zig packages
+        shell: bash
+        timeout-minutes: 12
+        run: scripts/zig-fetch vendor/libghostty-vt
+
+      - name: Save Zig packages
+        if: github.ref == 'refs/heads/main' && steps.zig-packages.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .zig-cache
+          key: ${{ steps.zig-packages.outputs.cache-primary-key }}
+
       - name: Build
+        # A stuck build fails here, not at the job's limit.
+        timeout-minutes: 30
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package artifact
