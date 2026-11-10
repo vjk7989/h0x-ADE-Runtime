@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## [0.9.14] - 2026-11-10
+
+0.9.13 was tagged but never published: its macOS release builds stalled on a Zig package download. 0.9.14 contains everything listed under 0.9.13.
+
+### Changed
+- Release and CI builds download Zig packages up front with a time limit and retries, and cache them.
+
 ## [0.9.13] - 2026-11-10
 
 ### Changed
