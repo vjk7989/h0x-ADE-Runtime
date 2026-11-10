@@ -83,7 +83,7 @@ rustPlatform.buildRustPackage {
 
   meta = {
     description = "HyperOx: terminal runtime for coding agents";
-    homepage = "https://github.com/vjk7989/h0x-ADE-Runtime";
+    homepage = "https://github.com/buckleson";
     license = lib.licenses.asl20;
     mainProgram = "h0x";
     platforms = lib.platforms.linux ++ lib.platforms.darwin;
