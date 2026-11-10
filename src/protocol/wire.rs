@@ -1862,6 +1862,196 @@ mod tests {
         }
     }
 
+    /// Decodes one encoded cell through the serde decoder and the native
+    /// bincode decoder, checking that both consume the whole encoding.
+    fn decode_cell_both_ways(cell: &CellData) -> [CellData; 2] {
+        let config = bincode::config::standard();
+        let encoded = bincode::serde::encode_to_vec(cell, config).unwrap();
+        let (via_serde, used_serde): (CellData, _) =
+            bincode::serde::decode_from_slice(&encoded, config).unwrap();
+        let (via_native, used_native): (CellData, _) =
+            bincode::decode_from_slice(&encoded, config).unwrap();
+        assert_eq!(used_serde, encoded.len());
+        assert_eq!(used_native, encoded.len());
+        [via_serde, via_native]
+    }
+
+    #[test]
+    fn every_c0_c1_and_del_in_a_remote_cell_symbol_becomes_a_space_and_other_fields_survive() {
+        let controls = (0x00..=0x1f_u32).chain([0x7f]).chain(0x80..=0x9f);
+        for code in controls {
+            let control = char::from_u32(code).unwrap();
+            for (input, want) in [
+                (control.to_string(), " ".to_string()),
+                (format!("a{control}b"), "a b".to_string()),
+                (format!("{control}{control}"), "  ".to_string()),
+            ] {
+                let sent = CellData {
+                    symbol: input,
+                    fg: 0x02_11_22_33,
+                    bg: 0x01_00_00_07,
+                    modifier: 0xF00F,
+                    skip: true,
+                    hyperlink: Some(u32::MAX),
+                };
+                let expected = CellData {
+                    symbol: want,
+                    ..sent.clone()
+                };
+                for decoded in decode_cell_both_ways(&sent) {
+                    assert_eq!(decoded, expected, "U+{code:04X}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn non_control_unicode_in_remote_cell_symbols_is_kept_exactly() {
+        // Separators (U+2028/U+2029), bidi and zero-width format characters
+        // are not C0/C1 controls: they cannot start a terminal sequence, a
+        // local pane can print them too, and the AC keeps all non-control
+        // Unicode untouched. The boundary neighbours of each control range
+        // (U+0020, U+007E, U+00A0) are kept as well.
+        let kept = [
+            " ",
+            "~",
+            "\u{a0}",
+            "\u{2028}",
+            "\u{2029}",
+            "\u{202e}",
+            "\u{2066}",
+            "\u{200b}",
+            "\u{feff}",
+            "\u{ad}",
+            "e\u{301}",
+            "\u{2764}\u{fe0f}",
+            "\u{1f469}\u{200d}\u{1f4bb}",
+            "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466}",
+            "\u{1f3f4}\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}",
+            "\u{ff76}\u{ff9e}",
+            "\u{4e2d}",
+            "",
+        ];
+        for symbol in kept {
+            let sent = CellData {
+                symbol: symbol.into(),
+                fg: 0,
+                bg: 0,
+                modifier: 0,
+                skip: false,
+                hyperlink: None,
+            };
+            for decoded in decode_cell_both_ways(&sent) {
+                assert_eq!(decoded, sent, "{symbol:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_very_long_remote_symbol_keeps_its_length_with_every_control_replaced() {
+        let unit = "\u{1b}]52;c;\u{9c}\u{4e2d}\u{7f}";
+        let sent = CellData {
+            symbol: unit.repeat(20_000),
+            fg: 0,
+            bg: 0,
+            modifier: 0,
+            skip: false,
+            hyperlink: None,
+        };
+        let want = " ]52;c; \u{4e2d} ".repeat(20_000);
+        for decoded in decode_cell_both_ways(&sent) {
+            assert_eq!(decoded.symbol.chars().count(), sent.symbol.chars().count());
+            assert!(!decoded.symbol.chars().any(char::is_control));
+            assert_eq!(decoded.symbol, want);
+        }
+    }
+
+    #[test]
+    fn remote_pane_surface_and_patch_messages_lose_cell_controls_through_read_message() {
+        let cell = |symbol: &str| CellData {
+            symbol: symbol.into(),
+            fg: 0,
+            bg: 0,
+            modifier: 0,
+            skip: false,
+            hyperlink: None,
+        };
+        // ESC alone in one cell and the OSC body in the next: no cell may
+        // carry the ESC that would join them into one sequence on the host.
+        let hostile = || {
+            vec![
+                cell("\u{1b}"),
+                cell("]52;c;ZXZpbA==\u{7}"),
+                cell("\u{4e2d}"),
+                cell("\u{9b}"),
+            ]
+        };
+        let frame = || FrameData {
+            cells: hostile(),
+            width: 4,
+            height: 1,
+            cursor: None,
+            hyperlinks: Vec::new(),
+            graphics: Vec::new(),
+        };
+        let want = vec![
+            cell(" "),
+            cell("]52;c;ZXZpbA== "),
+            cell("\u{4e2d}"),
+            cell(" "),
+        ];
+
+        let surface = ServerMessage::PaneSurface(PaneSurfaceFrame {
+            boot_id: "remote".into(),
+            projection_revision: 1,
+            surface_revision: 1,
+            frame: frame(),
+            panes: Vec::new(),
+            splits: Vec::new(),
+            popup: Some(Box::new(ClientShellPopupSurface {
+                terminal_id: "popup".into(),
+                title: "popup".into(),
+                width: None,
+                height: None,
+                frame: frame(),
+                mouse_reporting: false,
+                sgr_pixel_mouse: false,
+                pixel_width: 0,
+                pixel_height: 0,
+            })),
+            graphics: SurfaceGraphicsScene::default(),
+        });
+        let mut wire = Vec::new();
+        write_message(&mut wire, &surface).unwrap();
+        let decoded: ServerMessage = read_message(&mut wire.as_slice(), MAX_FRAME_SIZE).unwrap();
+        let ServerMessage::PaneSurface(decoded) = decoded else {
+            panic!("expected a pane surface");
+        };
+        assert_eq!(decoded.frame.cells, want);
+        assert_eq!(decoded.popup.expect("popup").frame.cells, want);
+
+        let patch = ServerMessage::PaneSurfacePatch(PaneSurfacePatch {
+            boot_id: "remote".into(),
+            projection_revision: 1,
+            base_surface_revision: 1,
+            surface_revision: 2,
+            rows: vec![PaneSurfacePatchRow {
+                x: 0,
+                y: 0,
+                cells: hostile(),
+            }],
+            panes: Vec::new(),
+            cursor: None,
+        });
+        let mut wire = Vec::new();
+        write_message(&mut wire, &patch).unwrap();
+        let decoded: ServerMessage = read_message(&mut wire.as_slice(), MAX_FRAME_SIZE).unwrap();
+        let ServerMessage::PaneSurfacePatch(decoded) = decoded else {
+            panic!("expected a pane surface patch");
+        };
+        assert_eq!(decoded.rows[0].cells, want);
+    }
+
     #[test]
     fn graphics_bulk_codec_preserves_legacy_wire_and_json() {
         #[derive(Serialize, Deserialize)]
