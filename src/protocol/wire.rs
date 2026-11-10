@@ -2032,6 +2032,59 @@ mod tests {
     }
 
     #[test]
+    fn remote_cell_symbol_grapheme_edge_cases() {
+        let flag = "\u{1f1fa}\u{1f1f8}";
+        let cases = [
+            // Exactly two columns is kept; a wide base keeps its combining marks.
+            ("\u{1f44d}", "\u{1f44d}"),
+            ("\u{4e2d}\u{301}", "\u{4e2d}\u{301}"),
+            ("\u{4e2d}\u{301}\u{302}x", "\u{4e2d}\u{301}\u{302}"),
+            // A width-3 cluster: one character, or a wide base with a spacing mark.
+            ("\u{17d8}", " "),
+            ("\u{4e2d}\u{903}", " "),
+            ("\u{17d8}a", " "),
+            // Zero-width symbols stay one grapheme.
+            ("\u{200b}", "\u{200b}"),
+            ("\u{200b}\u{200b}\u{200b}", "\u{200b}"),
+            ("\u{200d}", "\u{200d}"),
+            ("\u{301}", "\u{301}"),
+            // Two regional indicators are one flag; a third starts another.
+            (flag, flag),
+            ("\u{1f1fa}\u{1f1f8}\u{1f1ec}", flag),
+            ("\u{1f1fa}\u{1f1f8}\u{1f1ec}\u{1f1e7}", flag),
+            // An emoji presentation sequence is one two-column grapheme.
+            ("\u{2764}\u{fe0f}", "\u{2764}\u{fe0f}"),
+            ("\u{2764}\u{fe0f}x", "\u{2764}\u{fe0f}"),
+            // Controls become spaces before segmentation: CRLF is not kept whole.
+            ("\r\n", " "),
+            ("\u{0}", " "),
+            ("\u{7}\u{301}", " \u{301}"),
+            ("\u{1b}\u{4e2d}", " "),
+        ];
+        for (input, want) in cases {
+            let sent = CellData {
+                symbol: input.to_owned(),
+                fg: 5,
+                bg: 6,
+                modifier: 7,
+                skip: false,
+                hyperlink: Some(8),
+            };
+            let expected = CellData {
+                symbol: want.to_owned(),
+                ..sent.clone()
+            };
+            for decoded in decode_cell_both_ways(&sent) {
+                assert_eq!(decoded, expected, "{input:?}");
+                assert!(
+                    unicode_width::UnicodeWidthStr::width(decoded.symbol.as_str()) <= 2,
+                    "{input:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn remote_pane_surface_and_patch_messages_lose_cell_controls_through_read_message() {
         let cell = |symbol: &str| CellData {
             symbol: symbol.into(),

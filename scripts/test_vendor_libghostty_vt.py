@@ -77,6 +77,62 @@ class VendorLibghosttyVtTests(unittest.TestCase):
                     ensure_dist_archive(repo), dist / "libghostty-vt-1.4.0.tar.gz"
                 )
 
+    def test_ensure_dist_archive_finds_a_tagged_archive_on_a_first_build(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            dist = repo / "zig-out" / "dist"
+            # No zig-out yet: the build creates it.
+
+            def build(*_args: object, **_kwargs: object) -> None:
+                dist.mkdir(parents=True)
+                (dist / "libghostty-vt-1.4.0.tar.gz").write_bytes(b"fresh")
+
+            def git_output(command: list[str], **_kwargs: object) -> str:
+                if command[1] == "status":
+                    return ""
+                return "0123456789abcdef\n"
+
+            with (
+                mock.patch("scripts.vendor_libghostty_vt.subprocess.run", side_effect=build),
+                mock.patch(
+                    "scripts.vendor_libghostty_vt.subprocess.check_output",
+                    side_effect=git_output,
+                ),
+            ):
+                self.assertEqual(
+                    ensure_dist_archive(repo), dist / "libghostty-vt-1.4.0.tar.gz"
+                )
+
+    def test_ensure_dist_archive_prefers_the_head_archive_and_keeps_other_heads(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            dist = repo / "zig-out" / "dist"
+            dist.mkdir(parents=True)
+            other_head = dist / "libghostty-vt-1.3.2-main-+deadbeef0.tar.gz"
+            other_head.write_bytes(b"other")
+
+            def build(*_args: object, **_kwargs: object) -> None:
+                (dist / "libghostty-vt-1.4.0.tar.gz").write_bytes(b"tagged")
+                (dist / "libghostty-vt-1.4.0-main-+012345678.tar.gz").write_bytes(b"head")
+
+            def git_output(command: list[str], **_kwargs: object) -> str:
+                if command[1] == "status":
+                    return ""
+                return "0123456789abcdef\n"
+
+            with (
+                mock.patch("scripts.vendor_libghostty_vt.subprocess.run", side_effect=build),
+                mock.patch(
+                    "scripts.vendor_libghostty_vt.subprocess.check_output",
+                    side_effect=git_output,
+                ),
+            ):
+                self.assertEqual(
+                    ensure_dist_archive(repo),
+                    dist / "libghostty-vt-1.4.0-main-+012345678.tar.gz",
+                )
+            self.assertTrue(other_head.exists())
+
     def test_ensure_dist_archive_refuses_a_tagged_archive_the_build_did_not_make(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir)

@@ -1892,6 +1892,98 @@ mod tests {
     }
 
     #[test]
+    fn clamp_terminal_size_bounds_each_axis_independently() {
+        assert_eq!(clamp_terminal_size(0, 1001), (1, 1000));
+        assert_eq!(clamp_terminal_size(1001, 0), (1000, 1));
+        assert_eq!(clamp_terminal_size(999, 1001), (999, 1000));
+        assert_eq!(clamp_terminal_size(1000, 1000), (1000, 1000));
+        assert_eq!(clamp_terminal_size(u16::MAX, 1), (1000, 1));
+    }
+
+    #[test]
+    fn terminal_hello_and_later_resizes_are_capped_at_the_maximum_size() {
+        let (mut client_stream, server_stream, _path) = local_stream_pair("client-size-cap");
+        let (server_event_tx, mut server_event_rx) = mpsc::channel(8);
+        let should_quit = Arc::new(AtomicBool::new(false));
+        let handshake_quit = should_quit.clone();
+        let handle = std::thread::spawn(move || {
+            handle_client_handshake(server_stream, 44, &server_event_tx, &handshake_quit)
+        });
+
+        protocol::write_message(
+            &mut client_stream,
+            &ClientMessage::TerminalHello {
+                version: PROTOCOL_VERSION,
+                cols: u16::MAX,
+                rows: 0,
+                cell_width_px: 8,
+                cell_height_px: 16,
+                pixel_mouse: false,
+            },
+        )
+        .expect("write hello");
+        let welcome: ServerMessage =
+            protocol::read_message(&mut client_stream, MAX_FRAME_SIZE).expect("read welcome");
+        assert!(
+            matches!(welcome, ServerMessage::Welcome { error: None, .. }),
+            "{welcome:?}"
+        );
+        match server_event_rx.blocking_recv().expect("client connected") {
+            ServerEvent::ClientConnected {
+                client_id,
+                cols,
+                rows,
+                writer,
+                ..
+            } => {
+                assert_eq!(client_id, 44);
+                assert_eq!((cols, rows), (MAX_CLIENT_COLS, MIN_CLIENT_ROWS));
+                drop(writer);
+            }
+            other => panic!("expected ClientConnected, got {other:?}"),
+        }
+
+        for (sent, want) in [
+            ((1001, 1000), (1000, 1000)),
+            ((0, u16::MAX), (1, 1000)),
+            ((1000, 1001), (1000, 1000)),
+            ((1, 1), (1, 1)),
+            ((u16::MAX, u16::MAX), (1000, 1000)),
+        ] {
+            protocol::write_message(
+                &mut client_stream,
+                &ClientMessage::Resize {
+                    cols: sent.0,
+                    rows: sent.1,
+                    cell_width_px: 8,
+                    cell_height_px: 16,
+                    pixel_mouse: false,
+                },
+            )
+            .expect("write resize");
+            match server_event_rx.blocking_recv().expect("client resize") {
+                ServerEvent::ClientResize {
+                    client_id,
+                    cols,
+                    rows,
+                    ..
+                } => {
+                    assert_eq!(client_id, 44);
+                    assert_eq!((cols, rows), want, "resize {sent:?}");
+                }
+                other => panic!("expected ClientResize, got {other:?}"),
+            }
+        }
+
+        drop(client_stream);
+        should_quit.store(true, Ordering::Release);
+        handle
+            .join()
+            .expect("handshake thread join")
+            .expect("handshake thread result");
+    }
+
+    #[test]
     fn clamp_terminal_size_valid() {
         assert_eq!(clamp_terminal_size(120, 40), (120, 40));
     }

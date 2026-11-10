@@ -235,6 +235,93 @@ exec {sha256sum} "$@"
         self.assertIn("is not signed by the h0x release key", result.stderr)
         self.assertEqual(installed.read_bytes(), b"existing-h0x\n")
 
+    def test_installed_verifier_is_used_and_the_download_never_runs(self) -> None:
+        # The download is an attacker binary that would vouch for itself.
+        downloaded_ran = self.root / "downloaded-ran"
+        self.payload.write_bytes(
+            f'#!/bin/sh\n: > "{downloaded_ran}"\nexit 0\n'.encode()
+        )
+        payload_sha256 = hashlib.sha256(self.payload.read_bytes()).hexdigest()
+        verified = self.root / "verified-file"
+        for verify_exit in (1, 0):
+            with self.subTest(verify_exit=verify_exit):
+                shutil.rmtree(self.install_dir, ignore_errors=True)
+                self.install_dir.mkdir()
+                installed = self.install_dir / "h0x"
+                installed_script = (
+                    "#!/bin/sh\n"
+                    'case "$1 $2" in\n'
+                    '  "update --help") echo "usage: h0x update [--handoff | --verify <file>]" >&2; exit 2 ;;\n'
+                    f'  "update --verify") printf %s "$3" > "{verified}"; exit {verify_exit} ;;\n'
+                    "esac\n"
+                    "exit 3\n"
+                )
+                installed.write_text(installed_script, encoding="utf-8")
+                installed.chmod(0o755)
+                verified.unlink(missing_ok=True)
+
+                result = self._run_installer(payload_sha256)
+
+                self.assertFalse(downloaded_ran.exists(), result.stderr)
+                self.assertNotIn("trusted on first use", result.stdout)
+                # The signature is checked for the release's own file name.
+                self.assertEqual(Path(verified.read_text()).name, "h0x-linux-x86_64")
+                if verify_exit:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("is not signed by the h0x release key", result.stderr)
+                    self.assertEqual(installed.read_text(encoding="utf-8"), installed_script)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(installed.read_bytes(), self.payload.read_bytes())
+                    self.assertFalse(downloaded_ran.exists())
+
+    def test_older_installed_binary_without_verify_falls_back_and_still_fails_closed(self) -> None:
+        self.install_dir.mkdir()
+        installed = self.install_dir / "h0x"
+        older = '#!/bin/sh\necho "usage: h0x update [--handoff]" >&2\nexit 2\n'
+        installed.write_text(older, encoding="utf-8")
+        installed.chmod(0o755)
+
+        result = self._run_installer(
+            self.expected_sha256, extra_env={"FAKE_VERIFY_EXIT": "1"}
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("trusted on first use", result.stdout)
+        self.assertIn("is not signed by the h0x release key", result.stderr)
+        self.assertEqual(installed.read_text(encoding="utf-8"), older)
+
+    def test_asset_url_query_and_fragment_are_not_part_of_the_verified_file_name(self) -> None:
+        verified = self.root / "verified-file"
+        self.payload.write_bytes(
+            b'#!/bin/sh\n[ "$1 $2" = "update --verify" ] || exit 0\n'
+            + f'printf %s "$3" > "{verified}"\nexit 0\n'.encode()
+        )
+        manifest = self.root / "query-latest.json"
+        sha256 = hashlib.sha256(self.payload.read_bytes()).hexdigest()
+        manifest.write_text(
+            json.dumps(
+                {
+                    "version": "9.9.9",
+                    "assets": {
+                        "linux-x86_64": "https://example.invalid/v9.9.9/h0x-linux-x86_64?download=1#top"
+                    },
+                    "sha256": {"linux-x86_64": sha256},
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = self._run_installer(sha256, extra_env={"FAKE_MANIFEST": str(manifest)})
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(Path(verified.read_text()).name, "h0x-linux-x86_64")
+        self.assertEqual(
+            (self.install_dir / "h0x").read_bytes(), self.payload.read_bytes()
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

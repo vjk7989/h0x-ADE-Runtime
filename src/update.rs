@@ -3518,6 +3518,113 @@ IFqphZJnxMfop/njTTwRD6j1P5ikDAd9OZSS9uMjHwZWa7JEZ4vY4zYXfUQYiLlvVXPeyZC8ySf+Vx16
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn update_verify_file_refuses_a_directory_or_a_path_without_a_file_name() {
+        let dir =
+            std::env::temp_dir().join(format!("h0x-update-verify-dir-{}", std::process::id()));
+        let asset = dir.join("h0x-linux-x86_64");
+        std::fs::create_dir_all(&asset).unwrap();
+        // A directory named like the asset, with a signature beside it.
+        std::fs::write(dir.join("h0x-linux-x86_64.minisig"), SIG).unwrap();
+
+        let directory = super::verify_release_file(&asset).unwrap_err();
+        assert!(directory.starts_with("failed to read"), "{directory}");
+
+        for nameless in [
+            std::path::PathBuf::new(),
+            asset.join(".."),
+            std::path::PathBuf::from("/"),
+        ] {
+            let err = super::verify_release_file(&nameless).unwrap_err();
+            assert!(err.ends_with("has no file name"), "{nameless:?}: {err}");
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Whatever the asset or `.minisig` holds, nothing passes without the
+    /// release key, and the refusal names the file it checked.
+    #[test]
+    fn update_verify_file_refuses_garbage_truncated_or_foreign_signatures_for_any_file_name() {
+        let dir =
+            std::env::temp_dir().join(format!("h0x-update-verify-names-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let truncated = SIG.lines().take(2).collect::<Vec<_>>().join("\n");
+        let garbage = "untrusted comment: x\nnot base64 at all\ntrusted comment: file:h0x\nzz\n";
+        for name in [
+            "h0x-linux-x86_64",
+            "h0x linux x86_64",
+            "h0x-\u{fc}nicode-\u{4e2d}",
+            "h0x-windows-x86_64.zip",
+        ] {
+            let asset = dir.join(name);
+            let signature = dir.join(format!("{name}.minisig"));
+            for (payload, minisig, why) in [
+                (PAYLOAD, garbage, "its signature is unreadable"),
+                (PAYLOAD, truncated.as_str(), "its signature is unreadable"),
+                (PAYLOAD, "\u{0}\u{ff}", "its signature is unreadable"),
+                // The test key's signature for a different file name.
+                (PAYLOAD, OTHER_FILE_SIG, "its signature does not match"),
+                (PAYLOAD, OTHER_KEY_SIG, "its signature does not match"),
+                // An empty asset with a well-formed signature.
+                ("", SIG, "its signature does not match"),
+            ] {
+                std::fs::write(&asset, payload).unwrap();
+                std::fs::write(&signature, minisig).unwrap();
+                let err = super::verify_release_file(&asset).unwrap_err();
+                let prefix = format!("{name} is not signed by the h0x release key: ");
+                assert!(err.starts_with(&prefix), "{name}: {err}");
+                assert!(err.contains(why), "{name} / {why}: {err}");
+            }
+            let _ = std::fs::remove_file(&signature);
+            let missing = super::verify_release_file(&asset).unwrap_err();
+            assert!(missing.contains("it has no signature"), "{name}: {missing}");
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The `.minisig` is found beside a path written with Windows separators.
+    #[cfg(windows)]
+    #[test]
+    fn update_verify_file_finds_the_signature_beside_a_backslash_path() {
+        let dir =
+            std::env::temp_dir().join(format!("h0x-update-verify-win-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub dir")).unwrap();
+        let asset = format!(
+            "{}\\sub dir\\h0x-windows-x86_64.zip",
+            dir.display().to_string().replace('/', "\\")
+        );
+        std::fs::write(&asset, PAYLOAD).unwrap();
+        let asset = std::path::Path::new(&asset);
+
+        let missing = super::verify_release_file(asset).unwrap_err();
+        assert!(missing.contains("it has no signature"), "{missing}");
+
+        std::fs::write(
+            dir.join("sub dir").join("h0x-windows-x86_64.zip.minisig"),
+            "",
+        )
+        .unwrap();
+        let empty = super::verify_release_file(asset).unwrap_err();
+        assert!(
+            empty.starts_with("h0x-windows-x86_64.zip is not signed by the h0x release key: its signature is unreadable"),
+            "{empty}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A file name that is not UTF-8 is refused before anything is read.
+    #[cfg(unix)]
+    #[test]
+    fn update_verify_file_refuses_a_non_utf8_file_name() {
+        use std::os::unix::ffi::OsStrExt;
+        let name = std::ffi::OsStr::from_bytes(b"h0x-\xff");
+        let err = super::verify_release_file(&std::env::temp_dir().join(name)).unwrap_err();
+        assert!(err.ends_with("has no file name"), "{err}");
+    }
 }
 
 #[cfg(test)]

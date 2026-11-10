@@ -323,6 +323,137 @@ mod tests {
     }
 
     #[test]
+    fn a_new_server_ignores_a_dangling_or_non_socket_previous_link() {
+        let directory =
+            std::env::temp_dir().join(format!("h0x-agent-stale-link-{}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        let stable = directory.join("agent");
+        let plain = directory.join("plain");
+        fs::write(&plain, b"not a socket").unwrap();
+        for old_target in [directory.join("gone"), plain.clone()] {
+            symlink(&old_target, &stable).unwrap();
+            let registry = SshAgentRegistry::new(stable.clone(), None).unwrap();
+            assert_eq!(
+                fs::read_link(&stable).unwrap(),
+                stable.with_extension("unavailable"),
+                "{old_target:?}"
+            );
+            let refused = registry.register(old_target.clone()).err().unwrap();
+            assert_eq!(
+                refused.kind(),
+                io::ErrorKind::InvalidInput,
+                "{old_target:?}"
+            );
+            drop(registry);
+            assert!(fs::symlink_metadata(&stable).is_err(), "{old_target:?}");
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn a_new_server_prefers_its_inherited_agent_over_the_previous_links_target() {
+        let directory =
+            std::env::temp_dir().join(format!("h0x-agent-inherit-{}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        let own = directory.join("own");
+        let forwarded = directory.join("forwarded");
+        let stable = directory.join("agent");
+        let _own_listener = UnixListener::bind(&own).unwrap();
+        let _forwarded_listener = UnixListener::bind(&forwarded).unwrap();
+        symlink(&forwarded, &stable).unwrap();
+
+        let registry = SshAgentRegistry::new(stable.clone(), Some(own.clone())).unwrap();
+        assert_eq!(fs::read_link(&stable).unwrap(), own);
+        let lease = registry.register(forwarded.clone()).unwrap();
+        assert_eq!(fs::read_link(&stable).unwrap(), own);
+        drop(lease);
+        assert_eq!(fs::read_link(&stable).unwrap(), own);
+        drop(registry);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn two_leases_dropped_in_either_order_leave_no_forwarded_agent() {
+        let directory =
+            std::env::temp_dir().join(format!("h0x-agent-two-leases-{}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        let a = directory.join("a");
+        let b = directory.join("b");
+        let stable = directory.join("agent");
+        let _a_listener = UnixListener::bind(&a).unwrap();
+        let _b_listener = UnixListener::bind(&b).unwrap();
+        let unavailable = stable.with_extension("unavailable");
+        for first_dropped_is_a in [true, false] {
+            let registry = SshAgentRegistry::new(stable.clone(), None).unwrap();
+            let lease_a = registry.register(a.clone()).unwrap();
+            let lease_b = registry.register(b.clone()).unwrap();
+            assert_eq!(fs::read_link(&stable).unwrap(), a);
+            if first_dropped_is_a {
+                drop(lease_a);
+                assert_eq!(fs::read_link(&stable).unwrap(), b);
+                drop(lease_b);
+            } else {
+                drop(lease_b);
+                assert_eq!(fs::read_link(&stable).unwrap(), a);
+                drop(lease_a);
+            }
+            assert_eq!(fs::read_link(&stable).unwrap(), unavailable);
+            drop(registry);
+            // The next server finds the old link and still adopts neither agent.
+            symlink(&a, &stable).unwrap();
+            let next = SshAgentRegistry::new(stable.clone(), None).unwrap();
+            assert_eq!(fs::read_link(&stable).unwrap(), unavailable);
+            drop(next);
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// A link to a socket another user owns is neither adopted, inherited nor
+    /// registered. Needs such a socket on the host; skipped when there is none.
+    #[test]
+    fn another_users_agent_socket_is_never_selected() {
+        let euid = unsafe { libc::geteuid() };
+        let Some(foreign) = [
+            "/run/dbus/system_bus_socket",
+            "/var/run/dbus/system_bus_socket",
+            "/run/systemd/journal/socket",
+            "/var/run/mDNSResponder",
+            "/var/run/docker.sock",
+        ]
+        .into_iter()
+        .map(Path::new)
+        .find(|path| {
+            fs::metadata(path).is_ok_and(|m| m.file_type().is_socket() && m.uid() != euid)
+        }) else {
+            eprintln!("skipped: no socket owned by another user on this host");
+            return;
+        };
+        let directory =
+            std::env::temp_dir().join(format!("h0x-agent-foreign-{}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        let link = directory.join("foreign");
+        symlink(foreign, &link).unwrap();
+        let stable = directory.join("agent");
+        symlink(&link, &stable).unwrap();
+
+        let registry = SshAgentRegistry::new(stable.clone(), Some(link.clone())).unwrap();
+        assert_eq!(
+            fs::read_link(&stable).unwrap(),
+            stable.with_extension("unavailable")
+        );
+        for candidate in [link.clone(), foreign.to_path_buf()] {
+            let refused = registry.register(candidate.clone()).err().unwrap();
+            assert_eq!(refused.kind(), io::ErrorKind::InvalidInput, "{candidate:?}");
+        }
+        assert_eq!(
+            fs::read_link(&stable).unwrap(),
+            stable.with_extension("unavailable")
+        );
+        drop(registry);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn closed_agent_listener_does_not_block_a_live_replacement() {
         let directory = std::env::temp_dir().join(format!("h0x-dead-agent-{}", std::process::id()));
         fs::create_dir(&directory).unwrap();
