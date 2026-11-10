@@ -255,9 +255,11 @@ function Invoke-CurlDownload {
         throw "HyperOx download URL must use HTTPS: $Uri"
     }
     # Plain HTTP is accepted only for a local test server.
+    # Literal loopback addresses only, never a name (not even "localhost"): curl
+    # resolves names through DNS, which .NET's IsLoopback does not see.
     # IPv6 loopback is only ::1; .NET Framework renders it expanded, so match by type.
     $isLoopbackHttp = $parsedUri.Scheme -eq "http" -and $parsedUri.IsLoopback -and
-        ($parsedUri.Host -in @("127.0.0.1", "localhost") -or $parsedUri.HostNameType -eq "IPv6")
+        (($parsedUri.HostNameType -eq "IPv4" -and $parsedUri.Host -eq "127.0.0.1") -or $parsedUri.HostNameType -eq "IPv6")
     if ($parsedUri.Scheme -ne "https" -and -not $isLoopbackHttp) {
         throw "HyperOx download URL must use HTTPS: $Uri"
     }
@@ -364,6 +366,9 @@ function Test-ReleaseSignature {
         [string]$InstalledH0x
     )
 
+    # Windows PowerShell 5.1 turns a native command's stderr into a terminating
+    # error under "Stop": run the native calls with "Continue" and read the exit code.
+    $ErrorActionPreference = "Continue"
     $verifier = $null
     if (-not [string]::IsNullOrWhiteSpace($InstalledH0x) -and (Test-Path -LiteralPath $InstalledH0x -PathType Leaf)) {
         $help = (& $InstalledH0x update --help 2>&1 | ForEach-Object { $_.ToString() }) -join " "
@@ -381,7 +386,7 @@ function Test-ReleaseSignature {
             $verifier = $Path
         }
     }
-    & $verifier update --verify $Path
+    & $verifier update --verify $Path 2>&1 | ForEach-Object { Write-Host $_.ToString() }
     if ($LASTEXITCODE -ne 0) {
         throw "$([System.IO.Path]::GetFileName($Path)) is not signed by the h0x release key (see above)."
     }
