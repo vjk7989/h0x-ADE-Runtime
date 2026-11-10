@@ -530,6 +530,84 @@ mod tests {
     }
 
     #[test]
+    fn native_decoder_replaces_controls_in_row_and_popup_cells() {
+        let with_symbol = |symbol: &str| CellData {
+            symbol: symbol.into(),
+            ..cell()
+        };
+        // ESC in one cell and the OSC 52 body in the next; a wide character
+        // whose continuation cell carries a C1 CSI.
+        let hostile = || {
+            vec![
+                with_symbol("\u{1b}"),
+                with_symbol("]52;c;ZXZpbA==\u{7}"),
+                with_symbol("\u{4e2d}"),
+                with_symbol("\u{9b}"),
+            ]
+        };
+        let want = vec![
+            with_symbol(" "),
+            with_symbol("]52;c;ZXZpbA== "),
+            with_symbol("\u{4e2d}"),
+            with_symbol(" "),
+        ];
+        let surface_with_popup = || {
+            let mut main = surface(4, 1);
+            main.popup = Some(Box::new(ClientShellPopupSurface {
+                terminal_id: "popup".into(),
+                title: "popup".into(),
+                width: None,
+                height: None,
+                frame: FrameData {
+                    cells: Vec::new(),
+                    width: 4,
+                    height: 1,
+                    cursor: None,
+                    hyperlinks: Vec::new(),
+                    graphics: Vec::new(),
+                },
+                mouse_reporting: false,
+                sgr_pixel_mouse: false,
+                pixel_width: 0,
+                pixel_height: 0,
+            }));
+            main
+        };
+        let row = || PaneSurfacePatchRow {
+            x: 0,
+            y: 0,
+            cells: hostile(),
+        };
+
+        let patched = SurfaceDelta {
+            base_projection_revision: 1,
+            base_surface_revision: 1,
+            surface: surface_with_popup(),
+            rows: vec![row()],
+            popup_cells: Some(GridUpdate::Patch(vec![row()])),
+        };
+        let decoded = decode_bytes(&encoded(&patched), Some((4, 1))).expect("decode patch");
+        assert_eq!(decoded.rows[0].cells, want);
+        let Some(GridUpdate::Patch(popup_rows)) = decoded.popup_cells else {
+            panic!("expected a popup patch");
+        };
+        assert_eq!(popup_rows[0].cells, want);
+
+        let replaced = SurfaceDelta {
+            base_projection_revision: 1,
+            base_surface_revision: 1,
+            surface: surface_with_popup(),
+            rows: Vec::<PaneSurfacePatchRow>::new(),
+            popup_cells: Some(GridUpdate::Replace(hostile())),
+        };
+        let decoded = decode_bytes(&encoded(&replaced), Some((4, 1))).expect("decode replace");
+        let Some(GridUpdate::Replace(popup_cells)) = decoded.popup_cells else {
+            panic!("expected a popup replacement");
+        };
+        assert_eq!(popup_cells, want);
+    }
+
+    #[test]
     fn ordinary_cap_uses_base64_length_and_the_sender_graphics_predicate() {
         let ordinary = SurfaceDelta {
             base_projection_revision: 1,
