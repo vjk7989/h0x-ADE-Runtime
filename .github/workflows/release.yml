@@ -196,6 +196,9 @@ jobs:
   release:
     needs: [build, validate-release-inputs]
     runs-on: ubuntu-latest
+    # The signing key lives in the protected "signing" environment: each
+    # release waits for the owner's approval and only v* tags may use it.
+    environment: signing
     permissions:
       contents: write
 
