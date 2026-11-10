@@ -3496,15 +3496,6 @@ IFqphZJnxMfop/njTTwRD6j1P5ikDAd9OZSS9uMjHwZWa7JEZ4vY4zYXfUQYiLlvVXPeyZC8ySf+Vx16
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn update_verify_file_names_a_non_utf8_file_name() {
-        use std::os::unix::ffi::OsStrExt;
-        let path = std::path::Path::new(std::ffi::OsStr::from_bytes(b"/tmp/h0x-\xff"));
-        let err = super::verify_release_file(path).unwrap_err();
-        assert!(err.ends_with("has a file name that is not UTF-8"), "{err}");
-    }
-
     /// `h0x update --verify <file>`: the signature sits beside the file and
     /// must be the release key's, made for this file name.
     #[test]
@@ -3649,7 +3640,7 @@ IFqphZJnxMfop/njTTwRD6j1P5ikDAd9OZSS9uMjHwZWa7JEZ4vY4zYXfUQYiLlvVXPeyZC8ySf+Vx16
         use std::os::unix::ffi::OsStrExt;
         let name = std::ffi::OsStr::from_bytes(b"h0x-\xff");
         let err = super::verify_release_file(&std::env::temp_dir().join(name)).unwrap_err();
-        assert!(err.ends_with("has no file name"), "{err}");
+        assert!(err.ends_with("has a file name that is not UTF-8"), "{err}");
     }
 }
 
