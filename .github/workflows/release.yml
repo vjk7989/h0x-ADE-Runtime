@@ -75,9 +75,9 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install Zig
-        uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
-          version: 0.16.0
+          version: 0.17.0
 
       - name: Prefer official Ubuntu mirrors over Azure
         if: runner.os == 'Linux'
@@ -120,7 +120,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .zig-cache
-          key: zig-pkg-v1-${{ runner.os }}-${{ runner.arch }}-0.16.0-${{ hashFiles('vendor/libghostty-vt/**/build.zig.zon') }}
+          key: zig-pkg-v1-${{ runner.os }}-${{ runner.arch }}-0.17.0-${{ hashFiles('vendor/libghostty-vt/**/build.zig.zon') }}
 
       - name: Fetch Zig packages
         shell: bash

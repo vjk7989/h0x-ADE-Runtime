@@ -17,7 +17,7 @@ upstream discussion: not opened
 
 upstream pr: not opened
 
-vendored base: `44f2a44df7e8c4a0c6df3f7d872ef3d7ead88e51`
+vendored base: `83fb95624b0439ee660c2679b43b38c8b63769cd` (Ghostty v1.4.0)
 
 local files:
 
@@ -28,8 +28,8 @@ reason: Herdr must know whether xterm modifyOtherKeys mode 2 is active to
 request printable key releases from the outer terminal. The formatter API can
 recover this fact only by formatting the active screen and scrollback. A typed
 terminal-data query exposes the authoritative scalar without formatting or
-allocation. The local query uses value 41; upstream now owns the previous
-local value 33 for VT processing errors.
+allocation. The local query uses value 43; upstream owns 33 (VT processing
+errors) and, since v1.4.0, 41 (mouse shape) and 42 (memory usage).
 
 remove when: the vendored source exposes an equivalent scalar query for
 modifyOtherKeys mode 2 and Herdr can use it without this patch.
@@ -60,27 +60,25 @@ upstream discussion: not opened
 
 upstream pr: not opened
 
-vendored base: `44f2a44df7e8c4a0c6df3f7d872ef3d7ead88e51`
+vendored base: `83fb95624b0439ee660c2679b43b38c8b63769cd` (Ghostty v1.4.0)
 
 local files:
 
-- `vendor/libghostty-vt/pkg/wuffs/build.zig`
 - `vendor/libghostty-vt/pkg/wuffs/src/main.zig`
 
-reason: Wuffs now needs MSVC libc headers when targeting Windows. Zig's
-`--libc` configuration reaches C compilation, but the translate-c dependency
-requires its own explicit configuration. Forward the same file so cross-builds
-can use an actual Windows SDK instead of changing the target ABI or skipping
-compilation. Native builds without a libc override are unchanged.
+reason: The libc forwarding half of this patch (Wuffs translate-c needing the
+`--libc` file for Windows cross-builds) was dropped on the Zig 0.17 rebase:
+`std.Build` no longer exposes `libc_file`, and the Zig 0.17 build maker applies
+the `--libc` file to compile steps itself. Re-check Windows cross-compilation
+(`LIBGHOSTTY_VT_WINDOWS_LIBC`) before relying on that.
 
 The no-libc Wuffs module also exports hidden weak calloc/free stubs. On hosted
 Linux with SIMD disabled, those definitions override the Rust executable's
 libc allocator, causing immediate allocation failures. Limit the stubs to
 freestanding targets; hosted embedders resolve these symbols through libc.
 
-remove when: upstream forwards the build's libc configuration to the Wuffs
-translator and prevents hosted allocator interposition, and both Windows
-cross-compilation and non-SIMD native tests pass without this patch.
+remove when: upstream prevents hosted allocator interposition and non-SIMD
+native tests pass without this patch.
 
 verification:
 
@@ -103,7 +101,7 @@ upstream discussion: not opened
 upstream pr: not opened; related merged PR https://github.com/ghostty-org/ghostty/pull/10132
 implements URL selection in the application layer, not the libghostty C API.
 
-vendored base: `44f2a44df7e8c4a0c6df3f7d872ef3d7ead88e51`
+vendored base: `83fb95624b0439ee660c2679b43b38c8b63769cd` (Ghostty v1.4.0)
 
 local files:
 
@@ -145,7 +143,7 @@ upstream discussion: not opened
 
 upstream pr: not opened
 
-vendored base: `44f2a44df7e8c4a0c6df3f7d872ef3d7ead88e51`
+vendored base: `83fb95624b0439ee660c2679b43b38c8b63769cd` (Ghostty v1.4.0)
 
 local files:
 
@@ -183,7 +181,7 @@ upstream discussion: not opened
 
 upstream pr: not opened
 
-vendored base: `44f2a44df7e8c4a0c6df3f7d872ef3d7ead88e51`
+vendored base: `83fb95624b0439ee660c2679b43b38c8b63769cd` (Ghostty v1.4.0)
 
 local files:
 
@@ -241,7 +239,7 @@ upstream discussion: not opened
 
 upstream pr: not opened
 
-vendored base: `44f2a44df7e8c4a0c6df3f7d872ef3d7ead88e51`
+vendored base: `83fb95624b0439ee660c2679b43b38c8b63769cd` (Ghostty v1.4.0)
 
 local files:
 
@@ -272,3 +270,27 @@ verification:
 (cd vendor/libghostty-vt && zig build test-lib-vt -Dtest-filter='cursorAbsolute keeps the hyperlink when style migration splits the page')
 just maintenance-test
 ```
+
+## Rebase onto Ghostty v1.4.0 (2026-11-10)
+
+The vendored base moved from `44f2a44df7` to Ghostty v1.4.0
+(`83fb95624b0439ee660c2679b43b38c8b63769cd`, requires Zig 0.17.0). It carries the
+four 2026-10-27 security fixes (GHSA-w9q4-5jvv-mcv4, GHSA-qjfx-r533-6vx3,
+GHSA-jqr7-69mm-v35h, GHSA-3r5j-c6rj-xq2v). The tarball is `zig build dist
+-Demit-lib-vt` output from a clean v1.4.0 checkout; `zig-pkg/` is no longer part
+of it (packages are fetched into the Zig global cache at build time). All six
+patches were re-derived on the new base:
+
+- 0002: data value 41 is taken upstream (mouse shape), so
+  `GHOSTTY_TERMINAL_DATA_MODIFY_OTHER_KEYS` is now 43.
+- 0004: only the `main.zig` half remains. The `build.zig` libc forwarding was
+  dropped because `std.Build.libc_file` no longer exists in Zig 0.17.
+- 0005: upstream's `selectWord` now follows wide-character spacers through
+  `selectWordCodepoint`; `selectWordBounded` mirrors that logic with the same
+  shared cell budget.
+- 0006, 0008: unchanged in behaviour.
+- 0007: option values 40 to 47 are taken upstream, so
+  `GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_PRESERVE_PNG` is 48 and
+  `GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_SNAPSHOT_FILE` is 49.
+
+`crates/ghostty-vt/src/bindings.rs` was regenerated from the new headers.

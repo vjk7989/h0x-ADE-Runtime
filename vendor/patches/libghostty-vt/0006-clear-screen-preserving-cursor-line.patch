@@ -1,8 +1,8 @@
 diff --git a/vendor/libghostty-vt/include/ghostty/vt/terminal.h b/vendor/libghostty-vt/include/ghostty/vt/terminal.h
-index ad5eec54..81f9ebd0 100644
+index c9ea0589e..abba3ccfc 100644
 --- a/vendor/libghostty-vt/include/ghostty/vt/terminal.h
 +++ b/vendor/libghostty-vt/include/ghostty/vt/terminal.h
-@@ -2007,6 +2007,14 @@ GHOSTTY_API void ghostty_terminal_free(GhosttyTerminal terminal);
+@@ -3269,6 +3269,14 @@ GHOSTTY_API void ghostty_terminal_free(GhosttyTerminal terminal);
   */
  GHOSTTY_API void ghostty_terminal_reset(GhosttyTerminal terminal);
  
@@ -18,10 +18,10 @@ index ad5eec54..81f9ebd0 100644
   * Resize the terminal to the given dimensions.
   *
 diff --git a/vendor/libghostty-vt/src/lib_vt.zig b/vendor/libghostty-vt/src/lib_vt.zig
-index 48536568..05bc0baa 100644
+index 100f4ae18..1e41eddc6 100644
 --- a/vendor/libghostty-vt/src/lib_vt.zig
 +++ b/vendor/libghostty-vt/src/lib_vt.zig
-@@ -317,6 +317,7 @@ comptime {
+@@ -327,6 +327,7 @@ comptime {
          @export(&c.terminal_new, .{ .name = "ghostty_terminal_new" });
          @export(&c.terminal_free, .{ .name = "ghostty_terminal_free" });
          @export(&c.terminal_reset, .{ .name = "ghostty_terminal_reset" });
@@ -30,10 +30,10 @@ index 48536568..05bc0baa 100644
          @export(&c.terminal_set, .{ .name = "ghostty_terminal_set" });
          @export(&c.terminal_vt_write, .{ .name = "ghostty_terminal_vt_write" });
 diff --git a/vendor/libghostty-vt/src/terminal/c/main.zig b/vendor/libghostty-vt/src/terminal/c/main.zig
-index 0ba1224a..5ac299ab 100644
+index 14f271883..c4fac13bd 100644
 --- a/vendor/libghostty-vt/src/terminal/c/main.zig
 +++ b/vendor/libghostty-vt/src/terminal/c/main.zig
-@@ -183,6 +183,7 @@ pub const sys_set = sys.set;
+@@ -190,6 +190,7 @@ pub const sys_set = sys.set;
  pub const terminal_new = terminal.new;
  pub const terminal_free = terminal.free;
  pub const terminal_reset = terminal.reset;
@@ -42,11 +42,11 @@ index 0ba1224a..5ac299ab 100644
  pub const terminal_set = terminal.set;
  pub const terminal_vt_write = terminal.vt_write;
 diff --git a/vendor/libghostty-vt/src/terminal/c/terminal.zig b/vendor/libghostty-vt/src/terminal/c/terminal.zig
-index 73097573..91bbe310 100644
+index 28110271d..232016c05 100644
 --- a/vendor/libghostty-vt/src/terminal/c/terminal.zig
 +++ b/vendor/libghostty-vt/src/terminal/c/terminal.zig
-@@ -1504,6 +1504,40 @@ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
-     t.fullReset();
+@@ -1857,6 +1857,40 @@ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
+     if (sync) Effects.renderHoldTrampoline(&wrapper.stream.handler, false);
  }
  
 +/// Clear output without feeding synthetic bytes into the child's VT stream.
