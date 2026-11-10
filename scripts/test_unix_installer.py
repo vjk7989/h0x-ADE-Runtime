@@ -339,6 +339,7 @@ exec {sha256sum} "$@"
             "https://example.invalid/v9.9.9/..?x=1",
         ):
             with self.subTest(url=url):
+                (self.bin_dir / "sha256sum").unlink(missing_ok=True)
                 self.install_dir.mkdir(exist_ok=True)
                 installed = self.install_dir / "h0x"
                 installed.write_bytes(b"existing-h0x\n")
@@ -349,7 +350,8 @@ exec {sha256sum} "$@"
                             "version": "9.9.9",
                             "assets": {"linux-x86_64": url},
                             "sha256": {"linux-x86_64": self.expected_sha256},
-                        }
+                        },
+                        indent=2,
                     )
                     + "\n",
                     encoding="utf-8",
