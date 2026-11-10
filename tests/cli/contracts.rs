@@ -789,7 +789,7 @@ fn update_verify_contract_for_the_installers() {
 
     let cases: Vec<(Vec<&str>, i32, String)> = vec![
         // The installers look for `--verify` in this usage text.
-        (vec!["update", "--help"], 2, "--verify <file>".to_owned()),
+        (vec!["update", "--help"], 0, "--verify <file>".to_owned()),
         (
             vec!["update", "--verify"],
             2,

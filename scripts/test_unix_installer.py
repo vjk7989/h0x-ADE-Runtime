@@ -259,6 +259,7 @@ exec {sha256sum} "$@"
                 installed.write_text(installed_script, encoding="utf-8")
                 installed.chmod(0o755)
                 verified.unlink(missing_ok=True)
+                (self.bin_dir / "sha256sum").unlink(missing_ok=True)
 
                 result = self._run_installer(payload_sha256)
 
