@@ -143,8 +143,16 @@ exec {sha256sum} "$@"
             "H0X_INSTALL_DIR": str(self.install_dir),
             **(extra_env or {}),
         }
+        # The installer runs /usr/bin/curl; tests run a copy that runs the fake one.
+        installer = self.root / "install.sh"
+        installer.write_text(
+            INSTALLER.read_text(encoding="utf-8").replace(
+                "CURL=/usr/bin/curl", f"CURL={self.bin_dir / 'curl'}"
+            ),
+            encoding="utf-8",
+        )
         return subprocess.run(
-            ["/bin/sh", str(INSTALLER)],
+            ["/bin/sh", str(installer)],
             env=env,
             capture_output=True,
             text=True,
@@ -322,6 +330,38 @@ exec {sha256sum} "$@"
         self.assertEqual(
             (self.install_dir / "h0x").read_bytes(), self.payload.read_bytes()
         )
+
+    def test_asset_url_without_a_file_name_is_refused(self) -> None:
+        for url in (
+            "https://example.invalid/v9.9.9/",
+            "https://example.invalid/v9.9.9/.",
+            "https://example.invalid/v9.9.9/..",
+            "https://example.invalid/v9.9.9/..?x=1",
+        ):
+            with self.subTest(url=url):
+                self.install_dir.mkdir(exist_ok=True)
+                installed = self.install_dir / "h0x"
+                installed.write_bytes(b"existing-h0x\n")
+                manifest = self.root / "bad-latest.json"
+                manifest.write_text(
+                    json.dumps(
+                        {
+                            "version": "9.9.9",
+                            "assets": {"linux-x86_64": url},
+                            "sha256": {"linux-x86_64": self.expected_sha256},
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+
+                result = self._run_installer(
+                    self.expected_sha256, extra_env={"FAKE_MANIFEST": str(manifest)}
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("does not name a file", result.stderr)
+                self.assertEqual(installed.read_bytes(), b"existing-h0x\n")
 
 
 if __name__ == "__main__":

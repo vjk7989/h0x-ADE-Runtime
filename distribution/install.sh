@@ -33,14 +33,19 @@ main() {
     log "detected ${os}/${arch}"
 
     # check dependencies
-    need curl
+    # The system curl by absolute path, so a planted `curl` earlier on PATH
+    # does not run; where it lives elsewhere (NixOS, Termux), the one on PATH.
+    CURL=/usr/bin/curl
+    if [ ! -x "$CURL" ]; then
+        CURL="$(command -v curl 2>/dev/null)" || err "requires curl: /usr/bin/curl is missing and curl is not on PATH"
+    fi
     need awk
 
     # use the same manifest as `h0x update` so installs and updates agree
     # on the public latest release.
     TARGET="${os}-${arch}"
     log "fetching latest release manifest..."
-    MANIFEST="$(curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 10 --max-time 20 "$MANIFEST_URL")" \
+    MANIFEST="$("$CURL" -fsSL --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 10 --max-time 20 "$MANIFEST_URL")" \
         || err "can't reach ${MANIFEST_URL}. Please try again later; GitHub might be down."
     URL="$(printf '%s\n' "$MANIFEST" | awk -v target="\"${TARGET}\"" '
         /^[[:space:]]*"assets"[[:space:]]*:/ { in_assets = 1; next }
@@ -96,7 +101,10 @@ main() {
     # Kept under the release's own file name: its signature is bound to that name.
     ASSET="${URL%%[?#]*}"
     ASSET="${ASSET##*/}"
-    if ! curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 10 --max-time 120 "$URL" -o "${TMP}/${ASSET}"; then
+    case "$ASSET" in
+        "" | . | ..) err "refusing to download ${URL}: it does not name a file" ;;
+    esac
+    if ! "$CURL" -fsSL --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 10 --max-time 120 "$URL" -o "${TMP}/${ASSET}"; then
         err "download failed from ${URL}"
     fi
 
@@ -114,7 +122,7 @@ main() {
     # that has `update --verify` checks it, so nothing downloaded runs first;
     # otherwise the downloaded h0x checks itself (trusted on first use: TLS to
     # GitHub and the checksum).
-    if ! curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 10 --max-time 20 "${URL%%[?#]*}.minisig" -o "${TMP}/${ASSET}.minisig"; then
+    if ! "$CURL" -fsSL --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 10 --max-time 20 "${URL%%[?#]*}.minisig" -o "${TMP}/${ASSET}.minisig"; then
         err "no signature for ${ASSET}: ${URL%%[?#]*}.minisig"
     fi
     VERIFIER="${INSTALL_DIR}/${BIN}"
