@@ -182,6 +182,15 @@ jobs:
         timeout-minutes: 12
         run: scripts/zig-fetch vendor/libghostty-vt
 
+      # Only the tests our vendored patches added (0002 modify-other-keys, 0007
+      # PNG retention, 0008 cursor hyperlink); the whole suite is upstream's.
+      - name: Run vendored Zig tests for our patches
+        if: runner.os == 'Linux'
+        shell: bash
+        timeout-minutes: 15
+        working-directory: vendor/libghostty-vt
+        run: zig build test-lib-vt -Dtest-filter='get modify_other_keys' -Dtest-filter='experimental PNG' -Dtest-filter='native file' -Dtest-filter='cursorAbsolute'
+
       - name: Save Zig packages
         if: env.SAVE_CACHES == 'true' && steps.zig-packages.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
