@@ -366,6 +366,25 @@ pub(crate) fn verify_downloaded_release(path: &Path, url: &str) -> Result<(), St
     )
 }
 
+/// Checks a release asset kept on disk under its release file name against
+/// `<file>.minisig` beside it (`h0x update --verify`, used by the installers).
+pub(crate) fn verify_release_file(path: &Path) -> Result<(), String> {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("{} has no file name", path.display()))?;
+    let bytes = fs::read(path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    let mut signature_path = path.as_os_str().to_owned();
+    signature_path.push(".minisig");
+    verify_release_signature(
+        name,
+        name,
+        &bytes,
+        fs::read_to_string(signature_path).ok().as_deref(),
+        RELEASE_PUBLIC_KEY,
+    )
+}
+
 fn handle_manifest_announcement(version: &str, value: Option<&serde_json::Value>) {
     let announcement = match value {
         Some(value) => match serde_json::from_value::<
@@ -1003,7 +1022,7 @@ pub(crate) fn parse_self_update_args(args: &[String]) -> Result<SelfUpdateOption
         match arg.as_str() {
             "--handoff" => options.live_handoff = true,
             "--help" | "-h" => {
-                return Err("usage: h0x update [--handoff]".to_string());
+                return Err("usage: h0x update [--handoff | --verify <file>]".to_string());
             }
             _ => return Err(format!("unknown update option: {arg}")),
         }
@@ -3464,6 +3483,36 @@ IFqphZJnxMfop/njTTwRD6j1P5ikDAd9OZSS9uMjHwZWa7JEZ4vY4zYXfUQYiLlvVXPeyZC8ySf+Vx16
         let foreign = super::verify_downloaded_release(&asset, &url).unwrap_err();
         assert!(
             foreign.starts_with("the downloaded update is not signed by the h0x release key: its signature does not match"),
+            "{foreign}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `h0x update --verify <file>`: the signature sits beside the file and
+    /// must be the release key's, made for this file name.
+    #[test]
+    fn update_verify_file_needs_the_release_signature_beside_it() {
+        let dir = std::env::temp_dir().join(format!("h0x-update-verify-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let asset = dir.join("h0x-linux-x86_64");
+
+        let unreadable = super::verify_release_file(&asset).unwrap_err();
+        assert!(unreadable.starts_with("failed to read"), "{unreadable}");
+
+        std::fs::write(&asset, PAYLOAD).unwrap();
+        let missing = super::verify_release_file(&asset).unwrap_err();
+        assert!(missing.contains("it has no signature"), "{missing}");
+
+        std::fs::write(dir.join("h0x-linux-x86_64.minisig"), "").unwrap();
+        let empty = super::verify_release_file(&asset).unwrap_err();
+        assert!(empty.contains("its signature is unreadable"), "{empty}");
+
+        // Signed by the test key, which is not the release key.
+        std::fs::write(dir.join("h0x-linux-x86_64.minisig"), SIG).unwrap();
+        let foreign = super::verify_release_file(&asset).unwrap_err();
+        assert!(
+            foreign.starts_with("h0x-linux-x86_64 is not signed by the h0x release key: its signature does not match"),
             "{foreign}"
         );
 

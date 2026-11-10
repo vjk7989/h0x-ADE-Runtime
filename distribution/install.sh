@@ -93,22 +93,44 @@ main() {
     TMP="$(mktemp -d)"
     trap 'rm -rf "$TMP"' EXIT
 
-    if ! curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 10 --max-time 120 "$URL" -o "${TMP}/${BIN}"; then
+    # Kept under the release's own file name: its signature is bound to that name.
+    ASSET="${URL%%[?#]*}"
+    ASSET="${ASSET##*/}"
+    if ! curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 10 --max-time 120 "$URL" -o "${TMP}/${ASSET}"; then
         err "download failed from ${URL}"
     fi
 
     case "$SHA256_TOOL" in
-        sha256sum) ACTUAL_SHA256="$(sha256sum < "${TMP}/${BIN}" | awk '{ print $1 }')" ;;
-        shasum)    ACTUAL_SHA256="$(shasum -a 256 < "${TMP}/${BIN}" | awk '{ print $1 }')" ;;
-        openssl)   ACTUAL_SHA256="$(openssl dgst -sha256 < "${TMP}/${BIN}" | awk '{ print $NF }')" ;;
+        sha256sum) ACTUAL_SHA256="$(sha256sum < "${TMP}/${ASSET}" | awk '{ print $1 }')" ;;
+        shasum)    ACTUAL_SHA256="$(shasum -a 256 < "${TMP}/${ASSET}" | awk '{ print $1 }')" ;;
+        openssl)   ACTUAL_SHA256="$(openssl dgst -sha256 < "${TMP}/${ASSET}" | awk '{ print $NF }')" ;;
     esac
     if [ "$ACTUAL_SHA256" != "$SHA256" ]; then
         err "downloaded HyperOx checksum did not match"
     fi
 
+    # The checksum comes from the same place as the file: the release key's
+    # minisign signature is what proves the release made it. An installed h0x
+    # that has `update --verify` checks it, so nothing downloaded runs first;
+    # otherwise the downloaded h0x checks itself (trusted on first use: TLS to
+    # GitHub and the checksum).
+    if ! curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 10 --max-time 20 "${URL%%[?#]*}.minisig" -o "${TMP}/${ASSET}.minisig"; then
+        err "no signature for ${ASSET}: ${URL%%[?#]*}.minisig"
+    fi
+    VERIFIER="${INSTALL_DIR}/${BIN}"
+    case "$([ -x "$VERIFIER" ] && "$VERIFIER" update --help 2>&1)" in
+    *--verify*) ;;
+    *)
+        warn "no installed ${BIN} can check the signature: the downloaded one does (trusted on first use)."
+        chmod +x "${TMP}/${ASSET}"
+        VERIFIER="${TMP}/${ASSET}"
+        ;;
+    esac
+    "$VERIFIER" update --verify "${TMP}/${ASSET}" || err "${ASSET} is not signed by the h0x release key (see above)"
+
     # install
     mkdir -p "$INSTALL_DIR"
-    mv "${TMP}/${BIN}" "${INSTALL_DIR}/${BIN}"
+    mv "${TMP}/${ASSET}" "${INSTALL_DIR}/${BIN}"
     chmod +x "${INSTALL_DIR}/${BIN}"
 
     log "installed ${BIN} to ${INSTALL_DIR}/${BIN}"

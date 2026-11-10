@@ -262,10 +262,10 @@ function Invoke-CurlDownload {
         throw "HyperOx download URL must use HTTPS: $Uri"
     }
 
-    $curl = Get-Command curl.exe -CommandType Application -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-    if ($null -eq $curl) {
-        throw "HyperOx installation requires curl.exe, which is included with supported Windows versions."
+    # Windows' own curl: a planted curl.exe earlier on PATH must not run.
+    $curl = Join-Path $env:SystemRoot "System32/curl.exe"
+    if (-not (Test-Path -LiteralPath $curl -PathType Leaf)) {
+        throw "HyperOx installation requires $curl, which is included with supported Windows versions."
     }
 
     $arguments = @(
@@ -286,7 +286,7 @@ function Invoke-CurlDownload {
     # Hand curl the URL exactly as validated above.
     $arguments += @("--output", $Destination, "--", $parsedUri.AbsoluteUri)
 
-    $curlOutput = & $curl.Source @arguments 2>&1
+    $curlOutput = & $curl @arguments 2>&1
     $curlExitCode = $LASTEXITCODE
     if ($curlExitCode -ne 0) {
         $detail = ($curlOutput | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
@@ -348,6 +348,42 @@ function Test-FileDigest {
     }
     if ($actual -ne $ExpectedDigest.ToLowerInvariant()) {
         throw "Downloaded HyperOx checksum did not match. Expected $ExpectedDigest but got $actual."
+    }
+}
+
+function Test-ReleaseSignature {
+    # The digest comes from the same place as the file: the release key's
+    # minisign signature is what proves the release made it. An installed h0x
+    # that has `update --verify` checks it, so nothing downloaded runs first;
+    # otherwise the downloaded h0x checks itself (trusted on first use: TLS to
+    # GitHub and the digest).
+    param(
+        [string]$Path,
+        [string]$Format,
+        [string]$TempDir,
+        [string]$InstalledH0x
+    )
+
+    $verifier = $null
+    if (-not [string]::IsNullOrWhiteSpace($InstalledH0x) -and (Test-Path -LiteralPath $InstalledH0x -PathType Leaf)) {
+        $help = (& $InstalledH0x update --help 2>&1 | ForEach-Object { $_.ToString() }) -join " "
+        if ($help -like "*--verify*") {
+            $verifier = $InstalledH0x
+        }
+    }
+    if ($null -eq $verifier) {
+        Write-WarningStep "No installed h0x can check the signature: the downloaded one does (trusted on first use)."
+        if ($Format -eq "zip") {
+            $verifyDir = Join-Path $TempDir "verify"
+            Expand-Archive -LiteralPath $Path -DestinationPath $verifyDir
+            $verifier = Join-Path $verifyDir "h0x.exe"
+        } else {
+            $verifier = $Path
+        }
+    }
+    & $verifier update --verify $Path
+    if ($LASTEXITCODE -ne 0) {
+        throw "$([System.IO.Path]::GetFileName($Path)) is not signed by the h0x release key (see above)."
     }
 }
 
@@ -777,7 +813,8 @@ try {
             $downloadPath = if ($useLocalPackage) {
                 $LocalPackagePath
             } else {
-                Join-Path $tempDir "h0x-download.$($asset.Format)"
+                # Under the release's own file name: its signature is bound to that name.
+                Join-Path $tempDir ([System.IO.Path]::GetFileName(([System.Uri]$asset.Url).AbsolutePath))
             }
             $stagingDir = Join-Path $releasesDir ".staging.$releaseName.$PID"
             if (-not $useLocalPackage) {
@@ -785,6 +822,15 @@ try {
                 Invoke-CurlDownload -Uri $asset.Url -Destination $downloadPath
             }
             Test-FileDigest -Path $downloadPath -ExpectedDigest $asset.Sha256
+            # Plain HTTP is accepted only for a local test server (see
+            # Invoke-CurlDownload); its test packages are not signed.
+            $assetUri = if ($useLocalPackage) { $null } else { [System.Uri]$asset.Url }
+            if ($null -ne $assetUri -and $assetUri.Scheme -eq "https") {
+                Write-Step "Verifying the release signature"
+                $signatureUri = ([System.Uri]$asset.Url).GetLeftPart([System.UriPartial]::Path) + ".minisig"
+                Invoke-CurlDownload -Uri $signatureUri -Destination "$downloadPath.minisig"
+                Test-ReleaseSignature -Path $downloadPath -Format $asset.Format -TempDir $tempDir -InstalledH0x (Join-Path $currentDir "h0x.exe")
+            }
 
             if ($asset.Format -eq "zip") {
                 Expand-Archive -LiteralPath $downloadPath -DestinationPath $stagingDir

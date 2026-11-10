@@ -24,7 +24,10 @@ class UnixInstallerTests(unittest.TestCase):
         self.bin_dir.mkdir()
         self.install_dir = self.root / "install"
         self.payload = self.root / "payload"
-        self.payload.write_bytes(b"fake-h0x-binary\n")
+        # `update --verify <file>` is how the installer checks the release signature.
+        self.payload.write_bytes(
+            b'#!/bin/sh\n[ "$1 $2" = "update --verify" ] && exit "${FAKE_VERIFY_EXIT:-0}"\nexit 0\n'
+        )
         self.expected_sha256 = hashlib.sha256(self.payload.read_bytes()).hexdigest()
 
         for command in REQUIRED_COMMANDS:
@@ -60,6 +63,9 @@ for argument in "$@"; do
   fi
   previous="$argument"
 done
+case "$out" in
+  *.minisig) [ -z "${FAKE_NO_SIGNATURE:-}" ] || exit 22 ;;
+esac
 if [ -n "$out" ]; then
   cp "$FAKE_PAYLOAD" "$out"
 else
@@ -201,6 +207,32 @@ exec {sha256sum} "$@"
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("valid SHA-256 checksum", result.stderr)
+        self.assertEqual(installed.read_bytes(), b"existing-h0x\n")
+
+    def test_release_without_a_signature_does_not_replace_existing_binary(self) -> None:
+        self.install_dir.mkdir()
+        installed = self.install_dir / "h0x"
+        installed.write_bytes(b"existing-h0x\n")
+
+        result = self._run_installer(
+            self.expected_sha256, extra_env={"FAKE_NO_SIGNATURE": "1"}
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no signature for h0x-linux-x86_64", result.stderr)
+        self.assertEqual(installed.read_bytes(), b"existing-h0x\n")
+
+    def test_bad_signature_does_not_replace_existing_binary(self) -> None:
+        self.install_dir.mkdir()
+        installed = self.install_dir / "h0x"
+        installed.write_bytes(b"existing-h0x\n")
+
+        result = self._run_installer(
+            self.expected_sha256, extra_env={"FAKE_VERIFY_EXIT": "1"}
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("is not signed by the h0x release key", result.stderr)
         self.assertEqual(installed.read_bytes(), b"existing-h0x\n")
 
 
