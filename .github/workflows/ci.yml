@@ -48,6 +48,21 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: python3 scripts/conventional_commits.py "$PR_TITLE"
 
+  advisories:
+    name: advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      # RustSec advisories for the locked dependencies: deny.toml.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check advisories
+
   check:
     name: check (${{ matrix.os }})
     strategy:
