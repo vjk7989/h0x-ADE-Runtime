@@ -97,11 +97,11 @@ impl SshAgentRegistry {
         let inherited = inherited.filter(|path| !path.as_os_str().is_empty());
         let managed = inherited.is_some()
             || fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink());
-        // A handoff keeps existing pane environments, including this stable pathname.
-        let fallback = fs::read_link(&path)
-            .ok()
-            .filter(|target| target != &path && usable_socket(target))
-            .or_else(|| inherited.filter(|target| target != &path && usable_socket(target)));
+        // A handoff keeps existing pane environments, including this stable pathname,
+        // but never the previous link's target: that was a client's forwarded agent,
+        // which stays scoped to its connection lease. Only the server's own inherited
+        // agent is a permanent fallback; leases re-register after a handoff.
+        let fallback = inherited.filter(|target| target != &path && usable_socket(target));
         let mut state = State {
             path,
             fallback,
@@ -285,6 +285,40 @@ mod tests {
             );
             drop(registry);
         }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn a_new_server_does_not_adopt_the_previous_links_target_as_fallback() {
+        let directory =
+            std::env::temp_dir().join(format!("h0x-agent-lease-{}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        let _listener = UnixListener::bind(directory.join("forwarded")).unwrap();
+        let forwarded = directory.join("forwarded");
+        let stable = directory.join("agent");
+        // The previous server left its link pointing at a client's agent.
+        symlink(&forwarded, &stable).unwrap();
+
+        let registry = SshAgentRegistry::new(stable.clone(), None).unwrap();
+        assert_ne!(
+            fs::read_link(&stable).unwrap(),
+            forwarded,
+            "the old lease's agent must not outlive its connection"
+        );
+        assert_eq!(
+            fs::read_link(&stable).unwrap(),
+            stable.with_extension("unavailable")
+        );
+
+        // The same agent registered again is scoped to its lease and goes away with it.
+        let lease = registry.register(forwarded.clone()).unwrap();
+        assert_eq!(fs::read_link(&stable).unwrap(), forwarded);
+        drop(lease);
+        assert_eq!(
+            fs::read_link(&stable).unwrap(),
+            stable.with_extension("unavailable")
+        );
+        drop(registry);
         fs::remove_dir_all(directory).unwrap();
     }
 
