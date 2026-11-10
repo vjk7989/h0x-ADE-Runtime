@@ -34,6 +34,11 @@ use crate::protocol::{
 /// right edge clipped.
 const MIN_CLIENT_COLS: u16 = 1;
 const MIN_CLIENT_ROWS: u16 = 1;
+/// Maximum accepted attached client size. A client asking for more (up to
+/// 65535 columns) would make the server allocate very large render pages, so
+/// the request is clamped.
+const MAX_CLIENT_COLS: u16 = 1000;
+const MAX_CLIENT_ROWS: u16 = 1000;
 
 /// How long to wait for a client handshake before closing the connection.
 /// Set to 4 seconds (rather than 5) to guarantee the connection is closed
@@ -561,8 +566,8 @@ pub(crate) enum ServerEvent {
 
 /// Clamp client-reported terminal dimensions to a minimum viable size.
 pub(crate) fn clamp_terminal_size(cols: u16, rows: u16) -> (u16, u16) {
-    let clamped_cols = cols.max(MIN_CLIENT_COLS);
-    let clamped_rows = rows.max(MIN_CLIENT_ROWS);
+    let clamped_cols = cols.clamp(MIN_CLIENT_COLS, MAX_CLIENT_COLS);
+    let clamped_rows = rows.clamp(MIN_CLIENT_ROWS, MAX_CLIENT_ROWS);
     (clamped_cols, clamped_rows)
 }
 
@@ -1867,6 +1872,23 @@ mod tests {
     #[test]
     fn clamp_terminal_size_preserves_narrow_client_size() {
         assert_eq!(clamp_terminal_size(40, 12), (40, 12));
+    }
+
+    #[test]
+    fn clamp_terminal_size_caps_oversized_requests() {
+        assert_eq!(
+            clamp_terminal_size(u16::MAX, u16::MAX),
+            (MAX_CLIENT_COLS, MAX_CLIENT_ROWS)
+        );
+        assert_eq!(
+            clamp_terminal_size(MAX_CLIENT_COLS, MAX_CLIENT_ROWS),
+            (MAX_CLIENT_COLS, MAX_CLIENT_ROWS)
+        );
+        assert_eq!(
+            clamp_terminal_size(MAX_CLIENT_COLS + 1, 24),
+            (MAX_CLIENT_COLS, 24)
+        );
+        assert_eq!(clamp_terminal_size(80, u16::MAX), (80, MAX_CLIENT_ROWS));
     }
 
     #[test]
