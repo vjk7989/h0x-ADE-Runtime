@@ -788,8 +788,6 @@ fn update_verify_contract_for_the_installers() {
     let base_arg = base.to_str().unwrap();
 
     let cases: Vec<(Vec<&str>, i32, String)> = vec![
-        // The installers look for `--verify` in this usage text.
-        (vec!["update", "--help"], 0, "--verify <file>".to_owned()),
         (
             vec!["update", "--verify"],
             2,
@@ -820,16 +818,23 @@ fn update_verify_contract_for_the_installers() {
             1,
             format!("{name} is not signed by the h0x release key: its signature is unreadable"),
         ),
+        // Last: the installers run `h0x update --help 2>&1` and use the installed
+        // h0x as the verifier only when this output mentions `--verify`.
+        (vec!["update", "--help"], 0, "--verify".to_owned()),
     ];
     for (args, code, diagnostic) in cases {
         let captured = capture(&args, json!({"id":"unexpected","result":{"type":"ok"}}));
         let stderr = String::from_utf8_lossy(&captured.output.stderr);
+        let stdout = String::from_utf8_lossy(&captured.output.stdout);
         assert_eq!(
             captured.output.status.code(),
             Some(code),
-            "{args:?}: {stderr}"
+            "{args:?}: {stdout}{stderr}"
         );
-        assert!(stderr.contains(&diagnostic), "{args:?}: {stderr}");
+        assert!(
+            format!("{stdout}{stderr}").contains(&diagnostic),
+            "{args:?}: {stdout}{stderr}"
+        );
         assert!(
             captured.requests.is_empty(),
             "{args:?}: {:?}",
