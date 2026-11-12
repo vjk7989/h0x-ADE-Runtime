@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## [0.9.16] - 2026-11-13
+
+Updates that look after themselves.
+
+### Added
+- `h0x update --yes --json` updates without asking anything and prints one JSON line with the result, so HyperOx can keep the runtime up to date by itself.
+
+### Changed
+- An update keeps the previous `h0x` beside the new one and checks that the new one runs. If it doesn't, or if handing running sessions over fails, the previous version is put back automatically.
+
 ## [0.9.15] - 2026-11-11
 
 Security release from the final QA round.
