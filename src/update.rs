@@ -602,11 +602,19 @@ fn download_update(release: &ReleaseInfo) -> Result<DownloadedUpdate, String> {
 }
 
 #[cfg(not(windows))]
-fn install_downloaded_update(mut update: DownloadedUpdate) -> Result<(), String> {
+fn install_downloaded_update(mut update: DownloadedUpdate) -> Result<PathBuf, String> {
     let tmp_path = update
         .tmp_path
         .take()
         .ok_or("downloaded update temp file is missing")?;
+
+    let previous = match keep_previous_exe(&update.current_exe) {
+        Ok(previous) => previous,
+        Err(e) => {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(e);
+        }
+    };
 
     // Atomic replace — rename over the current binary.
     // On Linux, the running process keeps its fd to the old inode.
@@ -616,7 +624,102 @@ fn install_downloaded_update(mut update: DownloadedUpdate) -> Result<(), String>
         return Err(format!("failed to replace binary: {e}"));
     }
 
-    Ok(())
+    Ok(previous)
+}
+
+/// `h0x.previous` (Windows `h0x.previous.exe`) beside `exe`.
+fn previous_exe_path(exe: &Path) -> PathBuf {
+    let stem = exe.file_stem().unwrap_or_default().to_string_lossy();
+    let name = match exe.extension() {
+        Some(ext) => format!("{stem}.previous.{}", ext.to_string_lossy()),
+        None => format!("{stem}.previous"),
+    };
+    exe.with_file_name(name)
+}
+
+/// Copies the current binary to `previous_exe_path` before it is replaced.
+fn keep_previous_exe(exe: &Path) -> Result<PathBuf, String> {
+    let previous = previous_exe_path(exe);
+    fs::copy(exe, &previous).map_err(|e| {
+        format!(
+            "failed to keep the current binary as {}: {e}",
+            previous.display()
+        )
+    })?;
+    Ok(previous)
+}
+
+/// Puts the kept binary back over `exe`.
+fn restore_previous_exe(exe: &Path, previous: &Path) -> Result<(), String> {
+    // Unix can rename over a running binary; Windows cannot, so it copies.
+    #[cfg(not(windows))]
+    let restored = fs::rename(previous, exe);
+    #[cfg(windows)]
+    let restored = fs::copy(previous, exe).map(|_| ());
+    restored.map_err(|e| format!("failed to restore {}: {e}", previous.display()))
+}
+
+/// `h0x --version` prints `h0x <version>`.
+fn version_output_matches(stdout: &str, expected: &str) -> bool {
+    stdout.split_whitespace().nth(1) == Some(expected)
+}
+
+/// The installed binary must start and report the expected version.
+fn verify_installed_version(exe: &Path, expected: &str) -> Result<(), String> {
+    let output = Command::new(exe)
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("updated binary failed to start: {e}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if output.status.success() && version_output_matches(&stdout, expected) {
+        Ok(())
+    } else {
+        Err(format!(
+            "updated binary reported `{}`, expected version {expected}",
+            stdout.trim()
+        ))
+    }
+}
+
+/// Restores the kept binary after a failed update and folds the outcome into `report`.
+fn roll_back_update(
+    exe: &Path,
+    previous: &Path,
+    report: &mut UpdateReport,
+    error: String,
+) -> String {
+    match restore_previous_exe(exe, previous) {
+        Ok(()) => {
+            report.rolled_back = true;
+            format!("{error}; rolled back to {}", report.from)
+        }
+        Err(e) => format!("{error}; rollback failed: {e}"),
+    }
+}
+
+/// Result of `h0x update`; `--json` prints `to_json()`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateReport {
+    pub updated: bool,
+    pub from: String,
+    pub to: String,
+    pub rolled_back: bool,
+    pub error: Option<String>,
+}
+
+impl UpdateReport {
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut value = serde_json::json!({
+            "updated": self.updated,
+            "from": self.from,
+            "to": self.to,
+            "rolled_back": self.rolled_back,
+        });
+        if let Some(error) = &self.error {
+            value["error"] = serde_json::Value::String(error.clone());
+        }
+        value
+    }
 }
 
 pub(crate) const WINDOWS_INSTALLER: &str = include_str!("../distribution/install.ps1");
@@ -1021,6 +1124,10 @@ fn target_client_protocol_server_is_running() -> Result<bool, String> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct SelfUpdateOptions {
     pub(crate) live_handoff: bool,
+    /// `--yes`: never prompt. Implies live handoff; a failed handoff rolls back.
+    pub(crate) yes: bool,
+    /// `--json`: the caller prints one result object from the returned report.
+    pub(crate) json: bool,
 }
 
 pub(crate) fn parse_self_update_args(args: &[String]) -> Result<SelfUpdateOptions, String> {
@@ -1028,8 +1135,15 @@ pub(crate) fn parse_self_update_args(args: &[String]) -> Result<SelfUpdateOption
     for arg in args {
         match arg.as_str() {
             "--handoff" => options.live_handoff = true,
+            "--yes" | "-y" => {
+                options.yes = true;
+                options.live_handoff = true;
+            }
+            "--json" => options.json = true,
             "--help" | "-h" => {
-                return Err("usage: h0x update [--handoff | --verify <file>]".to_string());
+                return Err(
+                    "usage: h0x update [--handoff] [--yes] [--json] | --verify <file>".to_string(),
+                );
             }
             _ => return Err(format!("unknown update option: {arg}")),
         }
@@ -1113,7 +1227,7 @@ fn confirm_running_server_update_action(
         .filter(|plan| !server_supports_live_handoff(&plan.server) && plan.requires_server_restart)
         .collect();
 
-    let stop_unsupported = if handoff_unsupported_requiring_update.is_empty() {
+    let stop_unsupported = if handoff_unsupported_requiring_update.is_empty() || options.yes {
         false
     } else {
         let owned: Vec<RunningServerUpdatePlan> = handoff_unsupported_requiring_update
@@ -1644,13 +1758,54 @@ fn wait_for_running_server_protocol_at(
     }
 }
 
+/// Hands servers that already moved to the new binary back to `previous_exe`.
+/// Returns text to append to the error: empty when all went back.
+#[cfg(not(windows))]
+fn hand_servers_back(plans: &[RunningServerUpdatePlan], previous_exe: &Path) -> String {
+    use crate::api::schema::{Method, ServerLiveHandoffParams};
+
+    let mut failures = Vec::new();
+    for plan in plans {
+        let params = ServerLiveHandoffParams {
+            import_exe: Some(previous_exe.display().to_string()),
+            expected_protocol: plan.server.protocol,
+            expected_version: plan.server.version.clone(),
+        };
+        let result = send_server_update_method_at(
+            plan.socket_path(),
+            SERVER_HANDOFF_REQUEST_TIMEOUT,
+            "update:server:live-handoff-back",
+            Method::ServerLiveHandoff(params),
+            "server live handoff",
+        )
+        .and_then(|()| {
+            wait_for_running_server_protocol_at(
+                plan.socket_path(),
+                SERVER_HANDOFF_CONFIRM_TIMEOUT,
+                plan.server.protocol,
+                plan.server.version.as_deref(),
+            )
+        });
+        if let Err(e) = result {
+            failures.push(format!("{} {}: {e}", plan.target_noun(), plan.label()));
+        }
+    }
+    if failures.is_empty() {
+        String::new()
+    } else {
+        format!("; could not hand back: {}", failures.join(", "))
+    }
+}
+
 #[cfg(not(windows))]
 fn apply_running_session_update_decisions(
     release: &ReleaseInfo,
     updated_exe: &Path,
     decisions: Vec<RunningServerUpdateDecision>,
+    rollback_exe: Option<&Path>,
 ) -> Result<Vec<RunningSessionUpdateOutcome>, String> {
     let mut outcomes = Vec::new();
+    let mut handed_off: Vec<RunningServerUpdatePlan> = Vec::new();
 
     for decision in decisions {
         let outcome = match decision.action {
@@ -1664,7 +1819,29 @@ fn apply_running_session_update_decisions(
             }
             RunningServerUpdateAction::LiveHandoff => {
                 match live_handoff_running_server_for_update(&decision.plan, release, updated_exe) {
-                    Ok(()) => RunningServerUpdateOutcome::LiveHandoffComplete,
+                    Ok(()) => {
+                        handed_off.push(decision.plan.clone());
+                        RunningServerUpdateOutcome::LiveHandoffComplete
+                    }
+                    Err(err) if rollback_exe.is_some() => {
+                        // Non-interactive: no prompt; hand every moved server back.
+                        if matches!(
+                            classify_failed_live_handoff_state_at(
+                                decision.plan.socket_path(),
+                                release
+                            ),
+                            FailedHandoffServerState::UpdatedServerRunning
+                        ) {
+                            handed_off.push(decision.plan.clone());
+                        }
+                        let back =
+                            hand_servers_back(&handed_off, rollback_exe.unwrap_or(updated_exe));
+                        return Err(format!(
+                            "live handoff failed for {} {}: {err}{back}",
+                            decision.plan.target_noun(),
+                            decision.plan.label()
+                        ));
+                    }
                     Err(err) => {
                         recover_failed_live_handoff_for_update(&decision.plan, release, &err)?
                     }
@@ -1852,7 +2029,22 @@ fn is_nix_store_exe_path(path: &Path) -> bool {
 // ---------------------------------------------------------------------------
 
 /// Manual self-update command (`h0x update`).
-pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
+pub fn self_update(options: SelfUpdateOptions) -> UpdateReport {
+    let from = crate::build_info::version();
+    let mut report = UpdateReport {
+        updated: false,
+        to: from.clone(),
+        from,
+        rolled_back: false,
+        error: None,
+    };
+    if let Err(error) = run_update(options, &mut report) {
+        report.error = Some(error);
+    }
+    report
+}
+
+fn run_update(options: SelfUpdateOptions, report: &mut UpdateReport) -> Result<(), String> {
     if is_nix_managed_install() {
         return Err(
             "self-update is disabled for Nix installs; update with `nix profile upgrade` or update the flake input that provides HyperOx".into(),
@@ -1865,15 +2057,14 @@ pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
 
     eprintln!("checking for updates...");
 
-    let current = Version::current();
-
     let release = match check_latest()? {
         Some(r) => r,
         None => {
             eprintln!("already up to date ({})", crate::build_info::version());
-            return Ok(current);
+            return Ok(());
         }
     };
+    report.to = release.label().to_string();
 
     if let Err(e) = crate::release_notes::save_pending(release.label(), &release.notes_body) {
         tracing::warn!("failed to save pending release notes: {e}");
@@ -1893,8 +2084,14 @@ pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
         eprintln!("downloading {}...", release.label());
         let downloaded_update = download_windows_update(&release)?;
         eprintln!("downloaded {}", release.label());
-        install_windows_update_with_installer(&release, &downloaded_update)?;
         let updated_exe = windows_installed_h0x_exe_path()?;
+        let previous = keep_previous_exe(&updated_exe)?;
+        if let Err(e) = install_windows_update_with_installer(&release, &downloaded_update)
+            .and_then(|()| verify_installed_version(&updated_exe, release.label()))
+        {
+            return Err(roll_back_update(&updated_exe, &previous, report, e));
+        }
+        report.updated = true;
         eprintln!("installed {}", release.label());
         print_outdated_integration_notice_with_updated_binary(&updated_exe);
         eprintln!(
@@ -1919,27 +2116,43 @@ pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
         {
             eprintln!("HyperOx was not updated.");
             eprintln!("Stop running HyperOx sessions when ready, then run `h0x update` again.");
-            return Ok(current);
+            return Ok(());
         }
-        install_downloaded_update(downloaded_update)?;
+        let previous = install_downloaded_update(downloaded_update)?;
+        report.updated = true;
+        if options.yes {
+            if let Err(e) = verify_installed_version(&updated_exe, release.label()) {
+                report.updated = false;
+                return Err(roll_back_update(&updated_exe, &previous, report, e));
+            }
+        }
         eprintln!("installed {}", release.label());
         let server_update_decisions = if options.live_handoff {
             server_update_decisions
         } else {
             mark_plain_update_stop_decisions(server_update_decisions)
         };
-        let server_update_outcomes = apply_running_session_update_decisions(
+        let rollback_exe = options.yes.then_some(previous.as_path());
+        let server_update_outcomes = match apply_running_session_update_decisions(
             &release,
             &updated_exe,
             server_update_decisions,
-        )?;
+            rollback_exe,
+        ) {
+            Ok(outcomes) => outcomes,
+            Err(e) if options.yes => {
+                report.updated = false;
+                return Err(roll_back_update(&updated_exe, &previous, report, e));
+            }
+            Err(e) => return Err(e),
+        };
         print_outdated_integration_notice_with_updated_binary(&updated_exe);
 
         print_running_session_update_outcomes(&server_update_outcomes, &release);
         print_saved_machine_update_notice();
     }
 
-    Ok(release.version)
+    Ok(())
 }
 
 fn print_saved_machine_update_notice() {
@@ -2430,13 +2643,22 @@ mod tests {
     fn self_update_args_gate_live_handoff() {
         assert_eq!(
             parse_self_update_args(&[]).unwrap(),
-            SelfUpdateOptions {
-                live_handoff: false
-            }
+            SelfUpdateOptions::default()
         );
         assert_eq!(
             parse_self_update_args(&["--handoff".to_string()]).unwrap(),
-            SelfUpdateOptions { live_handoff: true }
+            SelfUpdateOptions {
+                live_handoff: true,
+                ..SelfUpdateOptions::default()
+            }
+        );
+        assert_eq!(
+            parse_self_update_args(&["--yes".to_string(), "--json".to_string()]).unwrap(),
+            SelfUpdateOptions {
+                live_handoff: true,
+                yes: true,
+                json: true
+            }
         );
         assert_eq!(
             parse_self_update_args(&["--unknown".to_string()]).unwrap_err(),
@@ -3738,5 +3960,96 @@ mod asset_url_tests {
         ] {
             assert!(asset_url_allowed(url), "{url:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod rollback_tests {
+    use super::*;
+
+    #[test]
+    fn previous_exe_path_sits_beside_the_binary() {
+        assert_eq!(
+            previous_exe_path(Path::new("/opt/my tools/h0x")),
+            Path::new("/opt/my tools/h0x.previous")
+        );
+        assert_eq!(
+            previous_exe_path(Path::new("C:/Program Files/HyperOx/bin/h0x.exe")),
+            Path::new("C:/Program Files/HyperOx/bin/h0x.previous.exe")
+        );
+    }
+
+    #[test]
+    fn keep_and_restore_previous_exe_round_trip() {
+        let dir = std::env::temp_dir().join(format!("h0x-update-prev dir-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join(if cfg!(windows) { "h0x.exe" } else { "h0x" });
+        fs::write(&exe, b"old").unwrap();
+
+        let previous = keep_previous_exe(&exe).unwrap();
+        assert_eq!(previous, previous_exe_path(&exe));
+        fs::write(&exe, b"new").unwrap();
+        restore_previous_exe(&exe, &previous).unwrap();
+        assert_eq!(fs::read(&exe).unwrap(), b"old");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn keep_previous_exe_fails_for_missing_binary() {
+        let missing = std::env::temp_dir().join("h0x-update-no-such-binary");
+        assert!(keep_previous_exe(&missing).is_err());
+    }
+
+    #[test]
+    fn version_output_must_name_the_expected_version() {
+        assert!(version_output_matches(
+            "h0x 0.9.6
+",
+            "0.9.6"
+        ));
+        assert!(!version_output_matches(
+            "h0x 0.9.5
+",
+            "0.9.6"
+        ));
+        assert!(!version_output_matches("", "0.9.6"));
+        assert!(!version_output_matches("h0x", "0.9.6"));
+    }
+
+    #[test]
+    fn update_report_json_contract() {
+        let mut report = UpdateReport {
+            updated: false,
+            from: "0.9.5".into(),
+            to: "0.9.5".into(),
+            rolled_back: false,
+            error: None,
+        };
+        assert_eq!(
+            report.to_json(),
+            serde_json::json!({"updated": false, "from": "0.9.5", "to": "0.9.5", "rolled_back": false})
+        );
+        report.error = Some("boom".into());
+        report.rolled_back = true;
+        assert_eq!(report.to_json()["error"], "boom");
+        assert_eq!(report.to_json()["rolled_back"], true);
+    }
+
+    #[test]
+    fn roll_back_update_reports_failed_restore() {
+        let mut report = UpdateReport {
+            updated: false,
+            from: "0.9.5".into(),
+            to: "0.9.6".into(),
+            rolled_back: false,
+            error: None,
+        };
+        let missing = std::env::temp_dir().join("h0x-update-no-previous");
+        let exe = std::env::temp_dir().join("h0x-update-no-exe");
+        let msg = roll_back_update(&exe, &missing, &mut report, "bad".into());
+        assert!(msg.starts_with("bad; rollback failed:"));
+        assert!(!report.rolled_back);
     }
 }

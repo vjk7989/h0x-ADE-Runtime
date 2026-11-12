@@ -600,17 +600,23 @@ fn main() -> io::Result<()> {
             }
             Err(err) => {
                 eprintln!("{err}");
-                eprintln!("usage: h0x update [--handoff | --verify <file>]");
+                eprintln!("usage: h0x update [--handoff] [--yes] [--json] | --verify <file>");
                 std::process::exit(2);
             }
         };
-        match update::self_update(options) {
-            Ok(_) => return Ok(()),
-            Err(e) => {
-                if e.starts_with("self-update is disabled") {
-                    eprintln!("{e}");
-                } else {
-                    eprintln!("update failed: {e}");
+        let report = update::self_update(options);
+        if options.json {
+            println!("{}", report.to_json());
+        }
+        match report.error {
+            None => return Ok(()),
+            Some(e) => {
+                if !options.json {
+                    if e.starts_with("self-update is disabled") {
+                        eprintln!("{e}");
+                    } else {
+                        eprintln!("update failed: {e}");
+                    }
                 }
                 std::process::exit(1);
             }
