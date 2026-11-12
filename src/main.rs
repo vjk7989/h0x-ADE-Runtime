@@ -594,23 +594,35 @@ fn main() -> io::Result<()> {
     if args.get(1).map(|s| s.as_str()) == Some("update") {
         let options = match update::parse_self_update_args(&args[2..]) {
             Ok(options) => options,
-            Err(err) if err.starts_with("usage:") => {
-                eprintln!("{err}");
-                std::process::exit(0);
-            }
             Err(err) => {
-                eprintln!("{err}");
-                eprintln!("usage: h0x update [--handoff | --verify <file>]");
-                std::process::exit(2);
+                let usage = err.starts_with("usage:");
+                if args[2..].iter().any(|arg| arg == "--json") {
+                    // --json: stdout carries one error object.
+                    let mut report = update::UpdateReport::new();
+                    report.error = Some(err);
+                    println!("{}", report.to_json());
+                } else if usage {
+                    eprintln!("{err}");
+                } else {
+                    eprintln!("{err}");
+                    eprintln!("usage: h0x update [--handoff] [--yes] [--json] | --verify <file>");
+                }
+                std::process::exit(if usage { 0 } else { 2 });
             }
         };
-        match update::self_update(options) {
-            Ok(_) => return Ok(()),
-            Err(e) => {
-                if e.starts_with("self-update is disabled") {
-                    eprintln!("{e}");
-                } else {
-                    eprintln!("update failed: {e}");
+        let report = update::self_update(options);
+        if options.json {
+            println!("{}", report.to_json());
+        }
+        match report.error {
+            None => return Ok(()),
+            Some(e) => {
+                if !options.json {
+                    if e.starts_with("self-update is disabled") {
+                        eprintln!("{e}");
+                    } else {
+                        eprintln!("update failed: {e}");
+                    }
                 }
                 std::process::exit(1);
             }
