@@ -135,17 +135,31 @@ fn git_common_dir_for_git_dir(git_dir: &Path) -> PathBuf {
 
 /// UNC, device and `//host` paths (any two leading separators, either kind): a repo's
 /// config must not make h0x touch the network or a device. Canonical local paths are
-/// verbatim (`\\?\C:\...`); only `\\?\UNC\` is remote.
+/// verbatim drive paths (`\\?\C:\...`); every other verbatim form (`\\?\UNC\`,
+/// `\\?\GLOBALROOT\Device\Mup\...`, `\\?\Volume{...}`) is treated as network.
 pub(super) fn is_network_path(path: &Path) -> bool {
     let text = path.to_string_lossy();
     let bytes = text.as_bytes();
     let separator = |byte: u8| byte == b'/' || byte == b'\\';
+    // NT object namespace: `\??\` and `/??/`.
+    if bytes.len() >= 4
+        && separator(bytes[0])
+        && bytes[1] == b'?'
+        && bytes[2] == b'?'
+        && separator(bytes[3])
+    {
+        return true;
+    }
     if bytes.len() < 2 || !separator(bytes[0]) || !separator(bytes[1]) {
         return false;
     }
     if bytes.len() >= 4 && bytes[2] == b'?' && separator(bytes[3]) {
         let rest = &bytes[4..];
-        return rest.len() >= 4 && rest[..3].eq_ignore_ascii_case(b"UNC") && separator(rest[3]);
+        let drive = rest.len() >= 2
+            && rest[0].is_ascii_alphabetic()
+            && rest[1] == b':'
+            && rest.get(2).is_none_or(|byte| separator(*byte));
+        return !drive;
     }
     true
 }
@@ -669,9 +683,25 @@ mod tests {
         assert!(is_network_path(Path::new("//")));
         assert!(!is_network_path(Path::new("")));
         assert!(!is_network_path(Path::new("/")));
-        assert!(!is_network_path(Path::new("\\\\?\\")));
-        assert!(!is_network_path(Path::new("\\\\?\\UNC")));
-        assert!(!is_network_path(Path::new("\\\\?\\UNCX\\host")));
+        // Every verbatim form that is not a drive path is refused.
+        assert!(is_network_path(Path::new("\\\\?\\")));
+        assert!(is_network_path(Path::new("\\\\?\\UNC")));
+        assert!(is_network_path(Path::new("\\\\?\\UNCX\\host")));
+        assert!(is_network_path(Path::new(
+            "\\\\?\\GLOBALROOT\\Device\\Mup\\host\\share\\x"
+        )));
+        assert!(is_network_path(Path::new(
+            "\\\\?\\globalroot\\device\\mup\\h"
+        )));
+        assert!(is_network_path(Path::new("//?/GLOBALROOT/Device/Mup/h/s")));
+        assert!(is_network_path(Path::new("\\\\?\\Volume{1234}\\x")));
+        assert!(is_network_path(Path::new("\\\\?\\C")));
+        assert!(is_network_path(Path::new("\\\\?\\C:x\\y")));
+        assert!(is_network_path(Path::new("\\??\\UNC\\host\\share")));
+        assert!(is_network_path(Path::new("/??/C:/x")));
+        assert!(!is_network_path(Path::new("\\\\?\\C:")));
+        assert!(!is_network_path(Path::new("\\\\?\\z:\\repo")));
+        assert!(!is_network_path(Path::new("//?/C:/repo")));
         // A URL is not a path; when joined to a local config dir it stays local.
         assert!(!is_network_path(Path::new("file://host/share")));
     }
