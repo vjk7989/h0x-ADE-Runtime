@@ -227,7 +227,9 @@ pub(super) struct KittyApcGuard {
 const MAX_PENDING_KITTY_APC: usize = 1024 * 1024;
 
 impl KittyApcGuard {
-    /// Returns the bytes that are safe to write now; a file-medium command is dropped.
+    /// Returns the bytes that are safe to write now: only complete kitty graphics commands
+    /// without a file medium. Every other byte (OSC, CSI, text) is dropped, so a remote cannot
+    /// reach the host terminal's clipboard, title or query handling through a Graphics frame.
     pub(super) fn filter(&mut self, bytes: &[u8]) -> Vec<u8> {
         let mut combined = std::mem::take(&mut self.pending);
         combined.extend_from_slice(bytes);
@@ -237,10 +239,20 @@ impl KittyApcGuard {
                 self.pending = tail;
             }
         }
-        if kitty_graphics_has_file_medium(&combined) {
-            combined.clear();
+        let mut out = Vec::new();
+        let mut index = 0usize;
+        while let Some(start) = find_subslice(&combined[index..], b"\x1b_G") {
+            let command_start = index + start;
+            let Some(end) = find_subslice(&combined[command_start..], b"\x1b\\") else {
+                break;
+            };
+            let command = &combined[command_start..command_start + end + 2];
+            if !kitty_graphics_has_file_medium(command) {
+                out.extend_from_slice(command);
+            }
+            index = command_start + end + 2;
         }
-        combined
+        out
     }
 }
 
