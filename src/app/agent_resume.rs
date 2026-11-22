@@ -241,6 +241,17 @@ impl App {
         let powershell_pane = crate::pane::uses_windows_powershell_pane_shell(
             crate::pane::PaneShellConfig::new(&self.state.default_shell, self.state.shell_mode),
         );
+        if windows_shell_cannot_restore(cfg!(windows), powershell_pane) {
+            if let Some(terminal) = self.state.terminals.get_mut(&terminal_id) {
+                terminal.pending_agent_resume_plan = None;
+                terminal.restore_error = Some(
+                    "Agent restore needs PowerShell on Windows. Set default_shell to pwsh or powershell and restart this session."
+                        .into(),
+                );
+                terminal.revision = terminal.revision.saturating_add(1);
+            }
+            return true;
+        }
         let Some(resume_command) = shell_command_from_argv(&plan.argv, powershell_pane) else {
             tracing::warn!(
                 pane = pane_id.raw(),
@@ -356,6 +367,12 @@ fn stable_terminal_inner_rect(pane_inner: Rect) -> Rect {
     )
 }
 
+/// The restore line is quoted for POSIX shells or PowerShell only; any other Windows shell
+/// (cmd.exe) would run `&`, `|`, `^` and `%VAR%` from a session path or id.
+fn windows_shell_cannot_restore(windows: bool, powershell: bool) -> bool {
+    windows && !powershell
+}
+
 fn shell_command_from_argv(argv: &[String], powershell: bool) -> Option<String> {
     let quote = if powershell {
         crate::platform::quote_powershell_arg
@@ -401,6 +418,14 @@ mod tests {
             api_rx,
             crate::api::EventHub::default(),
         )
+    }
+
+    #[test]
+    fn windows_shell_cannot_restore_refuses_only_non_powershell_windows_shells() {
+        assert!(windows_shell_cannot_restore(true, false));
+        assert!(!windows_shell_cannot_restore(true, true));
+        assert!(!windows_shell_cannot_restore(false, false));
+        assert!(!windows_shell_cannot_restore(false, true));
     }
 
     #[tokio::test]

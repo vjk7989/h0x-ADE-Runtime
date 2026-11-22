@@ -280,10 +280,11 @@ fn kitty_apc_guard_holds_unfinished_sequences_and_passes_clean_ones() {
         out.extend(guard.filter(&file[split..]));
         assert!(!out.windows(3).any(|w| w == b"t=f"), "split at {split}");
     }
-    // A dangling ESC is held until the next frame decides what it is.
+    // A dangling ESC is held until the next frame decides what it is; non-graphics bytes
+    // are dropped either way.
     let mut guard = frame_output::KittyApcGuard::default();
-    assert_eq!(guard.filter(b"ab\x1b"), b"ab");
-    assert_eq!(guard.filter(b"[0m"), b"\x1b[0m");
+    assert!(guard.filter(b"ab\x1b").is_empty());
+    assert!(guard.filter(b"[0m").is_empty());
     // Legitimate split direct transmission is delivered whole once complete.
     let mut guard = frame_output::KittyApcGuard::default();
     assert!(guard.filter(b"\x1b_Ga=T,t=d,").is_empty());
@@ -291,6 +292,24 @@ fn kitty_apc_guard_holds_unfinished_sequences_and_passes_clean_ones() {
         guard.filter(b"i=1;AAAA\x1b\\"),
         b"\x1b_Ga=T,t=d,i=1;AAAA\x1b\\"
     );
+}
+
+#[test]
+fn remote_graphics_frame_drops_osc_52_and_title_but_keeps_direct_apc() {
+    let apc: &[u8] = b"\x1b_Ga=T,f=100,t=d,i=1;AAAA\x1b\\";
+    let mut guard = frame_output::KittyApcGuard::default();
+    let mixed = [
+        b"\x1b]52;c;aGVsbG8=\x07".as_slice(),
+        b"\x1b]0;pwned\x07",
+        apc,
+        b"\x1b[6n",
+    ]
+    .concat();
+    assert_eq!(guard.filter(&mixed), apc);
+    let mut guard = frame_output::KittyApcGuard::default();
+    assert!(guard
+        .filter(b"\x1b]52;c;aGVsbG8=\x1b\\\x1b]2;title\x07")
+        .is_empty());
 }
 
 #[test]
