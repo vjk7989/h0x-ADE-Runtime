@@ -28,6 +28,13 @@ pub const MAX_FRAME_SIZE: usize = 2 * 1024 * 1024;
 /// image payloads that are naturally much larger after base64 encoding.
 pub const MAX_GRAPHICS_FRAME_SIZE: usize = 32 * 1024 * 1024;
 
+/// bincode 2 charges its decode limit in in-memory sizes, not wire bytes: every
+/// primitive costs its full width (8 for u64/usize even as a 1-byte varint) and each
+/// String/Vec<u8> costs len + 8. A wire byte therefore charges at most 8 bytes (no
+/// 128-bit fields exist in wire messages), so the limit is 8x the frame cap.
+const DECODE_LIMIT_NORMAL: usize = 8 * MAX_FRAME_SIZE;
+const DECODE_LIMIT_GRAPHICS: usize = 8 * MAX_GRAPHICS_FRAME_SIZE;
+
 /// Maximum clipboard image payload size for remote paste bridging.
 pub const MAX_CLIPBOARD_IMAGE_PAYLOAD: usize = 16 * 1024 * 1024;
 
@@ -1765,8 +1772,18 @@ pub fn read_message<R: Read, M: for<'de> Deserialize<'de>>(
     let mut payload = vec![0u8; claimed_len];
     read_exact_or_eof(reader, &mut payload)?;
 
-    let (msg, consumed) = bincode::serde::decode_from_slice(&payload, bincode::config::standard())
-        .map_err(|e| FramingError::Bincode(e.to_string()))?;
+    let (msg, consumed) = if max_frame_size <= MAX_FRAME_SIZE {
+        bincode::serde::decode_from_slice(
+            &payload,
+            bincode::config::standard().with_limit::<DECODE_LIMIT_NORMAL>(),
+        )
+    } else {
+        bincode::serde::decode_from_slice(
+            &payload,
+            bincode::config::standard().with_limit::<DECODE_LIMIT_GRAPHICS>(),
+        )
+    }
+    .map_err(|e| FramingError::Bincode(e.to_string()))?;
 
     // Enforce that the decoder consumed the full payload.
     // Trailing bytes after the decoded message indicate a protocol violation
@@ -4205,6 +4222,404 @@ mod tests {
             buf[..to_read].copy_from_slice(&self.data[self.pos..self.pos + to_read]);
             self.pos += to_read;
             Ok(to_read)
+        }
+    }
+
+    #[test]
+    fn forged_huge_string_length_is_rejected_not_aborted() {
+        let config = bincode::config::standard();
+        // Claims a 2^40-byte String in a ~10 byte payload.
+        let mut payload = bincode::serde::encode_to_vec(1u64 << 40, config).unwrap();
+        payload.extend_from_slice(b"abc");
+        let mut wire = (payload.len() as u32).to_le_bytes().to_vec();
+        wire.extend_from_slice(&payload);
+        let got: Result<String, FramingError> = read_message(&mut wire.as_slice(), MAX_FRAME_SIZE);
+        assert!(matches!(got, Err(FramingError::Bincode(_))), "{got:?}");
+
+        let big = "x".repeat(MAX_FRAME_SIZE - 16);
+        let mut ok = Vec::new();
+        write_message(&mut ok, &big).unwrap();
+        let back: String = read_message(&mut ok.as_slice(), MAX_FRAME_SIZE).unwrap();
+        assert_eq!(back, big);
+    }
+
+    // ---- AUDIT-FIX-N1: decode limit against forged inner lengths ----
+
+    /// Frames `payload` with the 4-byte little-endian length prefix.
+    fn frame_payload(payload: &[u8]) -> Vec<u8> {
+        let mut wire = (payload.len() as u32).to_le_bytes().to_vec();
+        wire.extend_from_slice(payload);
+        wire
+    }
+
+    /// The bincode varint for a forged length claim.
+    fn varint(len: u64) -> Vec<u8> {
+        bincode::serde::encode_to_vec(len, bincode::config::standard()).unwrap()
+    }
+
+    /// Replaces the one-byte length varint that starts `pattern` in `encoded`
+    /// with the varint for `forged`, keeping every byte after it.
+    fn splice_length(encoded: &[u8], pattern: &[u8], forged: u64) -> Vec<u8> {
+        let at = encoded
+            .windows(pattern.len())
+            .position(|w| w == pattern)
+            .expect("pattern present in encoded message");
+        let mut out = encoded[..at].to_vec();
+        out.extend_from_slice(&varint(forged));
+        out.extend_from_slice(&encoded[at + 1..]);
+        out
+    }
+
+    fn expect_bincode_err<M: std::fmt::Debug>(got: Result<M, FramingError>) -> String {
+        match got {
+            Err(FramingError::Bincode(msg)) => msg,
+            other => panic!("expected FramingError::Bincode, got {other:?}"),
+        }
+    }
+
+    const DECODE_LIMIT: u64 = DECODE_LIMIT_NORMAL as u64;
+
+    #[test]
+    fn forged_string_length_at_limit_boundaries_is_a_bincode_error() {
+        // bincode also charges size_of::<u64>() = 8 for the decoded length itself,
+        // so the largest String it will allocate claims DECODE_LIMIT - 8 bytes.
+        // Claims up to there fail on missing input; above it, before allocating.
+        for (claim, over) in [
+            (DECODE_LIMIT - 9, false),
+            (DECODE_LIMIT - 8, false),
+            (DECODE_LIMIT - 7, true),
+            (DECODE_LIMIT - 1, true),
+            (DECODE_LIMIT, true),
+            (DECODE_LIMIT + 1, true),
+            (u32::MAX as u64, true),
+            (1u64 << 40, true),
+            (u64::MAX, true),
+        ] {
+            let mut payload = varint(claim);
+            payload.extend_from_slice(b"abc");
+            let msg = expect_bincode_err(read_message::<_, String>(
+                &mut frame_payload(&payload).as_slice(),
+                MAX_FRAME_SIZE,
+            ));
+            if over {
+                assert!(msg.contains("LimitExceeded"), "claim {claim}: {msg}");
+            } else {
+                assert!(msg.contains("UnexpectedEnd"), "claim {claim}: {msg}");
+            }
+        }
+    }
+
+    #[test]
+    fn forged_lengths_in_nested_fields_are_bincode_errors() {
+        #[derive(Debug, Deserialize)]
+        #[allow(dead_code)]
+        struct Inner {
+            name: Option<String>,
+            data: Vec<u8>,
+        }
+        #[derive(Debug, Deserialize)]
+        #[allow(dead_code)]
+        enum Outer {
+            Unit,
+            Nested { id: u32, inner: Inner },
+        }
+
+        for claim in [DECODE_LIMIT - 1, DECODE_LIMIT, DECODE_LIMIT + 1, u64::MAX] {
+            // Outer::Nested { id: 7, inner: Inner { name: Some(<forged>), .. } }
+            let mut payload = vec![1u8, 7, 1];
+            payload.extend_from_slice(&varint(claim));
+            payload.extend_from_slice(b"xy");
+            expect_bincode_err(read_message::<_, Outer>(
+                &mut frame_payload(&payload).as_slice(),
+                MAX_FRAME_SIZE,
+            ));
+
+            // Outer::Nested { id: 7, inner: Inner { name: None, data: <forged> } }
+            let mut payload = vec![1u8, 7, 0];
+            payload.extend_from_slice(&varint(claim));
+            payload.extend_from_slice(&[1, 2, 3]);
+            expect_bincode_err(read_message::<_, Outer>(
+                &mut frame_payload(&payload).as_slice(),
+                MAX_FRAME_SIZE,
+            ));
+        }
+    }
+
+    fn clipboard_image_message() -> ClientMessage {
+        ClientMessage::ClipboardImage {
+            target: ClientClipboardImageTarget::Pane("w1:p1".into()),
+            extension: "png".to_owned(),
+            data: vec![0x89, b'P', b'N', b'G'],
+        }
+    }
+
+    #[test]
+    fn forged_lengths_inside_a_real_client_message_are_bincode_errors() {
+        let msg = clipboard_image_message();
+        let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+        // Sanity: the unforged message still frames and decodes.
+        let back: ClientMessage =
+            read_message(&mut frame_payload(&encoded).as_slice(), MAX_FRAME_SIZE).unwrap();
+        assert_eq!(back, msg);
+
+        let patterns: [&[u8]; 3] = [
+            b"\x05w1:p1",   // String inside a nested enum variant
+            b"\x03png",     // String field of the variant
+            b"\x04\x89PNG", // Vec<u8> field of the variant
+        ];
+        for pattern in patterns {
+            for claim in [DECODE_LIMIT - 1, DECODE_LIMIT, DECODE_LIMIT + 1, u64::MAX] {
+                let forged = splice_length(&encoded, pattern, claim);
+                expect_bincode_err(read_message::<_, ClientMessage>(
+                    &mut frame_payload(&forged).as_slice(),
+                    MAX_FRAME_SIZE,
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn forged_graphics_asset_length_in_server_message_is_a_bincode_error() {
+        let message = graphics_server_message(vec![255, 0, 0, 255, 0, 255, 0, 255]);
+        let encoded = bincode::serde::encode_to_vec(&message, bincode::config::standard()).unwrap();
+        for claim in [DECODE_LIMIT - 1, DECODE_LIMIT, DECODE_LIMIT + 1, u64::MAX] {
+            let forged = splice_length(&encoded, &[8, 255, 0, 0, 255, 0, 255, 0, 255], claim);
+            expect_bincode_err(read_message::<_, ServerMessage>(
+                &mut frame_payload(&forged).as_slice(),
+                MAX_GRAPHICS_FRAME_SIZE,
+            ));
+        }
+    }
+
+    #[test]
+    fn forged_collection_counts_are_bincode_errors() {
+        for claim in [DECODE_LIMIT - 1, DECODE_LIMIT, DECODE_LIMIT + 1, u64::MAX] {
+            let mut payload = varint(claim);
+            payload.extend_from_slice(&[0, 0, 0]);
+            let wire = frame_payload(&payload);
+            expect_bincode_err(read_message::<_, Vec<String>>(
+                &mut wire.as_slice(),
+                MAX_FRAME_SIZE,
+            ));
+            expect_bincode_err(read_message::<_, Vec<(u64, u64, u64)>>(
+                &mut wire.as_slice(),
+                MAX_FRAME_SIZE,
+            ));
+            expect_bincode_err(read_message::<_, HashMap<String, u32>>(
+                &mut wire.as_slice(),
+                MAX_FRAME_SIZE,
+            ));
+            expect_bincode_err(read_message::<_, Vec<SurfaceGraphicsPlacement>>(
+                &mut wire.as_slice(),
+                MAX_FRAME_SIZE,
+            ));
+        }
+    }
+
+    #[test]
+    fn forged_length_through_partial_reads_is_a_bincode_error() {
+        let mut payload = varint(u64::MAX);
+        payload.extend_from_slice(b"abc");
+        let mut reader = ChunkedReader::new(frame_payload(&payload), 1);
+        expect_bincode_err(read_message::<_, String>(&mut reader, MAX_FRAME_SIZE));
+    }
+
+    #[test]
+    fn truncated_frames_are_rejected() {
+        let mut wire = Vec::new();
+        write_message(&mut wire, &clipboard_image_message()).unwrap();
+        // Stream cut anywhere before the end: missing prefix or payload bytes.
+        for end in 0..wire.len() {
+            let got = read_message::<_, ClientMessage>(&mut &wire[..end], MAX_FRAME_SIZE);
+            assert!(
+                matches!(got, Err(FramingError::UnexpectedEof)),
+                "cut at {end}: {got:?}"
+            );
+        }
+        // Prefix matches a short payload: the decoder runs out of input.
+        let payload = &wire[LENGTH_PREFIX_BYTES..];
+        for end in 0..payload.len() {
+            expect_bincode_err(read_message::<_, ClientMessage>(
+                &mut frame_payload(&payload[..end]).as_slice(),
+                MAX_FRAME_SIZE,
+            ));
+        }
+    }
+
+    #[test]
+    fn empty_payload_frame() {
+        let wire = frame_payload(&[]);
+        expect_bincode_err(read_message::<_, ClientMessage>(
+            &mut wire.as_slice(),
+            MAX_FRAME_SIZE,
+        ));
+        expect_bincode_err(read_message::<_, String>(
+            &mut wire.as_slice(),
+            MAX_FRAME_SIZE,
+        ));
+        // A zero-sized type is a legitimate empty payload.
+        read_message::<_, ()>(&mut wire.as_slice(), MAX_FRAME_SIZE).unwrap();
+        // An empty stream has no prefix at all.
+        let empty: &[u8] = &[];
+        let got = read_message::<_, ClientMessage>(&mut &empty[..], MAX_FRAME_SIZE);
+        assert!(matches!(got, Err(FramingError::UnexpectedEof)), "{got:?}");
+    }
+
+    #[test]
+    fn oversized_frame_is_rejected_before_decoding() {
+        // The payload carries a forged String length; framing must reject first.
+        for claimed in [MAX_FRAME_SIZE as u32 + 1, u32::MAX] {
+            let mut wire = claimed.to_le_bytes().to_vec();
+            wire.extend_from_slice(&varint(u64::MAX));
+            let got = read_message::<_, String>(&mut wire.as_slice(), MAX_FRAME_SIZE);
+            assert!(
+                matches!(
+                    got,
+                    Err(FramingError::Oversized { claimed: c, max: MAX_FRAME_SIZE })
+                        if c == claimed as usize
+                ),
+                "{got:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn largest_normal_frame_round_trips_and_one_more_byte_is_oversized() {
+        // A String of at least 2^16 bytes has a 5-byte varint length prefix.
+        let exact = "x".repeat(MAX_FRAME_SIZE - 5);
+        let mut wire = Vec::new();
+        write_message(&mut wire, &exact).unwrap();
+        assert_eq!(wire.len(), LENGTH_PREFIX_BYTES + MAX_FRAME_SIZE);
+        let back: String = read_message(&mut wire.as_slice(), MAX_FRAME_SIZE).unwrap();
+        assert_eq!(back, exact);
+
+        let over = "x".repeat(MAX_FRAME_SIZE - 4);
+        let mut wire = Vec::new();
+        write_message(&mut wire, &over).unwrap();
+        let got = read_message::<_, String>(&mut wire.as_slice(), MAX_FRAME_SIZE);
+        assert!(
+            matches!(got, Err(FramingError::Oversized { claimed, .. }) if claimed == MAX_FRAME_SIZE + 1),
+            "{got:?}"
+        );
+    }
+
+    fn graphics_server_message(data: Vec<u8>) -> ServerMessage {
+        graphics_server_message_with_cells(data, Vec::new(), 0, 0)
+    }
+
+    fn graphics_server_message_with_cells(
+        data: Vec<u8>,
+        cells: Vec<CellData>,
+        width: u16,
+        height: u16,
+    ) -> ServerMessage {
+        let key = SurfaceGraphicsAssetKey {
+            source: SurfaceGraphicsSource::Terminal {
+                target: SurfaceGraphicsTarget::Pane {
+                    pane_id: "pane-1".into(),
+                },
+                image_id: 7,
+            },
+            image_width: 2,
+            image_height: 1,
+            format: SurfaceGraphicsFormat::Rgba,
+            data_len: 8,
+            data_fingerprint: 42,
+        };
+        ServerMessage::PaneSurface(PaneSurfaceFrame {
+            boot_id: "boot-1".into(),
+            projection_revision: 2,
+            surface_revision: 3,
+            frame: FrameData {
+                cells,
+                width,
+                height,
+                cursor: None,
+                hyperlinks: Vec::new(),
+                graphics: Vec::new(),
+            },
+            panes: Vec::new(),
+            splits: Vec::new(),
+            popup: None,
+            graphics: SurfaceGraphicsScene {
+                assets: vec![SurfaceGraphicsAsset { key, data }],
+                placements: Vec::new(),
+                retained_assets: Vec::new(),
+            },
+        })
+    }
+
+    #[test]
+    fn graphics_frame_up_to_the_graphics_limit_round_trips() {
+        let config = bincode::config::standard();
+        // Probe and target data lengths both use the 5-byte varint form.
+        let probe = 1usize << 16;
+        let overhead =
+            bincode::serde::encode_to_vec(graphics_server_message(vec![0; probe]), config)
+                .unwrap()
+                .len()
+                - probe;
+
+        let data: Vec<u8> = (0..MAX_GRAPHICS_FRAME_SIZE - overhead)
+            .map(|i| (i % 251) as u8)
+            .collect();
+        let message = graphics_server_message(data);
+        let mut wire = Vec::new();
+        write_message(&mut wire, &message).unwrap();
+        assert_eq!(wire.len(), LENGTH_PREFIX_BYTES + MAX_GRAPHICS_FRAME_SIZE);
+        let back: ServerMessage =
+            read_message(&mut wire.as_slice(), MAX_GRAPHICS_FRAME_SIZE).unwrap();
+        assert_eq!(back, message);
+        drop(back);
+        drop(message);
+
+        // One byte more is a framing rejection, not a decode attempt.
+        let mut wire = Vec::new();
+        write_message(
+            &mut wire,
+            &graphics_server_message(vec![0; MAX_GRAPHICS_FRAME_SIZE - overhead + 1]),
+        )
+        .unwrap();
+        let got = read_message::<_, ServerMessage>(&mut wire.as_slice(), MAX_GRAPHICS_FRAME_SIZE);
+        assert!(
+            matches!(got, Err(FramingError::Oversized { claimed, .. }) if claimed == MAX_GRAPHICS_FRAME_SIZE + 1),
+            "{got:?}"
+        );
+    }
+
+    #[test]
+    fn graphics_frame_with_full_image_budget_and_large_grid_round_trips() {
+        // The server may send HEADLESS_GRAPHICS_TRANSACTION_BUDGET image bytes plus up
+        // to MAX_FRAME_SIZE of other data in one graphics frame. A 400x300 grid of
+        // blank cells is ~0.8 MiB on the wire, so the whole payload stays below
+        // MAX_GRAPHICS_FRAME_SIZE and must decode.
+        let (width, height) = (400u16, 300u16);
+        let cells: Vec<CellData> = (0..usize::from(width) * usize::from(height))
+            .map(|_| CellData {
+                symbol: " ".into(),
+                fg: 0,
+                bg: 0,
+                modifier: 0,
+                skip: false,
+                hyperlink: None,
+            })
+            .collect();
+        let data = vec![7u8; crate::kitty_graphics::HEADLESS_GRAPHICS_TRANSACTION_BUDGET];
+        let message = graphics_server_message_with_cells(data, cells, width, height);
+        let mut wire = Vec::new();
+        write_message(&mut wire, &message).unwrap();
+        assert!(
+            wire.len() - LENGTH_PREFIX_BYTES <= MAX_GRAPHICS_FRAME_SIZE,
+            "payload {} must fit the graphics frame",
+            wire.len() - LENGTH_PREFIX_BYTES
+        );
+        let got = read_message::<_, ServerMessage>(&mut wire.as_slice(), MAX_GRAPHICS_FRAME_SIZE);
+        match got {
+            Ok(back) => assert!(back == message),
+            Err(e) => panic!(
+                "legitimate {}-byte graphics frame rejected: {e}",
+                wire.len() - LENGTH_PREFIX_BYTES
+            ),
         }
     }
 }
