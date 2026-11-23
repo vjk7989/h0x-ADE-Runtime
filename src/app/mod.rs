@@ -300,6 +300,7 @@ fn resolve_palette_for_theme_name(
     fallback_name: &str,
     runtime: &state::ThemeRuntimeConfig,
     mode_custom: Option<&crate::config::ModeThemeColors>,
+    host: Option<&crate::terminal_theme::TerminalTheme>,
 ) -> state::Palette {
     let mut palette = state::Palette::from_name(name).unwrap_or_else(|| {
         tracing::warn!(
@@ -310,11 +311,17 @@ fn resolve_palette_for_theme_name(
         state::Palette::from_name(fallback_name).unwrap_or_else(state::Palette::catppuccin)
     });
 
+    if crate::config::canonical_theme_name(name) == Some("terminal") {
+        if let Some(host) = host {
+            palette = state::Palette::terminal_for_host(host);
+        }
+    }
     if let Some(custom) = &runtime.custom {
         palette = palette.with_overrides(custom);
     }
     if let Some(accent) = &runtime.legacy_accent {
         palette.accent = crate::config::parse_color(accent);
+        palette.accent_fg = None;
     }
     if let Some(custom) = mode_custom {
         palette = palette.with_mode_overrides(custom);
@@ -326,6 +333,7 @@ fn resolve_palette_for_theme_name(
 fn resolve_effective_theme(
     runtime: &state::ThemeRuntimeConfig,
     appearance: Option<crate::terminal_theme::HostAppearance>,
+    host: Option<&crate::terminal_theme::TerminalTheme>,
 ) -> (state::Palette, String) {
     let (name, fallback, mode_custom) = if runtime.auto_switch {
         match appearance.unwrap_or(crate::terminal_theme::HostAppearance::Dark) {
@@ -350,7 +358,7 @@ fn resolve_effective_theme(
         (&runtime.manual_name, "catppuccin", None)
     };
     (
-        resolve_palette_for_theme_name(name, fallback, runtime, mode_custom),
+        resolve_palette_for_theme_name(name, fallback, runtime, mode_custom, host),
         name.clone(),
     )
 }
@@ -362,20 +370,22 @@ pub(crate) fn client_theme_runtime_from_config(config: &Config) -> state::ThemeR
 pub(crate) fn client_palette_for_theme(
     runtime: &state::ThemeRuntimeConfig,
     name: &str,
+    host: &crate::terminal_theme::TerminalTheme,
 ) -> state::Palette {
-    resolve_palette_for_theme_name(name, "catppuccin", runtime, None)
+    resolve_palette_for_theme_name(name, "catppuccin", runtime, None, Some(host))
 }
 
 pub(crate) fn client_palette_from_config(config: &Config) -> state::Palette {
     let runtime = client_theme_runtime_from_config(config);
-    resolve_effective_theme(&runtime, None).0
+    resolve_effective_theme(&runtime, None, None).0
 }
 
 pub(crate) fn client_palette_for_appearance(
     runtime: &state::ThemeRuntimeConfig,
-    appearance: crate::terminal_theme::HostAppearance,
+    appearance: Option<crate::terminal_theme::HostAppearance>,
+    host: &crate::terminal_theme::TerminalTheme,
 ) -> state::Palette {
-    resolve_effective_theme(runtime, Some(appearance)).0
+    resolve_effective_theme(runtime, appearance, Some(host)).0
 }
 
 impl App {
@@ -495,7 +505,7 @@ impl App {
         #[cfg(test)]
         let agent_manifest_summaries = Vec::new();
         let theme_runtime = theme_runtime_config(config, true);
-        let (theme_palette, theme_name) = resolve_effective_theme(&theme_runtime, None);
+        let (theme_palette, theme_name) = resolve_effective_theme(&theme_runtime, None, None);
 
         let mut state = AppState {
             terminals: std::collections::HashMap::new(),
@@ -3539,5 +3549,111 @@ mod tests {
             AgentState::Idle,
             "Working→Idle should still apply after temporary queue pressure"
         );
+    }
+
+    fn light_host_theme() -> crate::terminal_theme::TerminalTheme {
+        use crate::terminal_theme::RgbColor;
+        let mut host = crate::terminal_theme::TerminalTheme {
+            foreground: Some(RgbColor { r: 0, g: 0, b: 0 }),
+            background: Some(RgbColor {
+                r: 255,
+                g: 255,
+                b: 255,
+            }),
+            ..Default::default()
+        };
+        host.palette[4] = Some(RgbColor { r: 0, g: 0, b: 170 });
+        host.palette[8] = Some(RgbColor {
+            r: 60,
+            g: 60,
+            b: 60,
+        });
+        host
+    }
+
+    fn theme_runtime(name: &str) -> state::ThemeRuntimeConfig {
+        state::ThemeRuntimeConfig {
+            manual_name: name.to_string(),
+            dark_name: name.to_string(),
+            light_name: name.to_string(),
+            auto_switch: false,
+            custom: None,
+            legacy_accent: None,
+        }
+    }
+
+    #[test]
+    fn terminal_theme_uses_host_colors_only_for_the_terminal_theme() {
+        let host = light_host_theme();
+        let derived = state::Palette::terminal_for_host(&host);
+        assert_ne!(derived, state::Palette::terminal());
+
+        // Name aliases are canonicalised before the host check.
+        for name in ["terminal", "Terminal", "TERMINAL"] {
+            assert_eq!(
+                client_palette_for_theme(&theme_runtime(name), name, &host),
+                derived,
+                "{name}"
+            );
+        }
+        // Other built-ins ignore host colours.
+        assert_eq!(
+            client_palette_for_theme(&theme_runtime("dracula"), "dracula", &host),
+            state::Palette::dracula()
+        );
+        // Unknown names fall back to catppuccin, not to the host palette.
+        assert_eq!(
+            client_palette_for_theme(&theme_runtime("no-such-theme"), "no-such-theme", &host),
+            state::Palette::catppuccin()
+        );
+        // Without host colours the terminal theme is the plain ANSI palette.
+        assert_eq!(
+            client_palette_for_theme(
+                &theme_runtime("terminal"),
+                "terminal",
+                &crate::terminal_theme::TerminalTheme::default()
+            ),
+            state::Palette::terminal()
+        );
+        let mut config = Config::default();
+        config.theme.name = Some("terminal".to_string());
+        assert_eq!(
+            client_palette_from_config(&config),
+            state::Palette::terminal()
+        );
+    }
+
+    #[test]
+    fn terminal_theme_from_host_under_auto_switch_without_known_appearance() {
+        let host = light_host_theme();
+        let mut runtime = theme_runtime("catppuccin");
+        runtime.auto_switch = true;
+        runtime.dark_name = "terminal".to_string();
+        runtime.light_name = "catppuccin-latte".to_string();
+        // Missing appearance falls back to dark, which maps to the terminal theme.
+        assert_eq!(
+            client_palette_for_appearance(&runtime, None, &host),
+            state::Palette::terminal_for_host(&host)
+        );
+        assert_eq!(
+            client_palette_for_appearance(
+                &runtime,
+                Some(crate::terminal_theme::HostAppearance::Light),
+                &host
+            ),
+            state::Palette::catppuccin_latte()
+        );
+    }
+
+    #[test]
+    fn legacy_accent_drops_host_accent_text_color() {
+        let host = light_host_theme();
+        assert!(state::Palette::terminal_for_host(&host).accent_fg.is_some());
+        let mut runtime = theme_runtime("terminal");
+        runtime.legacy_accent = Some("#ff0000".to_string());
+        let palette = client_palette_for_theme(&runtime, "terminal", &host);
+        assert_eq!(palette.accent, ratatui::style::Color::Rgb(255, 0, 0));
+        assert_eq!(palette.accent_fg, None);
+        assert_eq!(palette.accent_foreground(), palette.surface_dim);
     }
 }
