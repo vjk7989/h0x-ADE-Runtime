@@ -51,6 +51,7 @@ const OBSERVER_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Maximum input payload size (bytes) for a single `ClientMessage::Input`.
 const MAX_INPUT_PAYLOAD: usize = 1024 * 1024; // 1 MB
+const MAX_CLIENT_CONTROL_BYTES: usize = 64 * 1024 * 1024;
 const MAX_CLIENT_SHELL_DIMENSION: u16 = 4096;
 const MAX_CLIENT_SHELL_CELLS: u32 = 1_000_000;
 const MAX_CLIENT_CELL_SIZE_PX: u32 = 4096;
@@ -122,6 +123,19 @@ fn decode_endpoint_request(request: &str) -> serde_json::Result<DecodedEndpointR
 /// Maximum structured input events accepted in one client message.
 const MAX_INPUT_EVENT_BATCH: usize = 4096;
 
+#[cfg(test)]
+fn split_control_frames(data: Vec<u8>) -> Vec<Vec<u8>> {
+    let mut frames = Vec::new();
+    let mut offset = 0;
+    while offset < data.len() {
+        let length = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
+        let end = offset + 4 + length;
+        frames.push(data[offset..end].to_vec());
+        offset = end;
+    }
+    frames
+}
+
 /// Channels owned by the server side of a client writer thread.
 #[derive(Clone, Debug)]
 pub(crate) struct ClientWriter {
@@ -149,9 +163,16 @@ impl ClientWriter {
     #[cfg(all(test, unix))]
     pub(crate) fn test_drain(&self) -> Vec<Vec<u8>> {
         let mut state = self.render.queue.lock_state();
-        let mut frames = state.control.drain(..).collect::<Vec<_>>();
+        let mut frames = Vec::new();
+        while let Some(item) = state.take_control() {
+            match item {
+                ClientWriteItem::Control(data) => frames.extend(split_control_frames(data)),
+                ClientWriteItem::Render(_) => unreachable!(),
+            }
+        }
         frames.extend(state.ordered.drain(..));
         frames.extend(state.render.take());
+        state.retained_bytes = 0;
         frames
     }
 
@@ -181,10 +202,16 @@ impl ClientWriter {
         };
         std::thread::spawn(move || {
             while let Some(item) = drain.recv() {
+                let retained = item.retained_control_bytes();
                 let sent = match item {
-                    ClientWriteItem::Control(data) => control.send(data).is_ok(),
+                    ClientWriteItem::Control(data) => split_control_frames(data)
+                        .into_iter()
+                        .all(|frame| control.send(frame).is_ok()),
                     ClientWriteItem::Render(data) => render.send(data).is_ok(),
                 };
+                if let Some(retained) = retained {
+                    drain.release(retained);
+                }
                 if !sent {
                     break;
                 }
@@ -244,6 +271,11 @@ impl ClientControlWriter {
     pub(crate) fn send(&self, data: Vec<u8>) -> Result<(), SendError<Vec<u8>>> {
         self.queue.send_control(data)
     }
+
+    /// One revision's optional view projection, completion map, and snapshot in wire order.
+    pub(crate) fn send_state(&self, data: Vec<u8>) -> Result<(), SendError<Vec<u8>>> {
+        self.queue.send_state(data)
+    }
 }
 
 impl ClientRenderWriter {
@@ -273,15 +305,34 @@ impl ClientRenderWriter {
 struct ClientWriterQueue {
     state: Mutex<ClientWriterQueueState>,
     ready: Condvar,
+    max_bytes: usize,
+    client_id: u64,
+    disconnect_stream: Option<LocalStream>,
 }
 
 #[derive(Debug, Default)]
 struct ClientWriterQueueState {
     control: VecDeque<Vec<u8>>,
+    pending_state: Option<Vec<u8>>,
+    controls_before_state: usize,
     ordered: VecDeque<Vec<u8>>,
     render: Option<Vec<u8>>,
+    retained_bytes: usize,
     senders: usize,
     writer_alive: bool,
+}
+
+impl ClientWriterQueueState {
+    fn take_control(&mut self) -> Option<ClientWriteItem> {
+        if self.controls_before_state == 0 {
+            if let Some(frames) = self.pending_state.take() {
+                return Some(ClientWriteItem::Control(frames));
+            }
+        }
+        let data = self.control.pop_front()?;
+        self.controls_before_state = self.controls_before_state.saturating_sub(1);
+        Some(ClientWriteItem::Control(data))
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -290,14 +341,40 @@ enum ClientWriteItem {
     Render(Vec<u8>),
 }
 
+fn frame_retained_bytes(data: &Vec<u8>) -> usize {
+    data.capacity()
+        .saturating_add(std::mem::size_of::<Vec<u8>>())
+}
+
+impl ClientWriteItem {
+    fn retained_control_bytes(&self) -> Option<usize> {
+        match self {
+            Self::Control(data) => Some(frame_retained_bytes(data)),
+            Self::Render(_) => None,
+        }
+    }
+}
+
 impl ClientWriterQueue {
+    #[cfg(test)]
     fn new() -> Arc<Self> {
+        Self::with_limit(0, MAX_CLIENT_CONTROL_BYTES, None)
+    }
+
+    fn with_limit(
+        client_id: u64,
+        max_bytes: usize,
+        disconnect_stream: Option<LocalStream>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             state: Mutex::new(ClientWriterQueueState {
                 writer_alive: true,
                 ..ClientWriterQueueState::default()
             }),
             ready: Condvar::new(),
+            max_bytes,
+            client_id,
+            disconnect_stream,
         })
     }
 
@@ -312,13 +389,47 @@ impl ClientWriterQueue {
         self.ready.notify_one();
     }
 
+    fn reserve(&self, state: &mut ClientWriterQueueState, added: usize, removed: usize) -> bool {
+        let retained = state.retained_bytes.saturating_sub(removed);
+        if added > self.max_bytes.saturating_sub(retained) {
+            return false;
+        }
+        state.retained_bytes = retained + added;
+        true
+    }
+
     fn send_control(&self, data: Vec<u8>) -> Result<(), SendError<Vec<u8>>> {
         let mut state = self.lock_state();
         if !state.writer_alive {
             return Err(SendError(data));
         }
+        if !self.reserve(&mut state, frame_retained_bytes(&data), 0) {
+            drop(state);
+            self.disconnect_overflow();
+            return Err(SendError(data));
+        }
         state.control.push_back(data);
         self.ready.notify_one();
+        Ok(())
+    }
+
+    fn send_state(&self, data: Vec<u8>) -> Result<(), SendError<Vec<u8>>> {
+        let mut state = self.lock_state();
+        if !state.writer_alive {
+            return Err(SendError(data));
+        }
+        let replaced = state.pending_state.as_ref().map_or(0, frame_retained_bytes);
+        if !self.reserve(&mut state, frame_retained_bytes(&data), replaced) {
+            drop(state);
+            self.disconnect_overflow();
+            return Err(SendError(data));
+        }
+        let previous = state.pending_state.replace(data);
+        // The newest revision follows every reliable control published before it.
+        state.controls_before_state = state.control.len();
+        self.ready.notify_one();
+        drop(state);
+        drop(previous);
         Ok(())
     }
 
@@ -361,8 +472,11 @@ impl ClientWriterQueue {
     fn recv(&self) -> Option<ClientWriteItem> {
         let mut state = self.lock_state();
         loop {
-            if let Some(data) = state.control.pop_front() {
-                return Some(ClientWriteItem::Control(data));
+            if !state.writer_alive {
+                return None;
+            }
+            if let Some(item) = state.take_control() {
+                return Some(item);
             }
             if let Some(data) = state.ordered.pop_front() {
                 self.ready.notify_one();
@@ -381,11 +495,34 @@ impl ClientWriterQueue {
         }
     }
 
+    fn release(&self, bytes: usize) {
+        let mut state = self.lock_state();
+        state.retained_bytes = state.retained_bytes.saturating_sub(bytes);
+    }
+
+    fn disconnect_overflow(&self) {
+        warn!(
+            client_id = self.client_id,
+            limit = self.max_bytes,
+            "client exceeded outbound control queue byte limit"
+        );
+        self.close_writer();
+        if let Some(stream) = &self.disconnect_stream {
+            if let Err(err) = crate::platform::shutdown_client_stream(stream) {
+                debug!(err = %err, "failed to shut down overflowing client");
+            }
+        }
+    }
+
     fn close_writer(&self) {
         let mut state = self.lock_state();
         state.writer_alive = false;
+        state.control.clear();
+        state.pending_state = None;
+        state.controls_before_state = 0;
         state.render = None;
         state.ordered.clear();
+        state.retained_bytes = 0;
         self.ready.notify_all();
     }
 
@@ -865,7 +1002,11 @@ pub(crate) fn handle_client_handshake(
     )?;
 
     // Create separate channels for reliable control messages and droppable renders.
-    let writer_queue = ClientWriterQueue::new();
+    let writer_queue = ClientWriterQueue::with_limit(
+        client_id,
+        MAX_CLIENT_CONTROL_BYTES,
+        Some(stream.try_clone()?),
+    );
     let writer = ClientWriter {
         control: ClientControlWriter::queue(writer_queue.clone()),
         render: ClientRenderWriter::queue(writer_queue.clone()),
@@ -965,6 +1106,7 @@ fn client_writer_loop(
     server_event_tx: mpsc::Sender<ServerEvent>,
 ) {
     while let Some(item) = writer_queue.recv() {
+        let retained = item.retained_control_bytes();
         let written = match item {
             ClientWriteItem::Control(data) => write_framed_bytes(&mut stream, &data),
             ClientWriteItem::Render(data) => {
@@ -973,6 +1115,9 @@ fn client_writer_loop(
                 write_framed_bytes(&mut stream, &data)
             }
         };
+        if let Some(retained) = retained {
+            writer_queue.release(retained);
+        }
         if !written {
             let _ = server_event_tx.blocking_send(ServerEvent::ClientDisconnected { client_id });
             break;
@@ -1553,6 +1698,456 @@ mod tests {
         let mut bytes = Vec::new();
         protocol::write_message(&mut bytes, message).expect("frame server message");
         bytes
+    }
+
+    #[test]
+    fn pending_state_replacement_keeps_matching_revision_and_control_order() {
+        let (writer, queue) = test_queue_writer();
+        let state = |revision| vec![b'v', revision, b'c', revision, b's', revision];
+        writer.control.send(b"first".to_vec()).unwrap();
+        writer.control.send_state(state(1)).unwrap();
+        writer.control.send(b"notification".to_vec()).unwrap();
+        writer.control.send_state(state(2)).unwrap();
+        writer.control.send(b"clipboard".to_vec()).unwrap();
+        drop(writer);
+
+        assert_eq!(
+            queue.recv(),
+            Some(ClientWriteItem::Control(b"first".to_vec()))
+        );
+        assert_eq!(
+            queue.recv(),
+            Some(ClientWriteItem::Control(b"notification".to_vec()))
+        );
+        assert_eq!(queue.recv(), Some(ClientWriteItem::Control(state(2))));
+        assert_eq!(
+            queue.recv(),
+            Some(ClientWriteItem::Control(b"clipboard".to_vec()))
+        );
+        assert_eq!(queue.recv(), None);
+    }
+
+    #[test]
+    fn state_coalescing_releases_replaced_bytes_and_preserves_claimed_revision() {
+        let queue = ClientWriterQueue::with_limit(0, 32 * 1024, None);
+        let control = ClientControlWriter::queue(queue.clone());
+        let state = |revision| vec![revision; 8 * 1024];
+        control.send_state(state(1)).unwrap();
+        let claimed = queue.recv().unwrap();
+        for revision in 2..=250 {
+            control.send_state(state(revision)).unwrap();
+        }
+        assert_eq!(claimed, ClientWriteItem::Control(state(1)));
+        queue.release(claimed.retained_control_bytes().unwrap());
+        assert_eq!(queue.recv(), Some(ClientWriteItem::Control(state(250))));
+        drop(control);
+        assert_eq!(queue.recv(), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn client_byte_cap_disconnects_and_releases_blocked_transport_threads() {
+        assert_byte_cap_releases_transport_threads();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn named_pipe_byte_cap_releases_blocked_writer_and_reader() {
+        assert_byte_cap_releases_transport_threads();
+    }
+
+    fn assert_byte_cap_releases_transport_threads() {
+        let (mut client, server, _path) = local_stream_pair("client-byte-cap");
+        #[cfg(unix)]
+        limit_local_stream_buffers(&server);
+        let queue =
+            ClientWriterQueue::with_limit(15, 512 * 1024, Some(server.try_clone().unwrap()));
+        let control = ClientControlWriter::queue(queue.clone());
+        let write_stream = server.try_clone().unwrap();
+        let (events, mut event_rx) = mpsc::channel(8);
+        let read_events = events.clone();
+        let (reader_done_tx, reader_done) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let result =
+                client_read_loop(server, 15, &read_events, &Arc::new(AtomicBool::new(false)));
+            reader_done_tx.send(result).unwrap();
+        });
+        let writer_queue = queue.clone();
+        let (writer_done_tx, writer_done) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            client_writer_loop(write_stream, 15, writer_queue, events);
+            writer_done_tx.send(()).unwrap();
+        });
+
+        control.send(vec![0; 256 * 1024]).unwrap();
+        // Reading one byte proves the first frame has been claimed by the writer.
+        let (first_tx, first_rx) = std::sync::mpsc::channel();
+        let first_reader = std::thread::spawn(move || {
+            let mut first = [0; 1];
+            let result = std::io::Read::read_exact(&mut client, &mut first);
+            first_tx.send((result, client)).unwrap();
+        });
+        let (first_result, _client) = first_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        first_result.unwrap();
+        first_reader.join().unwrap();
+        assert!(control.send(vec![0; 256 * 1024]).is_err());
+        writer_done.recv_timeout(Duration::from_secs(2)).unwrap();
+        reader_done
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        writer.join().unwrap();
+        reader.join().unwrap();
+        assert!(matches!(
+            recv_server_event(&mut event_rx, "overflow disconnect"),
+            ServerEvent::ClientDisconnected { client_id: 15 }
+        ));
+        assert_eq!(queue.recv(), None);
+        assert!(control.send(vec![1]).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn graphics_render_backlog_does_not_charge_the_control_cap() {
+        let (client, server, _path) = local_stream_pair("graphics-control-budget");
+        limit_local_stream_buffers(&server);
+        client
+            .set_recv_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let queue = ClientWriterQueue::with_limit(21, 1024, Some(server.try_clone().unwrap()));
+        let output = ClientWriter {
+            control: ClientControlWriter::queue(queue.clone()),
+            render: ClientRenderWriter::queue(queue.clone()),
+        };
+        let (events, mut event_rx) = mpsc::channel(8);
+        let worker_queue = queue.clone();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            client_writer_loop(server, 21, worker_queue, events);
+            done_tx.send(()).unwrap();
+        });
+        let graphics = |image| {
+            frame_server_message(&ServerMessage::Graphics {
+                bytes: vec![image; 32 * 1024],
+            })
+        };
+
+        output.render.try_send(graphics(1)).unwrap();
+        assert!(matches!(
+            recv_server_event(&mut event_rx, "first graphics claimed"),
+            ServerEvent::ClientWriterDrained { client_id: 21 }
+        ));
+        output.render.try_send(graphics(2)).unwrap();
+        output.render.send_ordered(graphics(3)).unwrap();
+        output
+            .control
+            .send(frame_server_message(&ServerMessage::WindowTitle {
+                title: Some("control still works".into()),
+            }))
+            .unwrap();
+
+        let mut reader = client;
+        let mut next_image = 1;
+        let mut received_control = false;
+        for _ in 0..4 {
+            let message: ServerMessage =
+                protocol::read_message(&mut reader, MAX_GRAPHICS_FRAME_SIZE).unwrap();
+            match message {
+                ServerMessage::Graphics { bytes } => {
+                    assert_eq!(bytes.first().copied(), Some(next_image));
+                    assert_eq!(bytes.len(), 32 * 1024);
+                    next_image += 1;
+                }
+                ServerMessage::WindowTitle { title } => {
+                    assert_eq!(title.as_deref(), Some("control still works"));
+                    assert!(!received_control);
+                    received_control = true;
+                }
+                _ => panic!("expected graphics or the reliable control"),
+            }
+        }
+        assert_eq!(next_image, 4);
+        assert!(received_control);
+        output
+            .control
+            .send(frame_server_message(&ServerMessage::ReloadSoundConfig))
+            .unwrap();
+        let last: ServerMessage = protocol::read_message(&mut reader, MAX_FRAME_SIZE).unwrap();
+        assert_eq!(last, ServerMessage::ReloadSoundConfig);
+        drop(output);
+        done_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        worker.join().unwrap();
+        while let Ok(event) = event_rx.try_recv() {
+            assert!(matches!(
+                event,
+                ServerEvent::ClientWriterDrained { client_id: 21 }
+            ));
+        }
+    }
+
+    /// A control frame whose accounted size is exactly `retained` bytes.
+    fn control_frame_retaining(retained: usize, fill: u8) -> Vec<u8> {
+        let data = vec![fill; retained - std::mem::size_of::<Vec<u8>>()];
+        assert_eq!(
+            frame_retained_bytes(&data),
+            retained,
+            "test frame capacity must be exact"
+        );
+        data
+    }
+
+    #[test]
+    fn empty_control_queue_with_no_senders_yields_nothing() {
+        let (writer, queue) = test_queue_writer();
+        drop(writer);
+        assert_eq!(queue.recv(), None);
+        assert_eq!(queue.lock_state().retained_bytes, 0);
+    }
+
+    #[test]
+    fn empty_state_frame_is_queued_and_charged_only_its_overhead() {
+        let (writer, queue) = test_queue_writer();
+        writer.control.send_state(Vec::new()).unwrap();
+        assert_eq!(
+            queue.lock_state().retained_bytes,
+            std::mem::size_of::<Vec<u8>>()
+        );
+        drop(writer);
+        assert_eq!(queue.recv(), Some(ClientWriteItem::Control(Vec::new())));
+        assert_eq!(queue.recv(), None);
+    }
+
+    #[test]
+    fn control_queue_exactly_at_the_real_cap_is_not_a_disconnect() {
+        let queue = ClientWriterQueue::with_limit(0, MAX_CLIENT_CONTROL_BYTES, None);
+        let control = ClientControlWriter::queue(queue.clone());
+        control
+            .send(control_frame_retaining(MAX_CLIENT_CONTROL_BYTES, 1))
+            .expect("a frame exactly at the cap is accepted");
+        assert_eq!(queue.lock_state().retained_bytes, MAX_CLIENT_CONTROL_BYTES);
+        let item = queue.recv().expect("the frame stays queued");
+        queue.release(item.retained_control_bytes().unwrap());
+        assert_eq!(queue.lock_state().retained_bytes, 0);
+        drop(control);
+        assert_eq!(queue.recv(), None);
+    }
+
+    #[test]
+    fn control_queue_one_byte_over_the_real_cap_disconnects() {
+        let queue = ClientWriterQueue::with_limit(0, MAX_CLIENT_CONTROL_BYTES, None);
+        let control = ClientControlWriter::queue(queue.clone());
+        let over = control_frame_retaining(MAX_CLIENT_CONTROL_BYTES + 1, 1);
+        let err = control.send(over).expect_err("cap + 1 disconnects");
+        assert_eq!(
+            frame_retained_bytes(&err.0),
+            MAX_CLIENT_CONTROL_BYTES + 1,
+            "the rejected frame is handed back intact"
+        );
+        assert!(!queue.lock_state().writer_alive);
+        assert_eq!(queue.recv(), None);
+        assert!(control.send(vec![1]).is_err());
+    }
+
+    #[test]
+    fn accumulated_control_frames_hit_the_cap_boundary_on_both_sides() {
+        const LIMIT: usize = 4096;
+        let at_cap = ClientWriterQueue::with_limit(1, LIMIT, None);
+        let control = ClientControlWriter::queue(at_cap.clone());
+        control.send(control_frame_retaining(1000, 1)).unwrap();
+        control
+            .send(control_frame_retaining(LIMIT - 1000, 2))
+            .expect("filling the queue to exactly the cap is accepted");
+        assert_eq!(at_cap.lock_state().retained_bytes, LIMIT);
+        assert!(at_cap.lock_state().writer_alive);
+
+        let over_cap = ClientWriterQueue::with_limit(2, LIMIT, None);
+        let control = ClientControlWriter::queue(over_cap.clone());
+        control.send(control_frame_retaining(1000, 1)).unwrap();
+        assert!(control
+            .send(control_frame_retaining(LIMIT - 1000 + 1, 2))
+            .is_err());
+        assert!(!over_cap.lock_state().writer_alive);
+        // The frame queued before the overflow is dropped with the client.
+        assert_eq!(over_cap.recv(), None);
+    }
+
+    #[test]
+    fn claimed_control_frame_keeps_charging_the_cap_until_released() {
+        const LIMIT: usize = 4096;
+        let queue = ClientWriterQueue::with_limit(3, LIMIT, None);
+        let control = ClientControlWriter::queue(queue.clone());
+        control.send(control_frame_retaining(LIMIT, 1)).unwrap();
+        let claimed = queue.recv().unwrap();
+        queue.release(claimed.retained_control_bytes().unwrap());
+        control
+            .send(control_frame_retaining(LIMIT, 2))
+            .expect("released bytes make room for a full frame again");
+
+        let claimed = queue.recv().unwrap();
+        assert_eq!(
+            claimed,
+            ClientWriteItem::Control(control_frame_retaining(LIMIT, 2))
+        );
+        // Still being written: even an empty frame now exceeds the cap.
+        assert!(control.send(Vec::new()).is_err());
+        assert!(!queue.lock_state().writer_alive);
+    }
+
+    #[test]
+    fn state_replacement_at_the_cap_is_accepted_and_one_byte_more_disconnects() {
+        const LIMIT: usize = 4096;
+        let queue = ClientWriterQueue::with_limit(4, LIMIT, None);
+        let control = ClientControlWriter::queue(queue.clone());
+        control
+            .send_state(control_frame_retaining(LIMIT, 1))
+            .unwrap();
+        control
+            .send_state(control_frame_retaining(LIMIT, 2))
+            .expect("replacing an unclaimed state frees its bytes first");
+        assert_eq!(queue.lock_state().retained_bytes, LIMIT);
+        assert!(control
+            .send_state(control_frame_retaining(LIMIT + 1, 3))
+            .is_err());
+        assert!(!queue.lock_state().writer_alive);
+        assert_eq!(queue.lock_state().pending_state, None);
+        assert_eq!(queue.recv(), None);
+    }
+
+    #[test]
+    fn unread_state_frames_coalesce_but_every_control_message_survives() {
+        let (writer, queue) = test_queue_writer();
+        for revision in 0..100u8 {
+            writer.control.send(vec![b'c', revision]).unwrap();
+            writer.control.send_state(vec![b's', revision]).unwrap();
+        }
+        // 100 controls plus one coalesced state, each charged capacity + Vec header.
+        let charged = |frame: Vec<u8>| frame_retained_bytes(&frame);
+        assert_eq!(queue.lock_state().retained_bytes, 101 * charged(vec![0, 0]));
+        drop(writer);
+
+        let mut received = Vec::new();
+        while let Some(item) = queue.recv() {
+            let ClientWriteItem::Control(data) = item else {
+                panic!("only control items were queued");
+            };
+            received.push(data);
+        }
+        let mut expected = (0..100u8).map(|r| vec![b'c', r]).collect::<Vec<_>>();
+        expected.push(vec![b's', 99]);
+        assert_eq!(received, expected);
+    }
+
+    #[test]
+    fn render_and_graphics_lanes_are_not_charged_or_dropped_by_state_coalescing() {
+        let queue = ClientWriterQueue::with_limit(5, 64, None);
+        let output = ClientWriter {
+            control: ClientControlWriter::queue(queue.clone()),
+            render: ClientRenderWriter::queue(queue.clone()),
+        };
+        let graphics = |image| vec![image; 1024 * 1024];
+        output.render.try_send(graphics(1)).unwrap();
+        output.render.send_ordered(graphics(2)).unwrap();
+        assert_eq!(queue.lock_state().retained_bytes, 0);
+        output
+            .control
+            .send_state(control_frame_retaining(64, 7))
+            .unwrap();
+        output
+            .control
+            .send_state(control_frame_retaining(64, 8))
+            .unwrap();
+        assert!(queue.lock_state().writer_alive);
+        drop(output);
+
+        assert_eq!(
+            queue.recv(),
+            Some(ClientWriteItem::Control(control_frame_retaining(64, 8)))
+        );
+        assert_eq!(queue.recv(), Some(ClientWriteItem::Render(graphics(1))));
+        assert_eq!(queue.recv(), Some(ClientWriteItem::Render(graphics(2))));
+        assert_eq!(queue.recv(), None);
+    }
+
+    #[test]
+    fn overflow_disconnects_only_the_offending_client() {
+        let slow = ClientWriterQueue::with_limit(6, 1024, None);
+        let healthy = ClientWriterQueue::with_limit(7, 1024, None);
+        let slow_out = ClientWriter {
+            control: ClientControlWriter::queue(slow.clone()),
+            render: ClientRenderWriter::queue(slow.clone()),
+        };
+        let healthy_control = ClientControlWriter::queue(healthy.clone());
+
+        slow_out.control.send_state(vec![1; 100]).unwrap();
+        slow_out.render.try_send(vec![2; 100]).unwrap();
+        assert!(slow_out.control.send(vec![0; 2048]).is_err());
+
+        assert!(slow_out.control.send_state(vec![3]).is_err());
+        assert!(matches!(
+            slow_out.render.try_send(vec![4]),
+            Err(TrySendError::Disconnected(_))
+        ));
+        assert_eq!(slow.recv(), None);
+        assert_eq!(slow.lock_state().retained_bytes, 0);
+
+        healthy_control.send(vec![9; 100]).unwrap();
+        healthy_control.send_state(vec![8; 100]).unwrap();
+        drop(healthy_control);
+        assert_eq!(healthy.recv(), Some(ClientWriteItem::Control(vec![9; 100])));
+        assert_eq!(healthy.recv(), Some(ClientWriteItem::Control(vec![8; 100])));
+        assert_eq!(healthy.recv(), None);
+    }
+
+    #[test]
+    fn a_max_size_state_triple_fits_under_the_cap_alongside_the_decode_limits() {
+        // A projection, completion map and snapshot, each framed at the per-message
+        // limit the decoder accepts, must queue without the overflow disconnect.
+        let triple = 3 * (MAX_FRAME_SIZE + 4);
+        assert!(triple + std::mem::size_of::<Vec<u8>>() <= MAX_CLIENT_CONTROL_BYTES);
+        const { assert!(MAX_GRAPHICS_FRAME_SIZE <= MAX_CLIENT_CONTROL_BYTES) };
+        let queue = ClientWriterQueue::with_limit(8, MAX_CLIENT_CONTROL_BYTES, None);
+        let control = ClientControlWriter::queue(queue.clone());
+        control
+            .send_state(vec![0; triple])
+            .expect("largest legal state frame is accepted");
+        assert!(queue.lock_state().writer_alive);
+    }
+
+    #[test]
+    fn overflow_shuts_down_the_client_transport_so_its_reader_wakes() {
+        let (mut client, server, _path) = local_stream_pair("overflow-shutdown");
+        let queue = ClientWriterQueue::with_limit(9, 1024, Some(server.try_clone().unwrap()));
+        let control = ClientControlWriter::queue(queue.clone());
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let mut byte = [0u8; 1];
+            let result = std::io::Read::read(&mut client, &mut byte);
+            done_tx.send(result.map_err(|err| err.kind())).unwrap();
+        });
+
+        assert!(control.send(vec![0; 2048]).is_err());
+        let result = done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("client read returns once the server side is shut down");
+        assert!(
+            matches!(result, Ok(0) | Err(_)),
+            "expected EOF or a pipe error, got {result:?}"
+        );
+        reader.join().unwrap();
+        drop(server);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_shutdown_client_stream_disconnects_the_named_pipe() {
+        let (mut client, server, _path) = local_stream_pair("named-pipe-disconnect");
+        crate::platform::shutdown_client_stream(&server).expect("DisconnectNamedPipe succeeds");
+        let mut byte = [0u8; 1];
+        let result = std::io::Read::read(&mut client, &mut byte);
+        assert!(
+            matches!(result, Ok(0) | Err(_)),
+            "expected EOF or a pipe error, got {result:?}"
+        );
     }
 
     #[test]

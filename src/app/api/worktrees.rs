@@ -2354,6 +2354,86 @@ mod tests {
         let _ = std::fs::remove_dir_all(repo);
     }
 
+    /// A dirty linked checkout with an API removal already registered as in flight,
+    /// keyed by workspace id or by checkout path.
+    fn dirty_checkout_with_remove_in_flight(name: &str, by_path: bool) {
+        let repo = create_committed_repo(&format!("{name}-repo"));
+        let checkout = unique_temp_path(&format!("{name}-checkout"));
+        run_git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                &format!("worktree/{name}"),
+                checkout.to_str().unwrap(),
+                "HEAD",
+            ],
+        );
+        // An in-flight removal leaves the checkout looking dirty.
+        std::fs::write(checkout.join("README.md"), "dirty\n").unwrap();
+
+        let mut app = test_app();
+        let mut child = Workspace::test_new("child");
+        child.identity_cwd = checkout.clone();
+        child.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: crate::workspace::git_space_metadata(&repo).unwrap().key,
+            label: format!("{name}-repo"),
+            repo_root: repo.clone(),
+            checkout_path: checkout.clone(),
+            is_linked_worktree: true,
+        });
+        let child_id = child.id.clone();
+        app.state.workspaces.push(child);
+        app.state.ensure_test_terminals();
+        if by_path {
+            app.pending_api_worktree_remove_paths
+                .insert(crate::worktree::canonical_or_original(&checkout), 7);
+        } else {
+            app.pending_api_worktree_removes.insert(child_id.clone(), 7);
+        }
+        let (respond_to, response_rx) = response_channel();
+
+        assert!(app.handle_deferred_worktree_api_request(
+            Request {
+                id: "dup".into(),
+                method: crate::api::schema::Method::WorktreeRemove(WorktreeRemoveParams {
+                    workspace_id: child_id,
+                    force: false,
+                    trust_repository: false,
+                }),
+            },
+            respond_to,
+            false,
+        ));
+        let response = response_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("duplicate remove should respond immediately");
+        let error: ErrorResponse = serde_json::from_str(&response).unwrap();
+        // The duplicate check runs before the (Windows) dirty-checkout check.
+        assert_eq!(error.error.code, "worktree_operation_in_progress");
+        assert!(checkout.exists());
+        assert_eq!(app.state.workspaces.len(), 1);
+        assert!(app.event_rx.try_recv().is_err());
+
+        run_git(
+            &repo,
+            &["worktree", "remove", "--force", checkout.to_str().unwrap()],
+        );
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn deferred_api_worktree_remove_in_flight_by_workspace_wins_over_dirty_check() {
+        dirty_checkout_with_remove_in_flight("api-remove-dirty-in-flight-ws", false);
+    }
+
+    #[test]
+    fn deferred_api_worktree_remove_in_flight_by_path_wins_over_dirty_check() {
+        dirty_checkout_with_remove_in_flight("api-remove-dirty-in-flight-path", true);
+    }
+
     #[test]
     fn deferred_api_worktree_remove_rejects_duplicate_checkout_path_in_flight_request() {
         let repo = create_committed_repo("api-worktree-remove-duplicate-path-repo");
