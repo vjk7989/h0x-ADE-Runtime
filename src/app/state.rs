@@ -35,6 +35,8 @@ use crate::workspace::Workspace;
 pub struct Palette {
     /// Primary accent (highlight, active borders).
     pub accent: Color,
+    /// Host-derived text color for accent fills, independent of borders and separators.
+    pub(crate) accent_fg: Option<Color>,
     /// Background for the tab bar, floating panels, overlays, and modals.
     pub panel_bg: Color,
     /// Optional desktop sidebar background. Reset preserves the terminal background.
@@ -74,9 +76,24 @@ pub struct Palette {
 }
 
 impl Palette {
+    pub(crate) fn accent_foreground(&self) -> Color {
+        self.accent_fg.unwrap_or(match self.panel_bg {
+            Color::Reset => self.surface_dim,
+            color => color,
+        })
+    }
+
+    pub(crate) fn fill_foreground(&self) -> Color {
+        match self.panel_bg {
+            Color::Reset => self.surface_dim,
+            color => color,
+        }
+    }
+
     /// Catppuccin Mocha — the default.
     pub fn catppuccin() -> Self {
         Self {
+            accent_fg: None,
             accent: Color::Rgb(137, 180, 250), // blue
             panel_bg: Color::Rgb(24, 24, 37),
             sidebar_bg: Color::Reset,
@@ -102,6 +119,7 @@ impl Palette {
     /// Catppuccin Latte — the light Catppuccin flavor.
     pub fn catppuccin_latte() -> Self {
         Self {
+            accent_fg: None,
             accent: Color::Rgb(30, 102, 245),
             panel_bg: Color::Rgb(239, 241, 245),
             sidebar_bg: Color::Reset,
@@ -127,6 +145,7 @@ impl Palette {
     /// Terminal 16-color theme.
     pub fn terminal() -> Self {
         Self {
+            accent_fg: None,
             accent: Color::Blue,
             panel_bg: Color::Reset,
             sidebar_bg: Color::Reset,
@@ -149,9 +168,79 @@ impl Palette {
         }
     }
 
+    pub(crate) fn terminal_for_host(host: &crate::terminal_theme::TerminalTheme) -> Self {
+        use crate::terminal_theme::RgbColor;
+
+        let mut palette = Self::terminal();
+        let (Some(foreground), Some(background)) = (host.foreground, host.background) else {
+            return palette;
+        };
+        let rgb = |color: RgbColor| Color::Rgb(color.r, color.g, color.b);
+
+        if let Some(surface) = host.palette[8] {
+            if foreground.contrast_ratio(surface) < 3.0 {
+                // Keep the host background's hue while making the active row visible.
+                let visible_tint = |text_floor| {
+                    for weight in (10u16..=95).step_by(5) {
+                        let blend = |bg: u8, fg: u8| {
+                            ((u16::from(bg) * (100 - weight) + u16::from(fg) * weight) / 100) as u8
+                        };
+                        let candidate = RgbColor {
+                            r: blend(background.r, foreground.r),
+                            g: blend(background.g, foreground.g),
+                            b: blend(background.b, foreground.b),
+                        };
+                        if foreground.contrast_ratio(candidate) < text_floor {
+                            break;
+                        }
+                        if background.contrast_ratio(candidate) >= 1.3 {
+                            return Some(candidate);
+                        }
+                    }
+                    None
+                };
+                if let Some(row) = visible_tint(4.5).or_else(|| visible_tint(3.0)) {
+                    palette.active_row_bg = rgb(row);
+                    palette.surface1 = rgb(row);
+                }
+            }
+            if let Some(accent) = host.palette[4] {
+                if surface.contrast_ratio(accent) < 4.5 {
+                    let black = RgbColor { r: 0, g: 0, b: 0 };
+                    let white = RgbColor {
+                        r: 255,
+                        g: 255,
+                        b: 255,
+                    };
+                    let contrast = if background.contrast_ratio(accent) >= 4.5 {
+                        background
+                    } else if black.contrast_ratio(accent) >= white.contrast_ratio(accent) {
+                        black
+                    } else {
+                        white
+                    };
+                    palette.accent_fg = Some(rgb(contrast));
+                }
+            }
+        }
+
+        for (color, index) in [
+            (&mut palette.overlay0, 7),
+            (&mut palette.subtext0, 7),
+            (&mut palette.mauve, 7),
+            (&mut palette.overlay1, 15),
+        ] {
+            if host.palette[index].is_some_and(|color| color.contrast_ratio(background) < 3.0) {
+                *color = Color::Reset;
+            }
+        }
+        palette
+    }
+
     /// Tokyo Night — blue-purple aesthetic.
     pub fn tokyo_night() -> Self {
         Self {
+            accent_fg: None,
             accent: Color::Rgb(122, 162, 247), // blue
             panel_bg: Color::Rgb(26, 27, 38),
             sidebar_bg: Color::Reset,
@@ -177,6 +266,7 @@ impl Palette {
     /// Tokyo Night Day — the light Tokyo Night style.
     pub fn tokyo_night_day() -> Self {
         Self {
+            accent_fg: None,
             accent: Color::Rgb(46, 125, 233),
             panel_bg: Color::Rgb(225, 226, 231),
             sidebar_bg: Color::Reset,
@@ -202,6 +292,7 @@ impl Palette {
     /// Dracula — purple/pink/green.
     pub fn dracula() -> Self {
         Self {
+            accent_fg: None,
             accent: Color::Rgb(189, 147, 249), // purple
             panel_bg: Color::Rgb(40, 42, 54),
             sidebar_bg: Color::Reset,
@@ -227,6 +318,7 @@ impl Palette {
     /// Nord — frosty blue palette.
     pub fn nord() -> Self {
         Self {
+            accent_fg: None,
             accent: Color::Rgb(136, 192, 208), // frost
             panel_bg: Color::Rgb(46, 52, 64),
             sidebar_bg: Color::Reset,
@@ -252,6 +344,7 @@ impl Palette {
     /// Gruvbox Dark — warm retro palette.
     pub fn gruvbox() -> Self {
         Self {
+            accent_fg: None,
             accent: Color::Rgb(215, 153, 33), // yellow
             panel_bg: Color::Rgb(40, 40, 40),
             sidebar_bg: Color::Reset,
@@ -277,6 +370,7 @@ impl Palette {
     /// Gruvbox Light — the light retro palette.
     pub fn gruvbox_light() -> Self {
         Self {
+            accent_fg: None,
             accent: Color::Rgb(7, 102, 120),
             panel_bg: Color::Rgb(251, 241, 199),
             sidebar_bg: Color::Reset,
@@ -302,6 +396,7 @@ impl Palette {
     /// One Dark — Atom's classic dark theme.
     pub fn one_dark() -> Self {
         Self {
+            accent_fg: None,
             accent: Color::Rgb(97, 175, 239), // blue
             panel_bg: Color::Rgb(40, 44, 52),
             sidebar_bg: Color::Reset,
@@ -327,6 +422,7 @@ impl Palette {
     /// One Light — Atom's classic light theme.
     pub fn one_light() -> Self {
         Self {
+            accent_fg: None,
             accent: Color::Rgb(64, 120, 242),
             panel_bg: Color::Rgb(250, 250, 250),
             sidebar_bg: Color::Reset,
@@ -352,6 +448,7 @@ impl Palette {
     /// Solarized Dark — Ethan Schoonover's classic.
     pub fn solarized() -> Self {
         Self {
+            accent_fg: None,
             accent: Color::Rgb(38, 139, 210), // blue
             panel_bg: Color::Rgb(0, 43, 54),
             sidebar_bg: Color::Reset,
@@ -377,6 +474,7 @@ impl Palette {
     /// Solarized Light — Ethan Schoonover's light variant.
     pub fn solarized_light() -> Self {
         Self {
+            accent_fg: None,
             accent: Color::Rgb(38, 139, 210),
             panel_bg: Color::Rgb(253, 246, 227),
             sidebar_bg: Color::Reset,
@@ -402,6 +500,7 @@ impl Palette {
     /// Kanagawa — inspired by Katsushika Hokusai.
     pub fn kanagawa() -> Self {
         Self {
+            accent_fg: None,
             accent: Color::Rgb(126, 156, 216), // blue
             panel_bg: Color::Rgb(31, 31, 40),
             sidebar_bg: Color::Reset,
@@ -427,6 +526,7 @@ impl Palette {
     /// Kanagawa Lotus — the light Kanagawa variant.
     pub fn kanagawa_lotus() -> Self {
         Self {
+            accent_fg: None,
             accent: Color::Rgb(77, 105, 155),
             panel_bg: Color::Rgb(242, 236, 188),
             sidebar_bg: Color::Reset,
@@ -452,6 +552,7 @@ impl Palette {
     /// Rosé Pine — muted, elegant.
     pub fn rose_pine() -> Self {
         Self {
+            accent_fg: None,
             accent: Color::Rgb(196, 167, 231), // iris
             panel_bg: Color::Rgb(25, 23, 36),
             sidebar_bg: Color::Reset,
@@ -477,6 +578,7 @@ impl Palette {
     /// Rosé Pine Dawn — the light Rosé Pine variant.
     pub fn rose_pine_dawn() -> Self {
         Self {
+            accent_fg: None,
             accent: Color::Rgb(144, 122, 169),
             panel_bg: Color::Rgb(250, 244, 237),
             sidebar_bg: Color::Reset,
@@ -502,6 +604,7 @@ impl Palette {
     /// Vesper — minimal high-contrast monochrome with peach and mint accents.
     pub fn vesper() -> Self {
         Self {
+            accent_fg: None,
             accent: Color::Rgb(255, 199, 153),
             panel_bg: Color::Rgb(26, 26, 26),
             sidebar_bg: Color::Reset,
@@ -552,6 +655,9 @@ impl Palette {
     /// Apply custom color overrides on top of this palette.
     pub fn with_overrides(mut self, custom: &crate::config::CustomThemeColors) -> Self {
         use crate::config::parse_color;
+        if custom.accent.is_some() || custom.panel_bg.is_some() || custom.surface_dim.is_some() {
+            self.accent_fg = None;
+        }
         if let Some(c) = &custom.accent {
             self.accent = parse_color(c);
         }
@@ -614,6 +720,9 @@ impl Palette {
 
     pub fn with_mode_overrides(mut self, custom: &crate::config::ModeThemeColors) -> Self {
         use crate::config::parse_color;
+        if custom.accent.is_some() || custom.panel_bg.is_some() || custom.surface_dim.is_some() {
+            self.accent_fg = None;
+        }
         if let Some(c) = &custom.accent {
             self.accent = parse_color(c);
         }
@@ -1374,28 +1483,12 @@ mod tests {
         state.assert_invariants_for_test();
     }
 
-    fn rgb_luminance(color: Color) -> f64 {
-        let Color::Rgb(r, g, b) = color else {
-            panic!("expected RGB color, got {color:?}");
-        };
-        let channel = |value: u8| {
-            let value = f64::from(value) / 255.0;
-            if value <= 0.04045 {
-                value / 12.92
-            } else {
-                ((value + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
-    }
-
     fn contrast_ratio(a: Color, b: Color) -> f64 {
-        let (lighter, darker) = {
-            let a = rgb_luminance(a);
-            let b = rgb_luminance(b);
-            (a.max(b), a.min(b))
+        let rgb = |color| match color {
+            Color::Rgb(r, g, b) => crate::terminal_theme::RgbColor { r, g, b },
+            other => panic!("expected RGB color, got {other:?}"),
         };
-        (lighter + 0.05) / (darker + 0.05)
+        rgb(a).contrast_ratio(rgb(b))
     }
 
     #[test]
@@ -1406,6 +1499,290 @@ mod tests {
                 "theme should resolve: {name}"
             );
         }
+    }
+
+    #[test]
+    fn terminal_host_palette_preserves_readable_pairs_and_repairs_low_contrast_pairs() {
+        use crate::terminal_theme::{RgbColor, TerminalTheme};
+
+        let rgb = |r, g, b| RgbColor { r, g, b };
+        let light = rgb(238, 238, 238);
+        let dark = rgb(16, 16, 16);
+        let accent = rgb(137, 180, 250);
+        let mut host = TerminalTheme {
+            foreground: Some(light),
+            background: Some(dark),
+            ..TerminalTheme::default()
+        };
+        host.palette[4] = Some(accent);
+        host.palette[8] = Some(dark);
+        assert_eq!(Palette::terminal_for_host(&host), Palette::terminal());
+
+        // A light host may use dark colors for every ANSI slot.
+        host.foreground = Some(dark);
+        host.background = Some(light);
+        host.palette[4] = Some(rgb(23, 77, 166));
+        host.palette[8] = Some(rgb(83, 96, 113));
+        for (index, color) in [
+            (2, rgb(17, 102, 17)),
+            (3, rgb(102, 85, 0)),
+            (9, rgb(153, 17, 17)),
+            (6, rgb(0, 102, 119)),
+        ] {
+            host.palette[index] = Some(color);
+        }
+        let palette = Palette::terminal_for_host(&host);
+        let to_color = |color: RgbColor| Color::Rgb(color.r, color.g, color.b);
+        assert!(contrast_ratio(to_color(dark), palette.active_row_bg) >= 4.5);
+        assert!(contrast_ratio(to_color(light), palette.active_row_bg) >= 1.3);
+        assert!(contrast_ratio(to_color(light), palette.active_row_bg) < 1.5);
+        for index in [2, 3, 9, 6] {
+            assert!(
+                contrast_ratio(
+                    to_color(host.palette[index].unwrap()),
+                    palette.active_row_bg
+                ) >= 3.0
+            );
+        }
+        assert_eq!(palette.surface_dim, Palette::terminal().surface_dim);
+        assert!(
+            contrast_ratio(
+                to_color(host.palette[4].unwrap()),
+                palette.accent_foreground()
+            ) >= 4.5
+        );
+        assert_eq!(palette.panel_bg, Color::Reset);
+        assert_eq!(palette.sidebar_bg, Color::Reset);
+        let custom = palette.with_overrides(&crate::config::CustomThemeColors {
+            surface_dim: Some("#123456".into()),
+            ..Default::default()
+        });
+        assert_eq!(custom.accent_foreground(), Color::Rgb(0x12, 0x34, 0x56));
+
+        // A lower-contrast host needs the 3:1 fallback to keep the row visible.
+        host.foreground = Some(rgb(104, 104, 104));
+        let low_contrast = Palette::terminal_for_host(&host);
+        assert!(contrast_ratio(to_color(light), low_contrast.active_row_bg) >= 1.3);
+        let text_contrast = contrast_ratio(
+            to_color(host.foreground.unwrap()),
+            low_contrast.active_row_bg,
+        );
+        assert!(text_contrast >= 3.0);
+        assert!(text_contrast < 4.5);
+
+        // If no legible tint is visible, keep the existing ANSI row instead of hiding it.
+        host.foreground = Some(rgb(150, 150, 150));
+        let dim = Palette::terminal_for_host(&host);
+        assert_eq!(dim.active_row_bg, Palette::terminal().active_row_bg);
+        assert!(contrast_ratio(to_color(light), to_color(host.palette[8].unwrap())) >= 1.3);
+
+        assert_eq!(
+            Palette::terminal_for_host(&TerminalTheme::default()),
+            Palette::terminal()
+        );
+    }
+
+    fn host_theme(
+        foreground: Option<(u8, u8, u8)>,
+        background: Option<(u8, u8, u8)>,
+        slots: &[(usize, (u8, u8, u8))],
+    ) -> crate::terminal_theme::TerminalTheme {
+        use crate::terminal_theme::RgbColor;
+        let rgb = |(r, g, b): (u8, u8, u8)| RgbColor { r, g, b };
+        let mut host = crate::terminal_theme::TerminalTheme {
+            foreground: foreground.map(rgb),
+            background: background.map(rgb),
+            ..Default::default()
+        };
+        for (index, color) in slots {
+            host.palette[*index] = Some(rgb(*color));
+        }
+        host
+    }
+
+    #[test]
+    fn terminal_host_palette_falls_back_when_host_colors_are_missing() {
+        let slots = [(4, (0, 0, 0)), (8, (0, 0, 0)), (7, (0, 0, 0))];
+        // Only one of foreground/background known: nothing is derived.
+        for host in [
+            host_theme(None, None, &slots),
+            host_theme(Some((0, 0, 0)), None, &slots),
+            host_theme(None, Some((255, 255, 255)), &slots),
+        ] {
+            assert_eq!(Palette::terminal_for_host(&host), Palette::terminal());
+        }
+        // Foreground/background known but no ANSI slots reported.
+        assert_eq!(
+            Palette::terminal_for_host(&host_theme(Some((0, 0, 0)), Some((255, 255, 255)), &[])),
+            Palette::terminal()
+        );
+        // Accent slot without a surface slot cannot pick an accent text colour.
+        let no_surface = Palette::terminal_for_host(&host_theme(
+            Some((0, 0, 0)),
+            Some((255, 255, 255)),
+            &[(4, (255, 255, 0))],
+        ));
+        assert_eq!(no_surface.accent_fg, None);
+        assert_eq!(no_surface.active_row_bg, Palette::terminal().active_row_bg);
+    }
+
+    #[test]
+    fn terminal_host_palette_keeps_rows_readable_on_pure_white_and_pure_black_hosts() {
+        let to_color = |(r, g, b): (u8, u8, u8)| Color::Rgb(r, g, b);
+        // (foreground, background, low-contrast surface slot 8)
+        for (fg, bg, surface) in [
+            ((0, 0, 0), (255, 255, 255), (60, 60, 60)),
+            ((255, 255, 255), (0, 0, 0), (200, 200, 200)),
+        ] {
+            let palette =
+                Palette::terminal_for_host(&host_theme(Some(fg), Some(bg), &[(8, surface)]));
+            let Color::Rgb(r, g, b) = palette.active_row_bg else {
+                panic!("expected a derived RGB row for host fg {fg:?} bg {bg:?}");
+            };
+            // Grey host keeps a grey tint.
+            assert_eq!((r, r), (g, b));
+            assert!(contrast_ratio(to_color(fg), palette.active_row_bg) >= 4.5);
+            assert!(contrast_ratio(to_color(bg), palette.active_row_bg) >= 1.3);
+            assert_eq!(palette.surface1, palette.active_row_bg);
+            assert_eq!(palette.panel_bg, Color::Reset);
+        }
+    }
+
+    #[test]
+    fn terminal_host_palette_with_equal_foreground_and_background_keeps_defaults() {
+        let grey = (128, 128, 128);
+        let palette = Palette::terminal_for_host(&host_theme(
+            Some(grey),
+            Some(grey),
+            &[(8, grey), (4, (0, 0, 255))],
+        ));
+        // No tint can be both legible and visible: the ANSI row stays.
+        assert_eq!(palette.active_row_bg, Palette::terminal().active_row_bg);
+        assert_eq!(palette.surface1, Palette::terminal().surface1);
+        // Blue on mid grey is unreadable both ways; white beats black.
+        assert_eq!(palette.accent_fg, Some(Color::Rgb(255, 255, 255)));
+        assert_eq!(palette.accent, Palette::terminal().accent);
+    }
+
+    #[test]
+    fn terminal_host_accent_foreground_picks_background_then_black_or_white() {
+        // Accent already readable on the surface: no override.
+        let readable = Palette::terminal_for_host(&host_theme(
+            Some((255, 255, 255)),
+            Some((0, 0, 0)),
+            &[(8, (0, 0, 0)), (4, (255, 255, 255))],
+        ));
+        assert_eq!(readable.accent_fg, None);
+        // Unreadable on the surface but readable on the host background: use it.
+        let warm = (250, 240, 230);
+        let on_background = Palette::terminal_for_host(&host_theme(
+            Some((0, 0, 0)),
+            Some(warm),
+            &[(8, (0, 0, 170)), (4, (0, 0, 170))],
+        ));
+        assert_eq!(on_background.accent_fg, Some(Color::Rgb(250, 240, 230)));
+        // Unreadable on both: black for a light accent.
+        let yellow = Palette::terminal_for_host(&host_theme(
+            Some((0, 0, 0)),
+            Some((255, 255, 255)),
+            &[(8, (255, 255, 0)), (4, (255, 255, 0))],
+        ));
+        assert_eq!(yellow.accent_fg, Some(Color::Rgb(0, 0, 0)));
+        assert_eq!(yellow.accent_foreground(), Color::Rgb(0, 0, 0));
+    }
+
+    #[test]
+    fn terminal_host_accent_and_destructive_colors_stay_distinguishable() {
+        for host in [
+            host_theme(
+                Some((0, 0, 0)),
+                Some((255, 255, 255)),
+                &[(8, (60, 60, 60)), (4, (0, 0, 170)), (1, (170, 0, 0))],
+            ),
+            host_theme(
+                Some((255, 255, 255)),
+                Some((0, 0, 0)),
+                &[(8, (200, 200, 200)), (4, (0, 0, 255)), (1, (255, 0, 0))],
+            ),
+            host_theme(
+                Some((128, 128, 128)),
+                Some((128, 128, 128)),
+                &[(8, (128, 128, 128)), (4, (128, 128, 128))],
+            ),
+        ] {
+            let palette = Palette::terminal_for_host(&host);
+            assert_ne!(palette.accent, palette.red);
+            assert_ne!(palette.accent_foreground(), palette.accent);
+            assert_ne!(palette.fill_foreground(), palette.red);
+        }
+    }
+
+    #[test]
+    fn terminal_host_palette_resets_dim_text_that_vanishes_on_the_background() {
+        let base = Palette::terminal();
+        let readable = Palette::terminal_for_host(&host_theme(
+            Some((255, 255, 255)),
+            Some((0, 0, 0)),
+            &[(7, (200, 200, 200)), (15, (255, 255, 255))],
+        ));
+        assert_eq!(readable.overlay0, base.overlay0);
+        assert_eq!(readable.subtext0, base.subtext0);
+        assert_eq!(readable.mauve, base.mauve);
+        assert_eq!(readable.overlay1, base.overlay1);
+
+        let faded = Palette::terminal_for_host(&host_theme(
+            Some((255, 255, 255)),
+            Some((0, 0, 0)),
+            &[(7, (20, 20, 20)), (15, (30, 30, 30))],
+        ));
+        assert_eq!(faded.overlay0, Color::Reset);
+        assert_eq!(faded.subtext0, Color::Reset);
+        assert_eq!(faded.mauve, Color::Reset);
+        assert_eq!(faded.overlay1, Color::Reset);
+    }
+
+    #[test]
+    fn overrides_drop_host_accent_text_only_when_they_touch_its_inputs() {
+        let host = host_theme(
+            Some((0, 0, 0)),
+            Some((255, 255, 255)),
+            &[(8, (255, 255, 0)), (4, (255, 255, 0))],
+        );
+        let derived = Palette::terminal_for_host(&host);
+        assert!(derived.accent_fg.is_some());
+
+        let unrelated = derived
+            .clone()
+            .with_overrides(&crate::config::CustomThemeColors {
+                overlay0: Some("#123456".into()),
+                ..Default::default()
+            });
+        assert_eq!(unrelated.accent_fg, derived.accent_fg);
+
+        let accent = derived
+            .clone()
+            .with_overrides(&crate::config::CustomThemeColors {
+                accent: Some("#010203".into()),
+                ..Default::default()
+            });
+        assert_eq!(accent.accent_fg, None);
+        assert_eq!(accent.accent_foreground(), accent.surface_dim);
+
+        let mode_panel = derived
+            .clone()
+            .with_mode_overrides(&crate::config::ModeThemeColors {
+                panel_bg: Some("#010203".into()),
+                ..Default::default()
+            });
+        assert_eq!(mode_panel.accent_foreground(), Color::Rgb(1, 2, 3));
+
+        let mode_unrelated = derived
+            .clone()
+            .with_mode_overrides(&crate::config::ModeThemeColors {
+                text: Some("#010203".into()),
+                ..Default::default()
+            });
+        assert_eq!(mode_unrelated.accent_fg, derived.accent_fg);
     }
 
     #[test]

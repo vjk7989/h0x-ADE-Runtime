@@ -21,6 +21,23 @@ impl HostAppearance {
 }
 
 impl RgbColor {
+    pub(crate) fn contrast_ratio(self, other: Self) -> f64 {
+        fn luminance(color: RgbColor) -> f64 {
+            let channel = |value: u8| {
+                let value = f64::from(value) / 255.0;
+                if value <= 0.04045 {
+                    value / 12.92
+                } else {
+                    ((value + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
+        }
+        let a = luminance(self);
+        let b = luminance(other);
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
     pub fn inferred_appearance(self) -> HostAppearance {
         let luminance = u32::from(self.r) * 299 + u32::from(self.g) * 587 + u32::from(self.b) * 114;
         if luminance >= 128_000 {
@@ -250,5 +267,42 @@ mod tests {
         assert_eq!(parse_hex_component("80"), Some(128));
         assert_eq!(parse_hex_component("800"), Some(128));
         assert_eq!(parse_hex_component("8000"), Some(128));
+    }
+
+    #[test]
+    fn contrast_ratio_spans_one_to_twenty_one_and_is_symmetric() {
+        let black = RgbColor { r: 0, g: 0, b: 0 };
+        let white = RgbColor {
+            r: 255,
+            g: 255,
+            b: 255,
+        };
+        let gray = RgbColor {
+            r: 119,
+            g: 119,
+            b: 119,
+        };
+        assert!((black.contrast_ratio(white) - 21.0).abs() < 1e-9);
+        assert_eq!(black.contrast_ratio(white), white.contrast_ratio(black));
+        assert_eq!(gray.contrast_ratio(white), white.contrast_ratio(gray));
+        // Equal colours have no contrast, at both ends of the range.
+        assert!((black.contrast_ratio(black) - 1.0).abs() < 1e-9);
+        assert!((white.contrast_ratio(white) - 1.0).abs() < 1e-9);
+        // #777 on white sits just under the 4.5 text threshold.
+        let ratio = gray.contrast_ratio(white);
+        assert!(ratio > 4.4 && ratio < 4.5, "ratio {ratio}");
+        // Channel values at the sRGB linear/gamma knee stay finite and ordered.
+        let knee = RgbColor {
+            r: 10,
+            g: 10,
+            b: 10,
+        };
+        let above = RgbColor {
+            r: 11,
+            g: 11,
+            b: 11,
+        };
+        assert!(knee.contrast_ratio(black) < above.contrast_ratio(black));
+        assert!(knee.contrast_ratio(black) > 1.0);
     }
 }
