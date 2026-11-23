@@ -152,11 +152,11 @@ mod tests {
         child: Box<dyn portable_pty::Child + Send + Sync>,
     ) -> portable_pty::ExitStatus {
         let pid = child.process_id().unwrap();
+        // The timer must be created inside the runtime.
         let status = rt
-            .block_on(tokio::time::timeout(
-                Duration::from_secs(5),
-                super::wait_for_child(child),
-            ))
+            .block_on(async {
+                tokio::time::timeout(Duration::from_secs(5), super::wait_for_child(child)).await
+            })
             .expect("reaper timed out")
             .expect("reaper failed");
         assert_not_zombie(pid);
