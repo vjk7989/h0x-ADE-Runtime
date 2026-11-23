@@ -362,7 +362,11 @@ fn read_line_unbuffered(stream: &mut UnixStream) -> io::Result<String> {
     let mut bytes = Vec::new();
     let mut byte = [0u8; 1];
     loop {
-        let read = stream.read(&mut byte)?;
+        let read = match stream.read(&mut byte) {
+            Ok(read) => read,
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err),
+        };
         if read == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -474,10 +478,17 @@ fn recv_fd_batch(stream: &UnixStream, wanted: usize) -> io::Result<Vec<RawFd>> {
     msg.msg_control = control.as_mut_ptr() as *mut libc::c_void;
     msg.msg_controllen = control.len() as _;
 
-    let read = unsafe { libc::recvmsg(stream.as_raw_fd(), &mut msg, 0) };
-    if read < 0 {
-        return Err(io::Error::last_os_error());
-    }
+    let read = loop {
+        msg.msg_controllen = control.len() as _;
+        let read = unsafe { libc::recvmsg(stream.as_raw_fd(), &mut msg, 0) };
+        if read >= 0 {
+            break read;
+        }
+        let err = io::Error::last_os_error();
+        if err.kind() != io::ErrorKind::Interrupted {
+            return Err(err);
+        }
+    };
 
     let mut out = Vec::new();
     unsafe {
@@ -534,6 +545,139 @@ pub(crate) fn log_import_result(panes: usize) {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use std::os::unix::thread::JoinHandleExt as _;
+
+    extern "C" fn noop_signal_handler(_: libc::c_int) {}
+
+    /// Installs a no-op SIGURG handler without SA_RESTART so a blocked read or
+    /// recvmsg returns EINTR instead of being restarted by the kernel. SIGURG is
+    /// ignored by default, so a stray delivery elsewhere stays harmless.
+    fn install_interrupting_sigurg_handler() {
+        unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = noop_signal_handler as extern "C" fn(libc::c_int) as usize;
+            action.sa_flags = 0;
+            libc::sigemptyset(&mut action.sa_mask);
+            assert_eq!(
+                libc::sigaction(libc::SIGURG, &action, std::ptr::null_mut()),
+                0
+            );
+        }
+    }
+
+    /// Interrupts the blocked thread several times while it waits for input.
+    fn interrupt_repeatedly<T>(handle: &std::thread::JoinHandle<T>) {
+        let thread = handle.as_pthread_t();
+        for _ in 0..20 {
+            unsafe { libc::pthread_kill(thread, libc::SIGURG) };
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn open_dev_null_fd() -> RawFd {
+        use std::os::fd::IntoRawFd as _;
+        std::fs::File::open("/dev/null").unwrap().into_raw_fd()
+    }
+
+    #[test]
+    fn read_line_unbuffered_retries_after_eintr() {
+        install_interrupting_sigurg_handler();
+        let (mut writer, mut reader) = UnixStream::pair().unwrap();
+        let handle = std::thread::spawn(move || read_line_unbuffered(&mut reader));
+        interrupt_repeatedly(&handle);
+        writer.write_all(b"ready\n").unwrap();
+        let line = handle.join().unwrap().expect("EINTR must be retried");
+        assert_eq!(line, "ready\n");
+    }
+
+    #[test]
+    fn read_line_unbuffered_reports_eof_on_empty_stream() {
+        let (writer, mut reader) = UnixStream::pair().unwrap();
+        drop(writer);
+        let err = read_line_unbuffered(&mut reader).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn read_line_unbuffered_reports_eof_on_short_line() {
+        let (mut writer, mut reader) = UnixStream::pair().unwrap();
+        writer.write_all(b"partial").unwrap();
+        drop(writer);
+        let err = read_line_unbuffered(&mut reader).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn read_line_unbuffered_still_fails_on_other_errors() {
+        let (_writer, mut reader) = UnixStream::pair().unwrap();
+        reader
+            .set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        let err = read_line_unbuffered(&mut reader).unwrap_err();
+        assert!(
+            matches!(
+                err.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ),
+            "unexpected error kind {:?}",
+            err.kind()
+        );
+    }
+
+    #[test]
+    fn recv_fds_retries_after_eintr_with_full_control_buffer() {
+        install_interrupting_sigurg_handler();
+        let (writer, reader) = UnixStream::pair().unwrap();
+        let handle = std::thread::spawn(move || recv_fds(&reader, 3));
+        interrupt_repeatedly(&handle);
+        let sent = [open_dev_null_fd(), open_dev_null_fd(), open_dev_null_fd()];
+        send_fds(&writer, &sent).unwrap();
+        close_raw_fds(&sent);
+        let received = handle.join().unwrap().expect("EINTR must be retried");
+        // All three descriptors fit only if msg_controllen was not left shrunk.
+        assert_eq!(received.len(), 3);
+        for fd in &received {
+            assert!(unsafe { libc::fcntl(*fd, libc::F_GETFD) } >= 0);
+        }
+        close_raw_fds(&received);
+    }
+
+    #[test]
+    fn recv_fd_batch_returns_empty_on_eof() {
+        let (writer, reader) = UnixStream::pair().unwrap();
+        drop(writer);
+        assert!(recv_fd_batch(&reader, 1).unwrap().is_empty());
+        let err = recv_fds(&reader, 1).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn recv_fds_reports_eof_after_a_short_batch() {
+        let (writer, reader) = UnixStream::pair().unwrap();
+        let sent = [open_dev_null_fd()];
+        send_fds(&writer, &sent).unwrap();
+        close_raw_fds(&sent);
+        drop(writer);
+        let err = recv_fds(&reader, 2).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn recv_fd_batch_still_fails_on_other_errors() {
+        let (_writer, reader) = UnixStream::pair().unwrap();
+        reader
+            .set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        let err = recv_fd_batch(&reader, 1).unwrap_err();
+        assert!(
+            matches!(
+                err.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ),
+            "unexpected error kind {:?}",
+            err.kind()
+        );
+    }
 
     fn empty_snapshot() -> crate::persist::SessionSnapshot {
         crate::persist::SessionSnapshot {
