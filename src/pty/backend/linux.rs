@@ -12,7 +12,9 @@ fn child_pidfd(child: &dyn Child) -> std::io::Result<AsyncFd<OwnedFd>> {
     if fd < 0 {
         return Err(std::io::Error::last_os_error());
     }
-    AsyncFd::new(unsafe { OwnedFd::from_raw_fd(fd as _) })
+    let fd = unsafe { OwnedFd::from_raw_fd(fd as _) };
+    // SAFETY: the AsyncFd owns this open pidfd until it is dropped, so the fd stays valid.
+    unsafe { AsyncFd::register(fd) }.map_err(Into::into)
 }
 
 pub(crate) async fn wait_for_child(
